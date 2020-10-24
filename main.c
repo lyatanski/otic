@@ -15,7 +15,10 @@ struct word {
 #define tokid  1
 #define tokstr 2
 #define toknum 3
-#define tokdef(x) (* (int*)x"\0\0\0\0")
+#define tok1(x) (x[0])
+#define tok2(x) (x[0] << 8  | x[1])
+#define tok3(x) (x[0] << 16 | x[1] << 8 | x[2])
+#define tokd(x) (* (int*)x"\0\0\0\0")
   int   kind;
   word* next;
   int   size;
@@ -97,110 +100,79 @@ void drop(file* f)
 word* chop(file* f) {
   int   line = 0;
   unsigned char* tok;
+  unsigned char* c = f->head;
   word  head = {};
   word* tail = &head;
 
-  while(f->head != f->tail)
+  while(c != f->tail)
   {
-    switch(*f->head)
+    switch(*c)
     {
       case '\n': case '\r':
         ++line;
         break;
       case ' ': case '\f': case '\t': case '\v': break;
-      case '#': dict(&tail, tokdef("#")); break;
-      case ',': dict(&tail, tokdef(",")); break;
-      case ';': dict(&tail, tokdef(";")); break;
-      case ':': dict(&tail, tokdef(":")); break;
-      case '?': dict(&tail, tokdef("?")); break;
-      case '~': dict(&tail, tokdef("~")); break;
-      case '(': dict(&tail, tokdef("(")); break;
-      case ')': dict(&tail, tokdef(")")); break;
-      case '[': dict(&tail, tokdef("[")); break;
-      case ']': dict(&tail, tokdef("]")); break;
-      case '{': dict(&tail, tokdef("{")); break;
-      case '}': dict(&tail, tokdef("}")); break;
-      case '=':
-        dict(&tail, f->head[1] == '=' ? tokdef("==") : tokdef("=")); break;
-      case '!':
-        dict(&tail, f->head[1] == '=' ? tokdef("!=") : tokdef("!")); break;
-      case '*':
-        dict(&tail, f->head[1] == '=' ? tokdef("*=") : tokdef("*")); break;
-      case '%':
-        dict(&tail, f->head[1] == '=' ? tokdef("%=") : tokdef("%")); break;
-      case '^':
-        dict(&tail, f->head[1] == '=' ? tokdef("^=") : tokdef("^")); break;
+      case '#': case ',': case ';': case ':': case '?': case '~':
+      case '(': case ')': case '[': case ']': case '{': case '}':
+        dict(&tail, tok1(c)); break;
+      case '=': case '!': case '*': case '%': case '^':
+        dict(&tail, c[1] == '=' ? tok2(c) : tok1(c)); break;
       case '&':
-        dict(&tail, f->head[1] == '=' ? tokdef("&=") :
-                    f->head[1] == '&' ? tokdef("&&") : tokdef("&")); break;
+        dict(&tail, c[1] == '=' || c[1] == '&' ? tok2(c) : tok1(c)); break;
       case '|':
-        dict(&tail, f->head[1] == '=' ? tokdef("|=") :
-                    f->head[1] == '|' ? tokdef("||") : tokdef("|")); break;
+        dict(&tail, c[1] == '=' || c[1] == '|' ? tok2(c) : tok1(c)); break;
       case '+':
-        dict(&tail, f->head[1] == '=' ? tokdef("+=") :
-                    f->head[1] == '+' ? tokdef("++") : tokdef("+")); break;
+        dict(&tail, c[1] == '=' || c[1] == '+' ? tok2(c) : tok1(c)); break;
       case '-':
-        if(f->head[1] == '=') dict(&tail, tokdef("-="));
-        else if(f->head[1] == '-') dict(&tail, tokdef("--"));
-        else if(f->head[1] == '>') dict(&tail, tokdef("->"));
-        else dict(&tail, tokdef("-"));
-        break;
+        dict(&tail, c[1] == '=' || c[1] == '-' || c[1] == '>' ? tok2(c) : tok1(c)); break;
       case '<':
-        if(f->head[1] == '<')
-          if(f->head[2] == '=') dict(&tail, tokdef("<<="));
-          else dict(&tail, tokdef("<<"));
-        else if(f->head[1] == '=') dict(&tail, tokdef("<="));
-        else dict(&tail, tokdef("<"));
-        break;
+        dict(&tail, c[1] == '<' && c[2] == '=' ? tok3(c) :
+                    c[1] == '<' || c[1] == '=' ? tok2(c) : tok1(c)); break;
       case '>':
-        if(f->head[1] == '>')
-          if(f->head[2] == '=') dict(&tail, tokdef(">>="));
-          else dict(&tail, tokdef(">>"));
-        else if(f->head[1] == '=') dict(&tail, tokdef(">="));
-        else dict(&tail, tokdef(">"));
-        break;
+        dict(&tail, c[1] == '>' && c[2] == '=' ? tok3(c) :
+                    c[1] == '>' || c[1] == '=' ? tok2(c) : tok1(c)); break;
       case '/':
         // division or line comment
-        if (f->head[1] == '=') dict(&tail, tokdef("/="));
-        else if(f->head[1] == '/')
+        if (c[1] == '=') dict(&tail, tokd("/="));
+        else if(c[1] == '/')
           // skip till end of line
-          while (*f->head != '\r' && *f->head != '\n' && f->head != f->tail)
-            ++f->head;
-        else if(f->head[1] == '*')
+          while (*c != '\r' && *c != '\n' && c != f->tail)
+            ++c;
+        else if(c[1] == '*')
           // skip till close comment
-          while (f->head[0] != '*' && f->head[1] != '/' && f->head != f->tail)
-            ++f->head;
-        else dict(&tail, tokdef("/"));
+          while (c[0] != '*' && c[1] != '/' && c != f->tail)
+            ++c;
+        else dict(&tail, tokd("/"));
         break;
       case '"':
-        tok = f->head++;
-        while(f->head && *f->head != '"') {
-            ++f->head;
-            if(*f->head == '\\' && *f->head == '"') ++f->head;
+        tok = c++;
+        while(c && *c != '"') {
+            ++c;
+            //if(c[0] == '\\' && c[1] == '"') ++c;
         }
         dict(&tail, tokstr);
         break;
       case '.':
         // '.', '...' or number
-        if(f->head[1] == '.' && f->head[2] == '.'){ dict(&tail, tokdef("...")); break; }
-        else if (!(f->head[1] >= '0' && f->head[1] <= '9')){ dict(&tail, tokdef(".")); break; }
+        if(c[1] == '.' && c[2] == '.'){ dict(&tail, tokd("...")); break; }
+        else if (!(c[1] >= '0' && c[1] <= '9')){ dict(&tail, tokd(".")); break; }
         // else fall trough to number
       case '0' ... '9':
-        tok = f->head++;
-        while(*f->head >= '0' && *f->head <= '9') ++f->head;
+        tok = c++;
+        while(*c >= '0' && *c <= '9') ++c;
         dict(&tail, toknum);
         break;
       default:
-        tok = f->head++;
-        while(*f->head >= 'a' && *f->head <= 'z'
-           || *f->head >= 'A' && *f->head <= 'Z'
-           || *f->head >= '0' && *f->head <= '9'
-           || *f->head == '_') ++f->head;
+        tok = c++;
+        while(*c >= 'a' && *c <= 'z'
+           || *c >= 'A' && *c <= 'Z'
+           || *c >= '0' && *c <= '9'
+           || *c == '_') ++c;
         dict(&tail, tokid);
-        --f->head;
+        --c;
         break;
     }
-    ++f->head;
+    ++c;
   }
   return head.next;
 }
@@ -307,7 +279,7 @@ void sift(word* list)
   while(list)
   {
     // every statement begins with type
-    decl(list);
+    //decl(list);
     printf("%x %c\n", list->kind, list->kind);
     list = list->next;
   }
