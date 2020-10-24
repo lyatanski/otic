@@ -104,10 +104,8 @@ word* chop(file* f) {
   word  head = {};
   word* tail = &head;
 
-  while(c != f->tail)
-  {
-    switch(*c)
-    {
+  while(c != f->tail) {
+    switch(*c) {
       case '\n': case '\r':
         ++line;
         break;
