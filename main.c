@@ -131,23 +131,17 @@ word* chop(file* f) {
       case '^':
         dict(&tail, f->head[1] == '=' ? tokdef("^=") : tokdef("^")); break;
       case '&':
-        if(f->head[1] == '&') dict(&tail, tokdef("&&"));
-        else if(f->head[1] == '=') dict(&tail, tokdef("&="));
-        else dict(&tail, tokdef("&"));
-        break;
+        dict(&tail, f->head[1] == '=' ? tokdef("&=") :
+                    f->head[1] == '&' ? tokdef("&&") : tokdef("&")); break;
       case '|':
-        if(f->head[1] == '|') dict(&tail, tokdef("||"));
-        else if(f->head[1] == '=') dict(&tail, tokdef("|="));
-        else dict(&tail, tokdef("|"));
-        break;
+        dict(&tail, f->head[1] == '=' ? tokdef("|=") :
+                    f->head[1] == '|' ? tokdef("||") : tokdef("|")); break;
       case '+':
-        if(f->head[1] == '+') dict(&tail, tokdef("++"));
-        else if(f->head[1] == '=') dict(&tail, tokdef("+="));
-        else dict(&tail, tokdef("+"));
-        break;
+        dict(&tail, f->head[1] == '=' ? tokdef("+=") :
+                    f->head[1] == '+' ? tokdef("++") : tokdef("+")); break;
       case '-':
-        if(f->head[1] == '-') dict(&tail, tokdef("--"));
-        else if(f->head[1] == '=') dict(&tail, tokdef("-="));
+        if(f->head[1] == '=') dict(&tail, tokdef("-="));
+        else if(f->head[1] == '-') dict(&tail, tokdef("--"));
         else if(f->head[1] == '>') dict(&tail, tokdef("->"));
         else dict(&tail, tokdef("-"));
         break;
