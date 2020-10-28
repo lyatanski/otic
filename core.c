@@ -10,19 +10,24 @@ typedef struct file
   unsigned char  data[1];
 } file;
 
+typedef union {
+  unsigned long  hash;
+  unsigned char* data;
+} from;
+
 typedef struct word word;
 struct word {
 #define tokid  1
 #define tokstr 2
 #define toknum 3
-#define tok1(x) (x[0])
-#define tok2(x) (x+=1, x[-1] << 8  | x[0])
-#define tok3(x) (x+=2, x[-2] << 16 | x[-1] << 8 | x[0])
+#define tok1(x) (*x)
+#define tok2(x) (*x++ | *x   << 8)
+#define tok3(x) (*x++ | *x++ << 8 | *x << 16)
 #define tokd(x) (* (int*)x"\0\0\0\0")
   int   kind;
   word* next;
   int   size;
-  void* data;
+  from  data;
 };
 
 typedef struct {
@@ -47,20 +52,22 @@ typedef struct {
   unsigned int   is_union    :1;
   unsigned int   is_enum     :1;
 
-  unsigned int   is_signed   :1;
-  unsigned int   is_unsigned :1;
+  unsigned int   is_sig   :1;
+  unsigned int   is_abs :1;
 
 } type;
 
-void dict(word** prev, int kind) {
+void term(word** prev, int kind, from data) {
   word* tok = malloc(sizeof(word));
   tok->kind = kind;
   tok->next = NULL;
   tok->size = 0;
-  tok->data = NULL;
+  tok->data = data;
   (*prev)->next = tok;
   (*prev) = tok;
 }
+
+#define dict(p, k, ...) term(p, k, (from){__VA_ARGS__})
 
 file* read(const char* name)
 {
@@ -174,10 +181,10 @@ word* chop(file* f) {
            || *c == '_') hash = pile(hash, *c++);
         if(c - tok > 0)
         {
-          dict(&tail, tokid);
+          dict(&tail, tokid, hash);
           tmp = *c;
           *c = '\0';
-          printf("%016lx %s\n", hash, tok);
+          //printf("%016lx %s\n", hash, tok);
           *c-- = tmp;
         }
         break;
@@ -187,31 +194,31 @@ word* chop(file* f) {
   return head.next;
 }
 
-int same(char* tok, char* exp)
-{
-  while(tok && exp && *tok && *exp && *tok++ == *exp++);
-  return *tok == *exp;
-}
-
-void skip(word** tok, char* exp)
-{
-    if(!same((*tok)->data, exp))
-      fail("expected %s, got %s", exp, (*tok)->data);
-    (*tok) = (*tok)->next;
-}
+//int same(char* tok, char* exp)
+//{
+//  while(tok && exp && *tok && *exp && *tok++ == *exp++);
+//  return *tok == *exp;
+//}
+//
+//void skip(word** tok, char* exp)
+//{
+//    if(!same((*tok)->data, exp))
+//      fail("expected %s, got %s", exp, (*tok)->data);
+//    (*tok) = (*tok)->next;
+//}
 
 int twin(type* x, type* y)
 {
-  return ( x->is_void     == y->is_void
-        || x->is_bool     == y->is_bool
-        || x->is_char     == y->is_char
-        || x->is_short    == y->is_short
-        || x->is_int      == y->is_int
-        || x->is_long     == y->is_long
-        || x->is_float    == y->is_float
-        || x->is_double   == y->is_double
-        || x->is_signed   == y->is_signed
-        || x->is_unsigned == y->is_unsigned);
+  return ( x->is_void   == y->is_void
+        || x->is_bool   == y->is_bool
+        || x->is_char   == y->is_char
+        || x->is_short  == y->is_short
+        || x->is_int    == y->is_int
+        || x->is_long   == y->is_long
+        || x->is_float  == y->is_float
+        || x->is_double == y->is_double
+        || x->is_sig    == y->is_sig
+        || x->is_abs    == y->is_abs);
 }
 
 int know(word* tok)
@@ -219,61 +226,61 @@ int know(word* tok)
   return 0;
 }
 
-int decl(word* tok)
+int decl_spec(word* tok)
 {
   type t = {};
 
   while(know(tok))
   {
-    if(same(tok->data, "typedef"))   t.is_typedef  = 1;
-    if(same(tok->data, "static"))    t.is_static   = 1;
-    if(same(tok->data, "extern"))    t.is_extern   = 1;
-    if(same(tok->data, "inline"))    t.is_inline   = 1;
+//    if(same(tok->data, "typedef"))   t.is_typedef  = 1;
+//    if(same(tok->data, "static"))    t.is_static   = 1;
+//    if(same(tok->data, "extern"))    t.is_extern   = 1;
+//    if(same(tok->data, "inline"))    t.is_inline   = 1;
+//
+//    if(same(tok->data, "struct"))    t.is_struct   = 1;
+//    if(same(tok->data, "union"))     t.is_union    = 1;
+//    if(same(tok->data, "enum"))      t.is_enum     = 1;
+//
+//    if(same(tok->data, "signed"))    t.is_sig   = 1;
+//    if(same(tok->data, "unsigned"))  t.is_abs = 1;
+//
+//    if(same(tok->data, "void"))      t.is_void    += 1;
+//    if(same(tok->data, "_Bool"))     t.is_bool    += 1;
+//    if(same(tok->data, "char"))      t.is_char    += 1;
+//    if(same(tok->data, "short"))     t.is_short   += 1;
+//    if(same(tok->data, "int"))       t.is_int     += 1;
+//    if(same(tok->data, "long"))      t.is_long    += 1;
+//    if(same(tok->data, "float"))     t.is_float   += 1;
+//    if(same(tok->data, "double"))    t.is_double  += 1;
 
-    if(same(tok->data, "struct"))    t.is_struct   = 1;
-    if(same(tok->data, "union"))     t.is_union    = 1;
-    if(same(tok->data, "enum"))      t.is_enum     = 1;
-
-    if(same(tok->data, "signed"))    t.is_signed   = 1;
-    if(same(tok->data, "unsigned"))  t.is_unsigned = 1;
-
-    if(same(tok->data, "void"))      t.is_void    += 1;
-    if(same(tok->data, "_Bool"))     t.is_bool    += 1;
-    if(same(tok->data, "char"))      t.is_char    += 1;
-    if(same(tok->data, "short"))     t.is_short   += 1;
-    if(same(tok->data, "int"))       t.is_int     += 1;
-    if(same(tok->data, "long"))      t.is_long    += 1;
-    if(same(tok->data, "float"))     t.is_float   += 1;
-    if(same(tok->data, "double"))    t.is_double  += 1;
-
-    if(!(twin(&t, &(type){                .is_void=1            })
-       ||twin(&t, &(type){                .is_bool=1            })
-       ||twin(&t, &(type){.is_signed=1,   .is_char=1            })
-       ||twin(&t, &(type){.is_unsigned=1, .is_char=1            })
-       ||twin(&t, &(type){                .is_short=1           })
-       ||twin(&t, &(type){                .is_short=1, .is_int=1})
-       ||twin(&t, &(type){.is_signed=1,   .is_short=1           })
-       ||twin(&t, &(type){.is_signed=1,   .is_short=1, .is_int=1})
-       ||twin(&t, &(type){.is_unsigned=1, .is_short=1           })
-       ||twin(&t, &(type){.is_unsigned=1, .is_short=1, .is_int=1})
-       ||twin(&t, &(type){                             .is_int=1})
-       ||twin(&t, &(type){.is_signed=1                          })
-       ||twin(&t, &(type){.is_signed=1,                .is_int=1})
-       ||twin(&t, &(type){.is_unsigned=1                        })
-       ||twin(&t, &(type){.is_unsigned=1,              .is_int=1})
-       ||twin(&t, &(type){                .is_long=1            })
-       ||twin(&t, &(type){                .is_long=1,  .is_int=1})
-       ||twin(&t, &(type){                .is_long=2,  .is_int=1})
-       ||twin(&t, &(type){.is_signed=1,   .is_long=1            })
-       ||twin(&t, &(type){.is_signed=1,   .is_long=2            })
-       ||twin(&t, &(type){.is_signed=1,   .is_long=1,  .is_int=1})
-       ||twin(&t, &(type){.is_signed=1,   .is_long=2,  .is_int=1})
-       ||twin(&t, &(type){.is_unsigned=1, .is_long=1            })
-       ||twin(&t, &(type){.is_unsigned=1, .is_long=2            })
-       ||twin(&t, &(type){.is_unsigned=1, .is_long=1,  .is_int=1})
-       ||twin(&t, &(type){.is_unsigned=1, .is_long=2,  .is_int=1})
-       ||twin(&t, &(type){.is_float=1                           })
-       ||twin(&t, &(type){.is_double=1                          })
+    if(!(twin(&t, &(type){           .is_void=1            })
+       ||twin(&t, &(type){           .is_bool=1            })
+       ||twin(&t, &(type){.is_sig=1, .is_char=1            })
+       ||twin(&t, &(type){.is_abs=1, .is_char=1            })
+       ||twin(&t, &(type){           .is_short=1           })
+       ||twin(&t, &(type){           .is_short=1, .is_int=1})
+       ||twin(&t, &(type){.is_sig=1, .is_short=1           })
+       ||twin(&t, &(type){.is_sig=1, .is_short=1, .is_int=1})
+       ||twin(&t, &(type){.is_abs=1, .is_short=1           })
+       ||twin(&t, &(type){.is_abs=1, .is_short=1, .is_int=1})
+       ||twin(&t, &(type){                        .is_int=1})
+       ||twin(&t, &(type){.is_sig=1                        })
+       ||twin(&t, &(type){.is_sig=1,              .is_int=1})
+       ||twin(&t, &(type){.is_abs=1                        })
+       ||twin(&t, &(type){.is_abs=1,              .is_int=1})
+       ||twin(&t, &(type){           .is_long=1            })
+       ||twin(&t, &(type){           .is_long=1,  .is_int=1})
+       ||twin(&t, &(type){           .is_long=2,  .is_int=1})
+       ||twin(&t, &(type){.is_sig=1, .is_long=1            })
+       ||twin(&t, &(type){.is_sig=1, .is_long=2            })
+       ||twin(&t, &(type){.is_sig=1, .is_long=1,  .is_int=1})
+       ||twin(&t, &(type){.is_sig=1, .is_long=2,  .is_int=1})
+       ||twin(&t, &(type){.is_abs=1, .is_long=1            })
+       ||twin(&t, &(type){.is_abs=1, .is_long=2            })
+       ||twin(&t, &(type){.is_abs=1, .is_long=1,  .is_int=1})
+       ||twin(&t, &(type){.is_abs=1, .is_long=2,  .is_int=1})
+       ||twin(&t, &(type){           .is_float=1           })
+       ||twin(&t, &(type){           .is_double=1          })
        )) fail("invalid type");
   }
 
@@ -282,15 +289,13 @@ int decl(word* tok)
 
 void sift(word* list)
 {
-  // type declaration
-  // function declaration/definition
-  // global variable
-  // each beggining with type 
+  // unit = function | declaration
+  // declaration = variable | type
   // (typedef/struct/union/enum are treated as meta types)
   while(list)
   {
     // every statement begins with type
-    //decl(list);
+    decl_spec(list);
     printf("%x %c\n", list->kind, list->kind);
     list = list->next;
   }
@@ -299,11 +304,12 @@ void sift(word* list)
 int main(int argc, char** argv)
 {
   if(argc != 2) return 1;
+
   file* code = read(argv[1]);
   word* list = chop(code);
-  //sift(list);
-  //drop(code);
-  //printf("%s\n", f->head);
+  sift(list);
+  drop(code);
+
   return 0;
 }
 
