@@ -1,19 +1,18 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-typedef struct file {
+struct file {
   unsigned char* head;
   unsigned char* tail;
   unsigned int   size;
   unsigned char  name[512];
   unsigned char  data[1];
-} file;
+};
 
 typedef union {
   item* hash;
 } from;
 
-typedef struct word word;
 struct word {
 #define tokid  1
 #define tokstr 2
@@ -27,7 +26,7 @@ struct word {
   int   size;
   from  data;
 };
-typedef struct node node;
+
 struct node {
     int i;
 };
@@ -326,19 +325,5 @@ void sift(word* list, hash** map) {
     else               printf("%x %c\n", list->kind, list->kind);
     list = list->next;
   }
-}
-
-int main(int argc, char** argv) {
-  if(argc != 2) return 1;
-
-  hash* map;
-  hnew(&map);
-
-  file* code = read(argv[1]);
-  word* list = chop(code, &map);
-  sift(list, &map);
-  drop(code);
-
-  return 0;
 }
 
