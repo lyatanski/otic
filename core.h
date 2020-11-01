@@ -4,20 +4,17 @@
 
 #define fail(...) (printf(__VA_ARGS__), exit(1))
 
-typedef struct {
+typedef struct hash hash;
+typedef struct item item;
+typedef struct item {
   char* key;
   int   len;
   void* val;
+  item* next;
 } item;
 
-typedef struct {
-  item* cask;
-  int   size;
-  int   used;
-} hash;
+void  hnew(hash** map);
+item* hget(hash** map, char* key, long len);
+#define sget(h, k) hget(h, k, sizeof(k))
+void  hrid(hash** map);
 
-void hget(hash* map, char* key);
-void hput(hash* map, char* key, void* dat);
-void hdel(hash* map, char* key);
-
-unsigned long pile(unsigned long full, unsigned char c);

@@ -1,8 +1,7 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-typedef struct file
-{
+typedef struct file {
   unsigned char* head;
   unsigned char* tail;
   unsigned int   size;
@@ -11,8 +10,7 @@ typedef struct file
 } file;
 
 typedef union {
-  unsigned long  hash;
-  unsigned char* data;
+  item* hash;
 } from;
 
 typedef struct word word;
@@ -28,6 +26,10 @@ struct word {
   word* next;
   int   size;
   from  data;
+};
+typedef struct node node;
+struct node {
+    int i;
 };
 
 typedef struct {
@@ -69,8 +71,7 @@ void term(word** prev, int kind, from data) {
 
 #define dict(p, k, ...) term(p, k, (from){__VA_ARGS__})
 
-file* read(const char* name)
-{
+file* read(const char* name) {
   file* f;
 
   FILE* fp = fopen(name, "r");
@@ -84,27 +85,23 @@ file* read(const char* name)
   f->tail = f->head + size;
   f->size = size;
   fread(f->head, 1, f->size, fp);
+  fclose(fp);
   return f;
 }
 
-void emit(const file* f)
-{
+void emit(const file* f) {
 }
 
-void drop(file* f)
-{
+void drop(file* f) {
     free(f);
 }
 
-word* chop(file* f) {
+word* chop(file* f, hash** h) {
   int   line = 0;
   unsigned char* tok;
   unsigned char* c = f->head;
-  unsigned long hash = 0;
   word  head = {};
   word* tail = &head;
-
-  unsigned char tmp;
 
   while(c != f->tail) {
     switch(*c) {
@@ -140,7 +137,7 @@ word* chop(file* f) {
       //case '\'':
       //  dict(&tail, tokstr); c+=2; break;
       case '"':
-        tok = c++;
+        tok = ++c;
         while(*c != '"' && *c != '\0') {
           //if(*c == '\n' || *c == '\0') fail("unterminated string %s", c);
           //if(*c == '\\') switch (*++c) {
@@ -155,7 +152,7 @@ word* chop(file* f) {
           //}
           ++c;
         }
-        dict(&tail, tokstr);
+        dict(&tail, tokstr, hget(h, tok, c - tok));
         break;
       case '.':
         // '.', '...' or number
@@ -170,23 +167,15 @@ word* chop(file* f) {
              || *c >= 'a' && *c <= 'f') ++c;
         if(c[0] == '0' && (c[2] == 'B' || c[2] == 'b'))
           while(*c == '0' || *c == '1') ++c;
-        dict(&tail, toknum);
+        dict(&tail, toknum, hget(h, tok, c - tok));
         break;
       default:
         tok = c;
-        hash = 0;
         while(*c >= 'a' && *c <= 'z'
            || *c >= 'A' && *c <= 'Z'
            || *c >= '0' && *c <= '9'
-           || *c == '_') hash = pile(hash, *c++);
-        if(c - tok > 0)
-        {
-          dict(&tail, tokid, hash);
-          tmp = *c;
-          *c = '\0';
-          //printf("%016lx %s\n", hash, tok);
-          *c-- = tmp;
-        }
+           || *c == '_') c++;
+        if(c - tok > 0) dict(&tail, tokid, hget(h, tok, c - tok));
         break;
     }
     ++c;
@@ -194,21 +183,14 @@ word* chop(file* f) {
   return head.next;
 }
 
-//int same(char* tok, char* exp)
-//{
-//  while(tok && exp && *tok && *exp && *tok++ == *exp++);
-//  return *tok == *exp;
-//}
-//
-//void skip(word** tok, char* exp)
-//{
-//    if(!same((*tok)->data, exp))
-//      fail("expected %s, got %s", exp, (*tok)->data);
+//void same(word** tok, int kind, from f) {
+//    if((*tok)->kind != kind)
+//      fail("expected %x, got %x", kind, (*tok)->kind);
 //    (*tok) = (*tok)->next;
 //}
+//#define skip(p, k, ...) same(p, k, (from){__VA_ARGS__})
 
-int twin(type* x, type* y)
-{
+int twin(type* x, type* y) {
   return ( x->is_void   == y->is_void
         || x->is_bool   == y->is_bool
         || x->is_char   == y->is_char
@@ -221,37 +203,51 @@ int twin(type* x, type* y)
         || x->is_abs    == y->is_abs);
 }
 
-int know(word* tok)
-{
+int know(word* tok, hash** map) {
   return 0;
 }
 
-int decl_spec(word* tok)
-{
+type decl_spec(word* tok, hash** map) {
   type t = {};
+  item* h_typedef  = sget(map, "typedef");
+  item* h_static   = sget(map, "static");
+  item* h_extern   = sget(map, "extern");
+  item* h_inline   = sget(map, "inline");
+  item* h_struct   = sget(map, "struct");
+  item* h_union    = sget(map, "union");
+  item* h_enum     = sget(map, "enum");
+  item* h_signed   = sget(map, "signed");
+  item* h_unsigned = sget(map, "unsigned");
+  item* h_void     = sget(map, "void");
+  item* h_bool     = sget(map, "_Bool");
+  item* h_char     = sget(map, "char");
+  item* h_short    = sget(map, "short");
+  item* h_int      = sget(map, "int");
+  item* h_long     = sget(map, "long");
+  item* h_float    = sget(map, "float");
+  item* h_double   = sget(map, "double");
 
-  while(know(tok))
-  {
-//    if(same(tok->data, "typedef"))   t.is_typedef  = 1;
-//    if(same(tok->data, "static"))    t.is_static   = 1;
-//    if(same(tok->data, "extern"))    t.is_extern   = 1;
-//    if(same(tok->data, "inline"))    t.is_inline   = 1;
-//
-//    if(same(tok->data, "struct"))    t.is_struct   = 1;
-//    if(same(tok->data, "union"))     t.is_union    = 1;
-//    if(same(tok->data, "enum"))      t.is_enum     = 1;
-//
-//    if(same(tok->data, "signed"))    t.is_sig   = 1;
-//    if(same(tok->data, "unsigned"))  t.is_abs = 1;
-//
-//    if(same(tok->data, "void"))      t.is_void    += 1;
-//    if(same(tok->data, "_Bool"))     t.is_bool    += 1;
-//    if(same(tok->data, "char"))      t.is_char    += 1;
-//    if(same(tok->data, "short"))     t.is_short   += 1;
-//    if(same(tok->data, "int"))       t.is_int     += 1;
-//    if(same(tok->data, "long"))      t.is_long    += 1;
-//    if(same(tok->data, "float"))     t.is_float   += 1;
-//    if(same(tok->data, "double"))    t.is_double  += 1;
+  while(know(tok, map)) {
+    if(tok->data.hash == h_typedef)   t.is_typedef  = 1;
+    if(tok->data.hash == h_static)    t.is_static   = 1;
+    if(tok->data.hash == h_extern)    t.is_extern   = 1;
+    if(tok->data.hash == h_inline)    t.is_inline   = 1;
+
+    if(tok->data.hash == h_struct)    t.is_struct   = 1;
+    if(tok->data.hash == h_union)     t.is_union    = 1;
+    if(tok->data.hash == h_enum)      t.is_enum     = 1;
+
+    if(tok->data.hash == h_signed)    t.is_sig      = 1;
+    if(tok->data.hash == h_unsigned)  t.is_abs      = 1;
+
+    if(tok->data.hash == h_void)      t.is_void    += 1;
+    if(tok->data.hash == h_bool)      t.is_bool    += 1;
+    if(tok->data.hash == h_char)      t.is_char    += 1;
+    if(tok->data.hash == h_short)     t.is_short   += 1;
+    if(tok->data.hash == h_int)       t.is_int     += 1;
+    if(tok->data.hash == h_long)      t.is_long    += 1;
+    if(tok->data.hash == h_float)     t.is_float   += 1;
+    if(tok->data.hash == h_double)    t.is_double  += 1;
 
     if(!(twin(&t, &(type){           .is_void=1            })
        ||twin(&t, &(type){           .is_bool=1            })
@@ -284,30 +280,63 @@ int decl_spec(word* tok)
        )) fail("invalid type");
   }
 
-  return 0;
+  return t;
 }
 
-void sift(word* list)
-{
+node* asgn(word** tok) {
+    return NULL;
+}
+
+node* expr(word** tok) {
+    node* n = asgn(tok);
+    if((*tok)->kind == tokd(",")) return NULL;
+    return n;
+}
+
+node* prim(word** tok) {
+    node* n;
+    if((*tok)->kind == tokd("(")) {
+      node* e = expr(tok);
+      //skip(tok, tokd(")"));
+    }
+    return n;
+}
+
+void sift(word* list, hash** map) {
   // unit = function | declaration
   // declaration = variable | type
   // (typedef/struct/union/enum are treated as meta types)
-  while(list)
-  {
+  while(list) {
     // every statement begins with type
-    decl_spec(list);
-    printf("%x %c\n", list->kind, list->kind);
+    //type t = decl_spec(list, map);
+
+    //if(t.is_typedef) {
+    //  // type alias
+    //}
+
+    //if(list->next->kind == tokd("(")) {
+    //  // function
+    //}
+
+    //if(list->next->kind == tokd(";")) {
+    //  // variable
+    //}
+
+    if(list->kind < 4) printf("%x %s\n", list->kind, list->data.hash->key);
+    else               printf("%x %c\n", list->kind, list->kind);
     list = list->next;
   }
 }
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
   if(argc != 2) return 1;
 
+  hash* map;
+  hnew(&map);
+
   file* code = read(argv[1]);
-  word* list = chop(code);
-  sift(list);
+  word* list = chop(code, &map);
+  sift(list, &map);
   drop(code);
 
   return 0;

@@ -1,29 +1,51 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-#define INIT (1<<6)
-#define MARK 70
-#define BARE 50
+#define SIZE (1 << 13)
 
-unsigned long pile(unsigned long all, unsigned char new)
-{
-    return all ? (all * 0x100000001b3) ^ new : 0xcbf29ce484222325;
+struct hash {
+  int   size;
+  int   used;
+  item* cask;
+};
+
+void hnew(hash** map) {
+  (*map) = malloc(sizeof(hash) + SIZE * sizeof(item));
+  (*map)->size = SIZE;
+  (*map)->used = 0;
+  (*map)->cask = (void*)((*map) + 1);
+  for(int i = 0; i < (*map)->size; i++) (*map)->cask[i] = (item){};
 }
 
-void hget(hash* map, char* key)
-{
+static long  same(char* x, char* y, int l) {
+  while(l && *x && *x++==*y++) l--;
+  return !l || *x==*y;
 }
 
-void hput(hash* map, char* key, void* dat)
-{
-  if (!map->cask) {
-    map->cask = malloc(INIT * sizeof(item));
-    map->size = INIT;
-  } else if ((map->used * 100) / map->size >= MARK) {
-    //rehash(map);
+item* hget(hash** map, char* key, long len) {
+  unsigned long idx = 0x1;
+  for(int i = 0; i < len; i++) idx += (idx << 5) + (idx >> 27) + key[i];
+
+  item* seek = (*map)->cask + (idx & ((*map)->size - 1));
+  while(seek->key && !same(seek->key, key, len)) {
+    if(!seek->next) {
+      seek->next = malloc(sizeof(item));
+      *seek->next = (item){};
+    }
+    seek = seek->next;
   }
+  if(!seek->key) {
+    seek->key = malloc(len+1);
+    for(int i = 0; i < len; i++) seek->key[i] = key[i];
+    seek->key[len] = '\0';
+    seek->len = len;
+  }
+
+  return seek;
 }
 
-void hdel(hash* map, char* key)
-{
+void  hrid(hash** map) {
+  for(int i = 0; i < (*map)->size; i++) free((*map)->cask[i].key);
+  free(*map);
 }
+
