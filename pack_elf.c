@@ -1,5 +1,5 @@
 // vim: ts=2:sw=2
-#include "../core.h"
+#include "core.h"
 
 typedef struct {
   union {

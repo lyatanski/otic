@@ -14,9 +14,9 @@ typedef union {
 } from;
 
 struct word {
-#define tokid  1
-#define tokstr 2
-#define toknum 3
+#define toktag 1
+#define toknum 2
+#define tokstr 3
 #define tok1(x) (x[0])
 #define tok2(x) (x+=1, x[-1] | x[0]  << 8)
 #define tok3(x) (x+=2, x[-2] | x[-1] << 8 | x[0] << 16)
@@ -89,6 +89,9 @@ file* read(const char* name) {
 }
 
 void emit(const file* f) {
+  FILE* fp = fopen(f->name, "wb");
+  fwrite(f->head, 1, f->size, fp);
+  fclose(fp);
 }
 
 void drop(file* f) {
@@ -160,19 +163,21 @@ word* chop(file* f, hash** h) {
         // else fall trough to number
       case '0' ... '9':
         tok = c++;
-        if(c[0] == '0' && (c[2] == 'X' || c[2] == 'x'))
-          while((*c >= '0' && *c <= '9')
-             || (*c >= 'A' && *c <= 'F') || (*c >= 'a' && *c <= 'f')) ++c;
-        if(c[0] == '0' && (c[2] == 'B' || c[2] == 'b'))
-          while(*c == '0' || *c == '1') ++c;
+        //if(c[0] == '0' && (c[2] == 'X' || c[2] == 'x'))
+        //  while((*c >= '0' && *c <= '9')
+        //     || (*c >= 'A' && *c <= 'F') || (*c >= 'a' && *c <= 'f')) ++c;
+        //if(c[0] == '0' && (c[2] == 'B' || c[2] == 'b'))
+        //  while(*c == '0' || *c == '1') ++c;
+        while(*c >= '0' && *c <= '9') ++c;
         dict(&tail, toknum, hget(h, tok, c - tok));
+        c--;
         break;
       default:
         tok = c;
         while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
            || (*c >= '0' && *c <= '9') || *c == '_') c++;
         if(c - tok > 0) {
-          dict(&tail, tokid, hget(h, tok, c - tok));
+          dict(&tail, toktag, hget(h, tok, c - tok));
           c--;
         }
         break;
