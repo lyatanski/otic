@@ -1,6 +1,7 @@
 // vim: ts=2:sw=2
 #include <stdio.h>      /* FILE, printf */
 #include <stdlib.h>     /* malloc, free */
+#include <stdint.h>     /* uint32_t...  */
 
 #define fail(...) (printf(__VA_ARGS__), exit(1))
 

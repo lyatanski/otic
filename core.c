@@ -2,11 +2,11 @@
 #include "core.h"
 
 struct file {
-  unsigned char* head;
-  unsigned char* tail;
+  char*          head;
+  char*          tail;
   unsigned int   size;
-  unsigned char  name[512];
-  unsigned char  data[1];
+  char           name[512];
+  char           data[1];
 };
 
 typedef union {
@@ -17,9 +17,9 @@ struct word {
 #define tokid  1
 #define tokstr 2
 #define toknum 3
-#define tok1(x) (*x)
-#define tok2(x) (*x++ | *x   << 8)
-#define tok3(x) (*x++ | *x++ << 8 | *x << 16)
+#define tok1(x) (x[0])
+#define tok2(x) (x+=1, x[-1] | x[0]  << 8)
+#define tok3(x) (x+=2, x[-2] | x[-1] << 8 | x[0] << 16)
 #define tokd(x) (* (int*)x"\0\0\0\0")
   int   kind;
   word* next;
@@ -97,8 +97,8 @@ void drop(file* f) {
 
 word* chop(file* f, hash** h) {
   int   line = 0;
-  unsigned char* tok;
-  unsigned char* c = f->head;
+  char* tok;
+  char* c = f->head;
   word  head = {};
   word* tail = &head;
 
@@ -161,20 +161,20 @@ word* chop(file* f, hash** h) {
       case '0' ... '9':
         tok = c++;
         if(c[0] == '0' && (c[2] == 'X' || c[2] == 'x'))
-          while(*c >= '0' && *c <= '9'
-             || *c >= 'A' && *c <= 'F'
-             || *c >= 'a' && *c <= 'f') ++c;
+          while((*c >= '0' && *c <= '9')
+             || (*c >= 'A' && *c <= 'F') || (*c >= 'a' && *c <= 'f')) ++c;
         if(c[0] == '0' && (c[2] == 'B' || c[2] == 'b'))
           while(*c == '0' || *c == '1') ++c;
         dict(&tail, toknum, hget(h, tok, c - tok));
         break;
       default:
         tok = c;
-        while(*c >= 'a' && *c <= 'z'
-           || *c >= 'A' && *c <= 'Z'
-           || *c >= '0' && *c <= '9'
-           || *c == '_') c++;
-        if(c - tok > 0) dict(&tail, tokid, hget(h, tok, c - tok));
+        while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
+           || (*c >= '0' && *c <= '9') || *c == '_') c++;
+        if(c - tok > 0) {
+          dict(&tail, tokid, hget(h, tok, c - tok));
+          c--;
+        }
         break;
     }
     ++c;
@@ -295,7 +295,7 @@ node* expr(word** tok) {
 node* prim(word** tok) {
     node* n;
     if((*tok)->kind == tokd("(")) {
-      node* e = expr(tok);
+      n = expr(tok);
       //skip(tok, tokd(")"));
     }
     return n;
@@ -325,5 +325,6 @@ void sift(word* list, hash** map) {
     else               printf("%x %c\n", list->kind, list->kind);
     list = list->next;
   }
+  //printf("%x \n", tokd("->"));
 }
 
