@@ -20,11 +20,11 @@ typedef struct item {
 
 void  hnew(hash** map);
 item* hget(hash** map, char* key, long len);
-#define sget(h, k) hget(h, k, sizeof(k))
+#define sget(h, k) hget(h, k, sizeof(k)-1)
 void  hrid(hash** map);
 
-file* read(const char* name);
-void drop(file* f);
+file* scan(const char* name);
+void  drop(file* f);
 word* chop(file* f, hash** h);
-void sift(word* list, hash** map);
+void  tend(word* list, hash** map);
 

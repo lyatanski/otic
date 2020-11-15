@@ -7,9 +7,9 @@ int main(int argc, char** argv) {
   hash* map;
   hnew(&map);
 
-  file* code = read(argv[1]);
+  file* code = scan(argv[1]);
   word* list = chop(code, &map);
-  sift(list, &map);
+  tend(list, &map);
   drop(code);
 
   return 0;
