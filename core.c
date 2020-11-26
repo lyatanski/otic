@@ -20,15 +20,67 @@ struct word {
 #define tok1(x) (x[0])
 #define tok2(x) (x+=1, x[-1] | x[0]  << 8)
 #define tok3(x) (x+=2, x[-2] | x[-1] << 8 | x[0] << 16)
-#define tokd(x) (* (int*)x"\0\0\0\0")
+#define toki(x, y, z, ...) (x | y << 8 | z << 16)
+#define tokd(...) toki(__VA_ARGS__, 0, 0, 0)
   int   kind;
   word* next;
   int   size;
   from  data;
 };
 
+typedef enum {
+  nd_add,
+  nd_sub,
+  nd_mul,
+  nd_div,
+
+  nd_bitor,
+  nd_bitxor,
+  nd_bitand,
+  nd_bitnot,
+
+  nd_shl,
+  nd_shr,
+
+  nd_eq,
+  nd_ne,
+  nd_lt,
+  nd_le,
+
+  nd_asgn,
+
+  nd_member,
+  nd_addrof,
+  nd_deref,
+
+  nd_not,
+  nd_and,
+  nd_or,
+
+  nd_ret,
+  nd_test,
+  nd_loop,
+  nd_break,
+  nd_continue,
+  nd_switch,
+  nd_case,
+
+  nd_size,
+  nd_goto,
+  nd_label,
+  nd_call,
+  nd_var,
+  nd_num,
+  nd_cast,
+  nd_null,
+} spec;
+
+typedef struct node node;
 struct node {
-    int i;
+  spec  kind;
+  node* cond;
+  node* then;
+  node* altr;
 };
 
 typedef struct {
@@ -58,19 +110,7 @@ typedef struct {
 
 } type;
 
-void term(word** prev, int kind, from data) {
-  word* tok = malloc(sizeof(word));
-  tok->kind = kind;
-  tok->next = NULL;
-  tok->size = 0;
-  tok->data = data;
-  (*prev)->next = tok;
-  (*prev) = tok;
-}
-
-#define dict(p, k, ...) term(p, k, (from){__VA_ARGS__})
-
-file* scan(const char* name) {
+file* scan(char* name) {
   file* f;
 
   FILE* fp = fopen(name, "r");
@@ -87,8 +127,27 @@ file* scan(const char* name) {
   fclose(fp);
   return f;
 }
+void term(word** prev, int kind, from data) {
+  word* tok = malloc(sizeof(word));
+  tok->kind = kind;
+  tok->next = NULL;
+  tok->size = 0;
+  tok->data = data;
+  (*prev)->next = tok;
+  (*prev) = tok;
+}
+#define dict(p, k, ...) term(p, k, (from){__VA_ARGS__})
 
-void emit(const file* f) {
+node* grow(spec kind) {
+  node* nd = malloc(sizeof(node));
+  nd->kind = kind;
+  nd->cond = NULL;
+  nd->then = NULL;
+  nd->altr = NULL;
+  return nd;
+}
+
+void emit(file* f) {
   FILE* fp = fopen(f->name, "wb");
   fwrite(f->head, 1, f->size, fp);
   fclose(fp);
@@ -192,11 +251,11 @@ int same(word** tok, item* hash) {
     return ((*tok)->kind == toktag && (*tok)->data.hash == hash)? (*tok) = (*tok)->next, 1 : 0;
 }
 
-int twin(word** tok, int kind) {
+int twin(word** tok, int   kind) {
     return ((*tok)->kind == kind)? (*tok) = (*tok)->next, 1 : 0;
  }
 
-int skip(word** tok, int kind) {
+int skip(word** tok, int   kind) {
     if((*tok)->kind != kind) fail("expected %x, got %x %s\n", kind, (*tok)->kind, (*tok)->kind == 1? (*tok)->data.hash->key: "");
     (*tok) = (*tok)->next;
     return 1;
@@ -286,55 +345,128 @@ type decl_spec(word** tok, hash** map) {
 
 void args(word** tok, hash** map) {
   word* p = *tok;
-  skip(tok, tokd("("));
-  while(p->kind != tokd(")")) {
+  skip(tok, tokd('('));
+  while(p->kind != tokd(')')) {
     p = p->next;
   }
-  skip(tok, tokd(")"));
+  skip(tok, tokd(')'));
 }
 
-void expr(word** tok, hash** map) {
+node* expr(word** tok, hash** map) {
+    int rank = 0;
+
     if((*tok)->kind == toknum) {
+      printf("expr num %d\n", nd_num);
       *tok = (*tok)->next;
+      return grow(nd_num);
     }
     else {
-    printf("expr unexpected %x %s\n", (*tok)->kind, (*tok)->kind == 1? (*tok)->data.hash->key: "");
+      printf("expr unexpected %x %s\n", (*tok)->kind, (*tok)->kind == 1? (*tok)->data.hash->key: "");
+    }
+    return grow(nd_null);
+
+    while((*tok)->kind >= rank) {
+      switch((*tok)->kind) {
+        case tokd('='):      break;
+        case tokd('?'):      break;
+        case tokd('|'):      break;
+        case tokd('^'):      break;
+        case tokd('&'):      break;
+        case tokd('<'):      break;
+        case tokd('>'):      break;
+        case tokd('+'):      break;
+        case tokd('-'):      break;
+        case tokd('*'):      break;
+        case tokd('/'):      break;
+        case tokd('%'):      break;
+        case tokd('['):      break;
+        case tokd('|', '|'): break;
+        case tokd('&', '&'): break;
+        case tokd('=', '='): break;
+        case tokd('!', '='): break;
+        case tokd('<', '='): break;
+        case tokd('>', '='): break;
+        case tokd('<', '<'): break;
+        case tokd('>', '>'): break;
+        case tokd('+', '+'): case tokd('-', '-'):  break;
+        default: fail("error %x", (*tok)->kind); break;
+      }
     }
 }
 
-void stmt(word** tok, hash** map) {
-  if(twin(tok, tokd("{"))) {
-    stmt(tok, map);
-    skip(tok, tokd("}"));
+node* stmt(word** tok, hash** map) {
+  node* elem = grow(nd_null);
+
+  printf("stmt ");
+  if(twin(tok, tokd('{'))) {
+    printf("block \n");
+    while(!twin(tok, tokd('}')))
+      elem->then = stmt(tok, map);
   }
   else if(same(tok, sget(map, "if"))) {
-    skip(tok, tokd("("));
+    printf("if %d\n", nd_test);
+    skip(tok, tokd('('));
     expr(tok, map);
-    skip(tok, tokd(")"));
+    skip(tok, tokd(')'));
     stmt(tok, map);
+    if(same(tok, sget(map, "else")))
+      stmt(tok, map);
   }
   else if(same(tok, sget(map, "while"))) {
-    skip(tok, tokd("("));
+    printf("if %d\n", nd_loop);
+    skip(tok, tokd('('));
     expr(tok, map);
-    skip(tok, tokd(")"));
+    skip(tok, tokd(')'));
     stmt(tok, map);
   }
   else if(same(tok, sget(map, "return"))) {
-    printf("stmt return\n");
-    expr(tok, map);
-    skip(tok, tokd(";"));
+    printf("return %d\n", nd_ret);
+    elem->kind = nd_ret;
+    elem->then = expr(tok, map);
+    skip(tok, tokd(';'));
   }
   else {
-    printf("stmt expr\n");
+    printf("expr\n");
     expr(tok, map);
-    skip(tok, tokd(";"));
+    skip(tok, tokd(';'));
   }
+
+  return elem;
 }
 
-void tend(word* list, hash** map) {
+//#include <string.h>
+//void show(node* root, char* offset) {
+//  char* pipe     = " │ ";
+//  char* cross    = " ├─";
+//  char* corner   = " └─";
+//  char* space    = "   ";
+//  char  dest[50] = {};
+//
+//  printf("%s%d\n", offset, root->kind);
+//  node* n = root;
+//  if(n->altr) {
+//    strcat(dest, offset);
+//    strcat(dest, space);
+//  }
+//  else {
+//    strcat(dest, offset);
+//    strcat(dest, pipe);
+//  }
+//  //printf("%s%s%d\n", offset, n ? corner : cross, n->kind);
+//  while(n->then) {
+//    n = n->then;
+//    show(n, dest);
+//  }
+//}
+
+void make(mode* self) {
   // unit = function
   //      | variable
   //      | typedecl
+  word* list = self->list;
+  hash** map = &(self->pile);
+
+  node* elem = NULL;
   while(list) {
     // every statement begins with type
     //type t = decl_spec(&list, map);
@@ -344,13 +476,14 @@ void tend(word* list, hash** map) {
     else               printf("skipping %x %c\n", list->kind, list->kind);
     list = list->next;
 
-    if(list->kind == toktag && list->next->kind == tokd("(")) {
+    if(list->kind == toktag && list->next->kind == tokd('(')) {
       // function
       list = list->next;
       printf("its a function \n");
       args(&list, map);
-      stmt(&list, map);
+      elem = stmt(&list, map);
     }
   }
+  //show(elem, "");
 }
 

@@ -43,10 +43,7 @@ int ehdr64(char* exe) {
   ehdr* h;
   h = (ehdr*)exe;
   for(int i = 0; i < 16; i++) h->id[i] = 0;
-  h->ident[0] = 0x7F;
-  h->ident[1] = 'E';
-  h->ident[2] = 'L';
-  h->ident[3] = 'F';
+  h->ident[0] = 0x7F; h->ident[1] = 'E'; h->ident[2] = 'L'; h->ident[3] = 'F';
   h->class    = 2;
   h->data     = 1;
   h->ver      = 1;

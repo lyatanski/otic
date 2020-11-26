@@ -11,20 +11,27 @@ typedef struct node node;
 
 typedef struct hash hash;
 typedef struct item item;
-typedef struct item {
+struct item {
   char* key;
   int   len;
   void* val;
   item* next;
-} item;
+};
+
+typedef struct {
+  char* name;
+  word* list;
+  hash* pile;
+} mode;
 
 void  hnew(hash** map);
 item* hget(hash** map, char* key, long len);
 #define sget(h, k) hget(h, k, sizeof(k)-1)
 void  hrid(hash** map);
 
-file* scan(const char* name);
-void  drop(file* f);
-word* chop(file* f, hash** h);
-void  tend(word* list, hash** map);
+file* scan(char*);
+word* chop(file*, hash**);
+void  make(mode*);
+void  emit(file*);
+void  drop(file*);
 
