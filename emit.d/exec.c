@@ -9,8 +9,8 @@
 
 typedef int (*func)();
 
-typedef union { struct { uint8_t b:1, x:1, r:1, w:1, _:4; }; uint8_t a; } rex;
-typedef union { struct { uint8_t rm:3, reg:3, mod:2;      }; uint8_t a; } modrm;
+#define rex(...) (*(uint8_t*)&(struct { uint8_t b:1, x:1, r:1, w:1, _:4; }){._=4, __VA_ARGS__})
+#define modrm(...) (*(uint8_t*)&(struct { uint8_t rm:3, reg:3, mod:2; }){__VA_ARGS__})
 
 int ib(char* exe, uint8_t  val) { *(typeof(val)*)exe = val; return sizeof(val); }
 int iw(char* exe, uint16_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
@@ -19,7 +19,7 @@ int io(char* exe, uint64_t val) { *(typeof(val)*)exe = val; return sizeof(val); 
 
 //int mov(char* exe, uint32_t val) {
 //  int size = 0;
-//  exe[size++] = (rex){._=4, .w=1}.a;
+//  exe[size++] = rex(.w=1);
 //  exe[size++] = 0xc7;
 //  exe[size++] = (modrm){.mod=3}.a;
 //  return size;
@@ -42,8 +42,26 @@ int call(char* exe                                       ) {
 
 #define eax 0
 
-#define mov 0xb8
-#define ret 0xc3
+#define mov    0xb8
+#define ret    0xc3
+#define jcs    0x70
+#define jcl    0x0f80
+#define    jo  0x0
+#define    jno 0x1
+#define    jb  0x2
+#define    jae 0x3
+#define    je  0x4
+#define    jne 0x5
+#define    jbe 0x6
+#define    ja  0x7
+#define    js  0x8
+#define    jns 0x9
+#define    jp  0xa
+#define    jnp 0xb
+#define    jl  0xc
+#define    jge 0xd
+#define    jle 0xe
+#define    jg  0xf
 
 const int size = 60;
 int text(char* exe) {
