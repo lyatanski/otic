@@ -72,7 +72,7 @@ int main() {
 	//i x = {.br={.op=0b1101011, .opc=0b0010, .op2=0b11111}};
 	i x = {.br={.op=0b1101011, .opc=0b0010, .op2=0b11111, .rn=0b11110}};
   printf("%x\n", 0xd65f03c0);
-  printf("%x\n", x.n);
+  printf("%x\n", (i){.br={.op=0b1101011, .opc=0b0010, .op2=0b11111, .rn=0b11110}}.n);
 
   return 0;
 }
