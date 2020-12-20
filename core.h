@@ -21,6 +21,9 @@ struct item {
 
 typedef void (*vent)();
 typedef struct {
+  vent  prep;
+  vent  halt;
+  vent  jump;
   vent  show;
 } emit;
 
