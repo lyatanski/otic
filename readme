@@ -1,9 +1,10 @@
 goals:
 - small
 - retargetable
-- portable (no external and even minimal libc dependencies)
+- portable (no external dependencies and minimal libc dependencies)
 - complete toolchain
   - compiler & assembler
   - linker
+  - interpreter (compile & load)
   - build system
   - package manager
