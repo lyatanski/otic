@@ -1,15 +1,19 @@
 #include "core.h"
 #include <stdio.h>
 
-typedef union {
-  struct { uint32_t rd :5, i16:16, hw :2, op :6, opc:2, sf :1; };
-  struct { uint32_t op4:5, rn : 5, op3:6, op2:5, opc:4, op :7; } br;
+typedef enum {
+  r0,  r1,  r2,  r3,  r4,  r5,  r6,  r7,  r8,  r9,
+  r10, r11, r12, r13, r14, r15, r16, r17, r18, r19,
+  r20, r21, r22, r23, r24, r25, r26, r27, r28, r29,
+  r30 } arm8_regs;
 
-  struct { uint32_t op4:5, rn : 5, op3:6, op2:5, opc:4, op :7; } idat;
-  struct { uint32_t op4:5, rn : 5, op3:6, op2:5, opc:4, op :7; } flow;
-  struct { uint32_t op4:5, rn : 5, op3:6, op2:5, opc:4, op :7; } ldst;
-  struct { uint32_t op4:5, rn : 5, op3:6, op2:5, opc:4, op :7; } rdat;
-  struct { uint32_t op4:5, rn : 5, op3:6, op2:5, opc:4, op :7; } sdat;
+typedef union {
+  struct { uint32_t rd  : 5, imm :16, hw  : 2, _   : 6, opc : 2, sf  : 1; } dati;
+  struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, _   : 7; } brur;
+  struct { uint32_t cond: 4, o0  : 1, imm :19, o1  : 1,          _   : 7; } brci;
+  //struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, op  : 7; } ldst;
+  //struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, op  : 7; } rdat;
+  //struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, op  : 7; } sdat;
 
   uint32_t n;
 } arm8_form;
@@ -50,9 +54,9 @@ typedef enum {
   I3206_BL        = 0x94000000,
 
   // Unconditional branch (register)
-  I3207_BR        = 0xd61f0000,
-  I3207_BLR       = 0xd63f0000,
-  I3207_RET       = 0xd65f0000,
+  brur_br        = 0xd61f0000,
+  brur_blr       = 0xd63f0000,
+  brur_ret       = 0xd65f0000,
 
   // AdvSIMD load/store single structure
   I3303_LD1R      = 0x0d40c000,
@@ -116,9 +120,9 @@ typedef enum {
   I3404_EORI      = 0x52000000,
 
   // Move wide immediate instructions
-  I3405_MOVN      = 0x12800000,
-  I3405_MOVZ      = 0x52800000,
-  I3405_MOVK      = 0x72800000,
+  dati_movn      = 0x12800000,
+  dati_movz      = 0x52800000,
+  dati_movk      = 0x72800000,
 
   // PC relative addressing instructions
   I3406_ADR       = 0x10000000,
@@ -243,10 +247,8 @@ typedef enum {
 
 void arm8_emit() {
   printf("armv8\n");
-  //mov  w0, #0x2a
-  printf("%x\n", (arm8_form){.op=0b100101, .opc=2, .i16=42}.n);
-  //ret
-  printf("%x\n", 0xd65f03c0);
+  printf("%x\n", form(dati, movz, .imm=42, .rd=0));
+  printf("%x\n", form(brur, ret, .rn=r30));
 }
 
 void arm8_calc() {
