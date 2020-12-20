@@ -10,8 +10,11 @@ int main(int argc, char** argv) {
   mode self;
   init(&self);
 
-  if(argv[1][0] == 'a') self.arch = arm8;
-  if(argv[1][0] == 'i') self.arch = i386;
+  switch(argv[1][0]) {
+    case 'a': self.arch = arm8; break;
+    case 'i': self.arch = i386; break;
+    default : return 1;
+  }
 
   file* code = scan(argv[2]);
   self.list = chop(code, &self.pile);
