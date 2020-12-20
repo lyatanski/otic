@@ -1,17 +1,20 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
+extern emit arm8;
+extern emit i386;
+
 int main(int argc, char** argv) {
-  if(argc != 2) return 1;
+  if(argc != 3) return 1;
 
   mode self;
+  init(&self);
 
-  hash* map;
-  hnew(&map);
+  if(argv[1][0] == 'a') self.arch = arm8;
+  if(argv[1][0] == 'i') self.arch = i386;
 
-  self.pile = map;
-  file* code = scan(argv[1]);
-  self.list = chop(code, &map);
+  file* code = scan(argv[2]);
+  self.list = chop(code, &self.pile);
   make(&self);
   drop(code);
 

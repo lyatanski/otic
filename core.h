@@ -1,4 +1,5 @@
 // vim: ts=2:sw=2
+#pragma once
 #include <stdio.h>      /* FILE, printf */
 #include <stdlib.h>     /* malloc, free */
 #include <stdint.h>     /* uint32_t...  */
@@ -18,11 +19,19 @@ struct item {
   item* next;
 };
 
+typedef void (*vent)();
+typedef struct {
+  vent  show;
+} emit;
+
 typedef struct {
   char* name;
   word* list;
   hash* pile;
+  emit  arch;
 } mode;
+
+void  init(mode*  self);
 
 void  hnew(hash** map);
 item* hget(hash** map, char* key, long len);
@@ -32,6 +41,5 @@ void  hrid(hash** map);
 file* scan(char*);
 word* chop(file*, hash**);
 void  make(mode*);
-void  emit(file*);
 void  drop(file*);
 

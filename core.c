@@ -28,87 +28,44 @@ struct word {
   from  data;
 };
 
-typedef enum {
-  nd_add,
-  nd_sub,
-  nd_mul,
-  nd_div,
+//typedef struct node node;
+//struct node {
+//  spec  kind;
+//  node* cond;
+//  node* then;
+//  node* altr;
+//};
 
-  nd_bitor,
-  nd_bitxor,
-  nd_bitand,
-  nd_bitnot,
+//typedef struct {
+//  unsigned short is_void     :2;
+//  unsigned short is_bool     :2;
+//  unsigned short is_char     :2;
+//  unsigned short is_short    :2;
+//  unsigned short is_int      :2;
+//  unsigned short is_long     :2;
+//  unsigned short is_float    :2;
+//  unsigned short is_double   :2;
+//
+//  unsigned short align;
+//
+//  unsigned int   is_typedef  :1;
+//  unsigned int   is_static   :1;
+//  unsigned int   is_extern   :1;
+//  unsigned int   is_inline   :1;
+//  unsigned int   is_thread   :1;
+//
+//  unsigned int   is_struct   :1;
+//  unsigned int   is_union    :1;
+//  unsigned int   is_enum     :1;
+//
+//  unsigned int   is_sig   :1;
+//  unsigned int   is_abs :1;
+//
+//} type;
 
-  nd_shl,
-  nd_shr,
-
-  nd_eq,
-  nd_ne,
-  nd_lt,
-  nd_le,
-
-  nd_asgn,
-
-  nd_member,
-  nd_addrof,
-  nd_deref,
-
-  nd_not,
-  nd_and,
-  nd_or,
-
-  nd_ret,
-  nd_test,
-  nd_loop,
-  nd_break,
-  nd_continue,
-  nd_switch,
-  nd_case,
-
-  nd_size,
-  nd_goto,
-  nd_label,
-  nd_call,
-  nd_var,
-  nd_num,
-  nd_cast,
-  nd_null,
-} spec;
-
-typedef struct node node;
-struct node {
-  spec  kind;
-  node* cond;
-  node* then;
-  node* altr;
-};
-
-typedef struct {
-  unsigned short is_void     :2;
-  unsigned short is_bool     :2;
-  unsigned short is_char     :2;
-  unsigned short is_short    :2;
-  unsigned short is_int      :2;
-  unsigned short is_long     :2;
-  unsigned short is_float    :2;
-  unsigned short is_double   :2;
-
-  unsigned short align;
-
-  unsigned int   is_typedef  :1;
-  unsigned int   is_static   :1;
-  unsigned int   is_extern   :1;
-  unsigned int   is_inline   :1;
-  unsigned int   is_thread   :1;
-
-  unsigned int   is_struct   :1;
-  unsigned int   is_union    :1;
-  unsigned int   is_enum     :1;
-
-  unsigned int   is_sig   :1;
-  unsigned int   is_abs :1;
-
-} type;
+void  init(mode* self) {
+  hnew(&self->pile);
+}
 
 file* scan(char* name) {
   file* f;
@@ -138,20 +95,20 @@ void term(word** prev, int kind, from data) {
 }
 #define dict(p, k, ...) term(p, k, (from){__VA_ARGS__})
 
-node* grow(spec kind) {
-  node* nd = malloc(sizeof(node));
-  nd->kind = kind;
-  nd->cond = NULL;
-  nd->then = NULL;
-  nd->altr = NULL;
-  return nd;
-}
+//node* grow(spec kind) {
+//  node* nd = malloc(sizeof(node));
+//  nd->kind = kind;
+//  nd->cond = NULL;
+//  nd->then = NULL;
+//  nd->altr = NULL;
+//  return nd;
+//}
 
-void emit(file* f) {
-  FILE* fp = fopen(f->name, "wb");
-  fwrite(f->head, 1, f->size, fp);
-  fclose(fp);
-}
+//void emit(file* f) {
+//  FILE* fp = fopen(f->name, "wb");
+//  fwrite(f->head, 1, f->size, fp);
+//  fclose(fp);
+//}
 
 void drop(file* f) {
     free(f);
@@ -265,105 +222,122 @@ int know(word** tok, hash** map) {
   return 1;
 }
 
-type decl_spec(word** tok, hash** map) {
-  type t = {};
-  item* h_typedef  = sget(map, "typedef");
-  item* h_static   = sget(map, "static");
-  item* h_extern   = sget(map, "extern");
-  item* h_inline   = sget(map, "inline");
-  item* h_struct   = sget(map, "struct");
-  item* h_union    = sget(map, "union");
-  item* h_enum     = sget(map, "enum");
-  item* h_signed   = sget(map, "signed");
-  item* h_unsigned = sget(map, "unsigned");
-  item* h_void     = sget(map, "void");
-  item* h_bool     = sget(map, "_Bool");
-  item* h_char     = sget(map, "char");
-  item* h_short    = sget(map, "short");
-  item* h_int      = sget(map, "int");
-  item* h_long     = sget(map, "long");
-  item* h_float    = sget(map, "float");
-  item* h_double   = sget(map, "double");
+void type(word** tok, hash** map) {
+  // "typedef" type                  name     ";"
+  // "struct"  name?             "{" decl "}" ";"
+  // "union"   name?             "{" decl "}" ";"
+  // "enum"    name?             "{" list "}" ";"
 
-  while(know(tok, map)) {
-    if((*tok)->data.hash == h_typedef)   t.is_typedef  = 1;
-    if((*tok)->data.hash == h_static)    t.is_static   = 1;
-    if((*tok)->data.hash == h_extern)    t.is_extern   = 1;
-    if((*tok)->data.hash == h_inline)    t.is_inline   = 1;
+  word* list = *tok;
 
-    if((*tok)->data.hash == h_struct)    t.is_struct   = 1;
-    if((*tok)->data.hash == h_union)     t.is_union    = 1;
-    if((*tok)->data.hash == h_enum)      t.is_enum     = 1;
+  //skip type tag
+  if(list->kind < 4) printf("skipping type %x %s\n", list->kind, list->data.hash->key);
+  else               printf("skipping type %x %c\n", list->kind, list->kind);
+  *tok = list = list->next;
 
-    if((*tok)->data.hash == h_signed)    t.is_sig      = 1;
-    if((*tok)->data.hash == h_unsigned)  t.is_abs      = 1;
+  if(list->kind < 4) printf("skipping name %x %s\n", list->kind, list->data.hash->key);
+  else               printf("skipping name %x %c\n", list->kind, list->kind);
+  *tok = list = list->next;
 
-    if((*tok)->data.hash == h_void)      t.is_void    += 1;
-    if((*tok)->data.hash == h_bool)      t.is_bool    += 1;
-    if((*tok)->data.hash == h_char)      t.is_char    += 1;
-    if((*tok)->data.hash == h_short)     t.is_short   += 1;
-    if((*tok)->data.hash == h_int)       t.is_int     += 1;
-    if((*tok)->data.hash == h_long)      t.is_long    += 1;
-    if((*tok)->data.hash == h_float)     t.is_float   += 1;
-    if((*tok)->data.hash == h_double)    t.is_double  += 1;
+  //item* h_typedef  = sget(map, "typedef");
+  //item* h_static   = sget(map, "static");
+  //item* h_extern   = sget(map, "extern");
+  //item* h_inline   = sget(map, "inline");
+  //item* h_struct   = sget(map, "struct");
+  //item* h_union    = sget(map, "union");
+  //item* h_enum     = sget(map, "enum");
+  //item* h_signed   = sget(map, "signed");
+  //item* h_unsigned = sget(map, "unsigned");
+  //item* h_void     = sget(map, "void");
+  //item* h_bool     = sget(map, "_Bool");
+  //item* h_char     = sget(map, "char");
+  //item* h_short    = sget(map, "short");
+  //item* h_int      = sget(map, "int");
+  //item* h_long     = sget(map, "long");
+  //item* h_float    = sget(map, "float");
+  //item* h_double   = sget(map, "double");
 
-    //if(!(twin(&t, &(type){           .is_void=1            })
-    //   ||twin(&t, &(type){           .is_bool=1            })
-    //   ||twin(&t, &(type){.is_sig=1, .is_char=1            })
-    //   ||twin(&t, &(type){.is_abs=1, .is_char=1            })
-    //   ||twin(&t, &(type){           .is_short=1           })
-    //   ||twin(&t, &(type){           .is_short=1, .is_int=1})
-    //   ||twin(&t, &(type){.is_sig=1, .is_short=1           })
-    //   ||twin(&t, &(type){.is_sig=1, .is_short=1, .is_int=1})
-    //   ||twin(&t, &(type){.is_abs=1, .is_short=1           })
-    //   ||twin(&t, &(type){.is_abs=1, .is_short=1, .is_int=1})
-    //   ||twin(&t, &(type){                        .is_int=1})
-    //   ||twin(&t, &(type){.is_sig=1                        })
-    //   ||twin(&t, &(type){.is_sig=1,              .is_int=1})
-    //   ||twin(&t, &(type){.is_abs=1                        })
-    //   ||twin(&t, &(type){.is_abs=1,              .is_int=1})
-    //   ||twin(&t, &(type){           .is_long=1            })
-    //   ||twin(&t, &(type){           .is_long=1,  .is_int=1})
-    //   ||twin(&t, &(type){           .is_long=2,  .is_int=1})
-    //   ||twin(&t, &(type){.is_sig=1, .is_long=1            })
-    //   ||twin(&t, &(type){.is_sig=1, .is_long=2            })
-    //   ||twin(&t, &(type){.is_sig=1, .is_long=1,  .is_int=1})
-    //   ||twin(&t, &(type){.is_sig=1, .is_long=2,  .is_int=1})
-    //   ||twin(&t, &(type){.is_abs=1, .is_long=1            })
-    //   ||twin(&t, &(type){.is_abs=1, .is_long=2            })
-    //   ||twin(&t, &(type){.is_abs=1, .is_long=1,  .is_int=1})
-    //   ||twin(&t, &(type){.is_abs=1, .is_long=2,  .is_int=1})
-    //   ||twin(&t, &(type){           .is_float=1           })
-    //   ||twin(&t, &(type){           .is_double=1          })
-    //   )) fail("invalid type");
-    *tok = (*tok)->next;
-    break;
-  }
+  //while(know(tok, map)) {
+  //  if((*tok)->data.hash == h_typedef)   t.is_typedef  = 1;
+  //  if((*tok)->data.hash == h_static)    t.is_static   = 1;
+  //  if((*tok)->data.hash == h_extern)    t.is_extern   = 1;
+  //  if((*tok)->data.hash == h_inline)    t.is_inline   = 1;
 
-  return t;
+  //  if((*tok)->data.hash == h_struct)    t.is_struct   = 1;
+  //  if((*tok)->data.hash == h_union)     t.is_union    = 1;
+  //  if((*tok)->data.hash == h_enum)      t.is_enum     = 1;
+
+  //  if((*tok)->data.hash == h_signed)    t.is_sig      = 1;
+  //  if((*tok)->data.hash == h_unsigned)  t.is_abs      = 1;
+
+  //  if((*tok)->data.hash == h_void)      t.is_void    += 1;
+  //  if((*tok)->data.hash == h_bool)      t.is_bool    += 1;
+  //  if((*tok)->data.hash == h_char)      t.is_char    += 1;
+  //  if((*tok)->data.hash == h_short)     t.is_short   += 1;
+  //  if((*tok)->data.hash == h_int)       t.is_int     += 1;
+  //  if((*tok)->data.hash == h_long)      t.is_long    += 1;
+  //  if((*tok)->data.hash == h_float)     t.is_float   += 1;
+  //  if((*tok)->data.hash == h_double)    t.is_double  += 1;
+
+  //  //if(!(twin(&t, &(type){           .is_void=1            })
+  //  //   ||twin(&t, &(type){           .is_bool=1            })
+  //  //   ||twin(&t, &(type){.is_sig=1, .is_char=1            })
+  //  //   ||twin(&t, &(type){.is_abs=1, .is_char=1            })
+  //  //   ||twin(&t, &(type){           .is_short=1           })
+  //  //   ||twin(&t, &(type){           .is_short=1, .is_int=1})
+  //  //   ||twin(&t, &(type){.is_sig=1, .is_short=1           })
+  //  //   ||twin(&t, &(type){.is_sig=1, .is_short=1, .is_int=1})
+  //  //   ||twin(&t, &(type){.is_abs=1, .is_short=1           })
+  //  //   ||twin(&t, &(type){.is_abs=1, .is_short=1, .is_int=1})
+  //  //   ||twin(&t, &(type){                        .is_int=1})
+  //  //   ||twin(&t, &(type){.is_sig=1                        })
+  //  //   ||twin(&t, &(type){.is_sig=1,              .is_int=1})
+  //  //   ||twin(&t, &(type){.is_abs=1                        })
+  //  //   ||twin(&t, &(type){.is_abs=1,              .is_int=1})
+  //  //   ||twin(&t, &(type){           .is_long=1            })
+  //  //   ||twin(&t, &(type){           .is_long=1,  .is_int=1})
+  //  //   ||twin(&t, &(type){           .is_long=2,  .is_int=1})
+  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=1            })
+  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=2            })
+  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=1,  .is_int=1})
+  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=2,  .is_int=1})
+  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=1            })
+  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=2            })
+  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=1,  .is_int=1})
+  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=2,  .is_int=1})
+  //  //   ||twin(&t, &(type){           .is_float=1           })
+  //  //   ||twin(&t, &(type){           .is_double=1          })
+  //  //   )) fail("invalid type");
+  //  *tok = (*tok)->next;
+  //  break;
+  //}
 }
 
-void args(word** tok, hash** map) {
+int args(word** tok, hash** map) {
   word* p = *tok;
-  skip(tok, tokd('('));
-  while(p->kind != tokd(')')) {
+  if(!skip(tok, tokd('('))) return 0;
+  while(!skip(tok, tokd(')'))) {
     p = p->next;
   }
-  skip(tok, tokd(')'));
+  return 1;
 }
 
-node* expr(word** tok, hash** map) {
-    int rank = 0;
+void expr(word** tok, hash** map) {
+    int rank = 0xffff;
 
-    if((*tok)->kind == toknum) {
-      printf("expr num %d\n", nd_num);
-      *tok = (*tok)->next;
-      return grow(nd_num);
+    switch((*tok)->kind) {
+      case toknum:
+        printf("expr %d\n", (*tok)->data.hash->key[0]-'0');
+        *tok = (*tok)->next;
+      break;
+      case tokstr:
+      break;
+      case toktag:
+      break;
+      //case tokd('['):      break;
+      default:
+        printf("expr unexpected %x %s\n", (*tok)->kind, (*tok)->kind == 1? (*tok)->data.hash->key: "");
     }
-    else {
-      printf("expr unexpected %x %s\n", (*tok)->kind, (*tok)->kind == 1? (*tok)->data.hash->key: "");
-    }
-    return grow(nd_null);
 
     while((*tok)->kind >= rank) {
       switch((*tok)->kind) {
@@ -394,17 +368,15 @@ node* expr(word** tok, hash** map) {
     }
 }
 
-node* stmt(word** tok, hash** map) {
-  node* elem = grow(nd_null);
-
+void stmt(word** tok, hash** map) {
   printf("stmt ");
   if(twin(tok, tokd('{'))) {
-    printf("block \n");
+    printf("span\n");
     while(!twin(tok, tokd('}')))
-      elem->then = stmt(tok, map);
+      stmt(tok, map);
   }
   else if(same(tok, sget(map, "if"))) {
-    printf("if %d\n", nd_test);
+    printf("when  ");
     skip(tok, tokd('('));
     expr(tok, map);
     skip(tok, tokd(')'));
@@ -413,16 +385,15 @@ node* stmt(word** tok, hash** map) {
       stmt(tok, map);
   }
   else if(same(tok, sget(map, "while"))) {
-    printf("if %d\n", nd_loop);
+    printf("loop\n");
     skip(tok, tokd('('));
     expr(tok, map);
     skip(tok, tokd(')'));
     stmt(tok, map);
   }
   else if(same(tok, sget(map, "return"))) {
-    printf("return %d\n", nd_ret);
-    elem->kind = nd_ret;
-    elem->then = expr(tok, map);
+    printf("done\n");
+    expr(tok, map);
     skip(tok, tokd(';'));
   }
   else {
@@ -430,34 +401,11 @@ node* stmt(word** tok, hash** map) {
     expr(tok, map);
     skip(tok, tokd(';'));
   }
-
-  return elem;
 }
 
-//#include <string.h>
-//void show(node* root, char* offset) {
-//  char* pipe     = " │ ";
-//  char* cross    = " ├─";
-//  char* corner   = " └─";
-//  char* space    = "   ";
-//  char  dest[50] = {};
-//
-//  printf("%s%d\n", offset, root->kind);
-//  node* n = root;
-//  if(n->altr) {
-//    strcat(dest, offset);
-//    strcat(dest, space);
-//  }
-//  else {
-//    strcat(dest, offset);
-//    strcat(dest, pipe);
-//  }
-//  //printf("%s%s%d\n", offset, n ? corner : cross, n->kind);
-//  while(n->then) {
-//    n = n->then;
-//    show(n, dest);
-//  }
-//}
+int post(word** tok, hash** map) {
+  return 0;
+}
 
 void make(mode* self) {
   // unit = function
@@ -466,24 +414,24 @@ void make(mode* self) {
   word* list = self->list;
   hash** map = &(self->pile);
 
-  node* elem = NULL;
   while(list) {
     // every statement begins with type
-    //type t = decl_spec(&list, map);
+    type(&list, map);
 
-    //skip type tag
-    if(list->kind < 4) printf("skipping %x %s\n", list->kind, list->data.hash->key);
-    else               printf("skipping %x %c\n", list->kind, list->kind);
-    list = list->next;
-
-    if(list->kind == toktag && list->next->kind == tokd('(')) {
+    // type name "(" args ")" "{" stmt "}"     // function decl
+    if(args(&list, map)) {
       // function
-      list = list->next;
       printf("its a function \n");
-      args(&list, map);
-      elem = stmt(&list, map);
+      stmt(&list, map);
     }
+
+    // type name "[" size "]"              ";" // variable decl
+    //if(post(&list, map)) {
+    //}
+    //else {
+    //}
   }
-  //show(elem, "");
+
+  self->arch.show();
 }
 
