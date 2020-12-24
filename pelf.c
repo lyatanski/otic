@@ -1,10 +1,11 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
+// TODO 56 should be replaced by the sizeof(phdr)
 #define ehdr(B, P, S, ...) {                                                  \
   typedef struct {                                                            \
     union {                                                                   \
-      struct {uint8_t  ident[4], class, data, ver, osabi, abiver;};           \
+      struct { uint8_t ident[4], class, data, ver, osabi, abiver; };          \
       uint8_t id[16];                                                         \
     };                                                                        \
     uint16_t type;                                                            \
@@ -22,11 +23,11 @@
     uint16_t shstr;                                                           \
   } hdr;                                                                      \
   *(hdr*)(P+S) = (hdr){{0x7F, 'E', 'L', 'F'},                                 \
-  .entry    = 0x400000+sizeof(hdr) + 56,                                      \
+  .entry    = 0x400000+sizeof(hdr)+56,                                        \
   .phoff    = sizeof(hdr),                                                    \
   .ehsize   = sizeof(hdr),                                                    \
   .phsize   = 56,                                                             \
-    __VA_ARGS__};                                                             \
+  __VA_ARGS__ };                                                              \
   S += sizeof(hdr);                                                           \
 }
 
