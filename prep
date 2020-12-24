@@ -1,2 +1,2 @@
-gcc -Wall -otic -ggdb -O0 main.c core.c hash.c i386.c arm8.c && ./tic a hello.c
+gcc -Wall -otic -ggdb -O0 main.c core.c hash.c ia64.c arm8.c && ./tic a hello.c
 #gcc -Wall -otic -ggdb -O0 main.c core.c hash.c ia32.c arm8.c && ./tic a hello.c
