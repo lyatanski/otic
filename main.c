@@ -12,14 +12,14 @@ int main(int argc, char** argv) {
 
   switch(argv[1][0]) {
     case 'a': self.arch = arm8; break;
-    case 'i': self.arch = i386; break;
+    case 'i': self.arch = ia64; break;
     case 'e': {
       size_t size = 60;
       void* memory = hold(size);
 #     ifdef __aarch64__
       arm8.text(memory);
 #     else // __x86_64__
-      i386.text(memory);
+      ia64.text(memory);
 #     endif
       exec(memory);
       drope(memory, size);
