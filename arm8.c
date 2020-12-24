@@ -249,6 +249,9 @@ void arm8_emit() {
   printf("armv8\n");
   printf("%x\n", form(dati, movz, .imm=42, .rd=0));
   printf("%x\n", form(brur, ret, .rn=r30));
+  uint32_t r = form(brur, ret, .rn=r30);
+  uint32_t e = 0xd65f03c0;
+  printf("%x\n%x\n%s\n", r, e, r==e? "true": "false");
 }
 
 void arm8_calc() {
@@ -280,8 +283,8 @@ void arm8_text(void* data) {
 }
 
 emit arm8 = {
-  .show=arm8_emit,
-  .halt=arm8_halt,
+  .show = arm8_emit,
+  .halt = arm8_halt,
   .text = arm8_text,
 };
 

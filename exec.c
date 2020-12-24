@@ -6,8 +6,6 @@
 #endif
 #include "core.h"
 
-typedef int (*func)();
-
 void* hold(int size) {
 #ifdef _WIN32
   return VirtualAlloc(0, size,
@@ -36,6 +34,7 @@ void drope(void* memory, int size) {
 #endif
 }
 
+typedef int (*func)();
 void exec(void* memory) {
   int return_code = ((func)memory)();
   printf("%d\n", return_code);
