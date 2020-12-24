@@ -20,11 +20,13 @@ struct item {
 };
 
 typedef void (*vent)();
+typedef void (*txt)(void* dat);
 typedef struct {
   vent  prep;
   vent  halt;
   vent  jump;
   vent  show;
+  txt   text;
 } emit;
 
 typedef struct {
@@ -45,4 +47,10 @@ file* scan(char*);
 word* chop(file*, hash**);
 void  make(mode*);
 void  drop(file*);
+
+// exec
+void* hold(int);
+void prep(void*, int);
+void exec(void*);
+void drope(void*, int);
 

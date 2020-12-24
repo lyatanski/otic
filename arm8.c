@@ -267,5 +267,21 @@ void arm8_halt() {
   printf("%x\n", 0xd65f03c0);
 }
 
-emit arm8 = {.show=arm8_emit, .halt=arm8_halt};
+void arm8_text(void* data) {
+  uint32_t* exe = data;
+  int size = 0;
+
+  //mov  w0, #42
+  exe[size++] = form(dati, movz, .imm=42, .rd=0);
+
+  //ret
+  //exe[size++] = form(brur, ret, .rn=r30);
+  exe[size++] = 0xd65f03c0;
+}
+
+emit arm8 = {
+  .show=arm8_emit,
+  .halt=arm8_halt,
+  .text = arm8_text,
+};
 
