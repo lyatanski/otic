@@ -1,5 +1,6 @@
 // vim: ts=2:sw=2
 #include "core.h"
+#include "exec.h"
 
 extern emit arm8;
 extern emit ia64;
@@ -22,16 +23,14 @@ int main(int argc, char** argv) {
       ia64.text(memory);
 #     endif
       exec(memory);
-      drope(memory, size);
+      drop(memory, size);
       return 0;
     }
     default : return 1;
   }
 
-  file* code = scan(argv[2]);
-  self.list = chop(code, &self.pile);
+  self.name = argv[2];
   make(&self);
-  drop(code);
 
   return 0;
 }

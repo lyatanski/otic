@@ -1,13 +1,13 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-struct file {
+typedef struct {
   char*          head;
   char*          tail;
   unsigned int   size;
   char           name[512];
   char           data[1];
-};
+} file;
 
 typedef union {
   item* hash;
@@ -110,7 +110,7 @@ void term(word** prev, int kind, from data) {
 //  fclose(fp);
 //}
 
-void drop(file* f) {
+void shed(file* f) {
     free(f);
 }
 
@@ -420,6 +420,10 @@ void make(mode* self) {
   // unit = function
   //      | variable
   //      | typedecl
+
+  file* code = scan(self->name);
+  self->list = chop(code, &self->pile);
+
   word* list = self->list;
   hash** map = &(self->pile);
 
@@ -442,5 +446,7 @@ void make(mode* self) {
   }
 
   self->arch.show();
+
+  shed(code);
 }
 

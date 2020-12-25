@@ -1,14 +1,10 @@
 // vim: ts=2:sw=2
 #pragma once
-#include <stdio.h>      /* FILE, printf */
-#include <stdlib.h>     /* malloc, free */
-#include <stdint.h>     /* uint32_t...  */
+#include <stdio.h>      /* FILE, printf     */
+#include <stdlib.h>     /* malloc, free     */
+#include <stdint.h>     /* uint32_t...      */
 
 #define fail(...) (printf(__VA_ARGS__), exit(1))
-
-typedef struct file file;
-typedef struct word word;
-typedef struct node node;
 
 typedef struct hash hash;
 typedef struct item item;
@@ -29,6 +25,7 @@ typedef struct {
   txt   text;
 } emit;
 
+typedef struct word word;
 typedef struct {
   char* name;
   word* list;
@@ -43,14 +40,5 @@ item* hget(hash** map, char* key, long len);
 #define sget(h, k) hget(h, k, sizeof(k)-1)
 void  hrid(hash** map);
 
-file* scan(char*);
-word* chop(file*, hash**);
 void  make(mode*);
-void  drop(file*);
-
-// exec
-void* hold(int);
-void prep(void*, int);
-void exec(void*);
-void drope(void*, int);
 

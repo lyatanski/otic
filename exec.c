@@ -1,8 +1,8 @@
 // vim: ts=2:sw=2
 #ifdef _WIN32
-#include <memoryapi.h> /* for VirtualAlloc */
+#include <memoryapi.h>  /* for VirtualAlloc */
 #else
-#include <sys/mman.h>  /* for mmap         */
+#include <sys/mman.h>   /* for mmap         */
 #endif
 #include "core.h"
 
@@ -26,7 +26,7 @@ void prep(void* memory, int size) {
 #endif
 }
 
-void drope(void* memory, int size) {
+void drop(void* memory, int size) {
 #ifdef _WIN32
   VirtualFree(address, 0, MEM_RELEASE);
 #else
