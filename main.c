@@ -2,6 +2,14 @@
 #include "core.h"
 #include "exec.h"
 
+#ifdef fuse
+#include "core.c"
+#include "hash.c"
+#include "ia64.c"
+#include "arm8.c"
+#include "exec.c"
+#endif
+
 extern emit arm8;
 extern emit ia64;
 #ifdef __aarch64__

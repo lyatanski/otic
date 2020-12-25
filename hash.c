@@ -17,7 +17,7 @@ void hnew(hash** map) {
   for(int i = 0; i < (*map)->size; i++) (*map)->cask[i] = (item){};
 }
 
-static long  same(char* x, char* y, int l) {
+static long  name(char* x, char* y, int l) {
   while(l && *x && *x++==*y++) l--;
   return !l || *x==*y;
 }
@@ -27,7 +27,7 @@ item* hget(hash** map, char* key, long len) {
   for(int i = 0; i < len; i++) idx += (idx << 5) + (idx >> 27) + key[i];
 
   item* seek = (*map)->cask + (idx & ((*map)->size - 1));
-  while(seek->key && !same(seek->key, key, len)) {
+  while(seek->key && !name(seek->key, key, len)) {
     if(!seek->next) {
       seek->next = malloc(sizeof(item));
       *seek->next = (item){};
