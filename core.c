@@ -333,6 +333,9 @@ void expr(word** tok, hash** map) {
       case tokstr:
       break;
       case toktag:
+      case tokd('('): /* type cast     */ skip(tok, tokd(')')); break;
+      case tokd('*'): /* pointer deref */ break;
+      case tokd('&'): /* address of    */ break;
       break;
       //case tokd('['):      break;
       default:
@@ -363,6 +366,12 @@ void expr(word** tok, hash** map) {
         case tokd('<', '<'): break;
         case tokd('>', '>'): break;
         case tokd('+', '+'): case tokd('-', '-'):  break;
+        case tokd('('):
+          // function call
+          while(skip(tok, tokd(')'))) {
+            //expr(Assign);
+          }
+          break;
         default: fail("error %x", (*tok)->kind); break;
       }
     }

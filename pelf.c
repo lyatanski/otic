@@ -1,6 +1,11 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
+enum machine {
+  ia64 = 62,
+  arm8 = 183,
+};
+
 #define ehdr(B, P, S, ...) {                                                  \
   typedef uint ## B ## _t uintXX_t;                                           \
   typedef struct {                                                            \
@@ -15,6 +20,8 @@
     uint16_t ehsize, phsize, phnum, shsize, shnum, shstr;                     \
   } hdr;                                                                      \
   *(hdr*)(P+S) = (hdr){{0x7F, 'E', 'L', 'F'},                                 \
+  .ver      = 1,                                                              \
+  .version  = 1,                                                              \
   .entry    = 0x400000+sizeof(hdr)+sizeof(phdr ## B),                         \
   .phoff    = sizeof(hdr),                                                    \
   .ehsize   = sizeof(hdr),                                                    \
@@ -55,16 +62,25 @@ int text(char* exe) {
   return 12;
 }
 
+int texta(char* data) {
+  uint32_t* exe = (uint32_t*)data;
+  // mov     x0, #42
+  exe[0] = 0xd2800540;
+  // mov     x8, #93
+  exe[1] = 0xd2800ba8;
+  // svc #0
+  exe[2] = 0xd4000001;
+  return 12;
+}
+
 int main() {
   int  size = 0;
   char file[1024] = {};
   ehdr(64, file, size,
   .class    = 2,
   .data     = 1,
-  .ver      = 1,
   .type     = 2,
-  .machine  = 0x3E,
-  .version  = 1,
+  .machine  = arm8,
   .phnum    = 1,
   );
   phdr(64, file, size,
@@ -75,9 +91,9 @@ int main() {
   .paddr    = 0x400000,
   .filesz   = 0xc,
   .memsz    = 0xc,
-  .align    = 0x1000,
+  .align    = 0x10000,
   );
-  size += text(file+size);
+  size += texta(file+size);
   FILE* fp = fopen("tiny64", "wb");
   fwrite(file, 1, size, fp);
   fclose(fp);

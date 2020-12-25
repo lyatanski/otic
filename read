@@ -8,3 +8,21 @@ goals:
   - interpreter (compile & load)
   - build system
   - package manager
+
+why not:
+- clang
+  - massive
+  - lacks build system & package manager
+- tinycc
+  - complex codebase
+  - lacks optimization
+  - lacks build system & package manager
+- golang
+  - probably closes to the end goal, but still massive
+  - require external dependencies
+
+prepare:
+gcc -Wall -otic -ggdb -O0 main.c core.c hash.c ia64.c arm8.c exec.c
+
+run: ./tic <arch> <code> where arch could be "e" for inideate execution
+./tic a hello.c
