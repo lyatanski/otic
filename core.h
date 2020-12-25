@@ -6,6 +6,7 @@
 
 #define fail(...) (printf(__VA_ARGS__), exit(1))
 
+// hash
 typedef struct hash hash;
 typedef struct item item;
 struct item {
@@ -15,6 +16,12 @@ struct item {
   item* next;
 };
 
+void  hnew(hash** map);
+item* hget(hash** map, char* key, long len);
+#define sget(h, k) hget(h, k, sizeof(k)-1)
+void  hrid(hash** map);
+
+// arch
 typedef void (*vent)();
 typedef void (*txt)(void* dat);
 typedef struct {
@@ -25,6 +32,7 @@ typedef struct {
   txt   text;
 } emit;
 
+// core
 typedef struct word word;
 typedef struct {
   char* name;
@@ -33,12 +41,6 @@ typedef struct {
   emit  arch;
 } mode;
 
-void  init(mode*  self);
-
-void  hnew(hash** map);
-item* hget(hash** map, char* key, long len);
-#define sget(h, k) hget(h, k, sizeof(k)-1)
-void  hrid(hash** map);
-
+void  init(mode*);
 void  make(mode*);
 
