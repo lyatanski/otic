@@ -4,6 +4,11 @@
 
 extern emit arm8;
 extern emit ia64;
+#ifdef __aarch64__
+#define base arm8
+#else // __x86_64__
+#define base ia64
+#endif
 
 int main(int argc, char** argv) {
   if(argc != 3) return 1;
@@ -16,14 +21,10 @@ int main(int argc, char** argv) {
     case 'i': self.arch = ia64; break;
     case 'e': {
       size_t size = 60;
-      void* memory = hold(size);
-#     ifdef __aarch64__
-      arm8.text(memory);
-#     else // __x86_64__
-      ia64.text(memory);
-#     endif
-      exec(memory);
-      drop(memory, size);
+      void* data = hold(size);
+      base.text(data);
+      exec(data);
+      drop(data, size);
       return 0;
     }
     default : return 1;
