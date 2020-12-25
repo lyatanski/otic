@@ -11,8 +11,8 @@
 
 #include "exec.c"
 
-//#include "pe32.c"
 //#include "pelf.c"
+//#include "pe32.c"
 //#include "mach.c"
 #endif
 
