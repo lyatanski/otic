@@ -5,9 +5,15 @@
 #ifdef fuse
 #include "core.c"
 #include "hash.c"
+
 #include "ia64.c"
 #include "arm8.c"
+
 #include "exec.c"
+
+//#include "pe32.c"
+//#include "pelf.c"
+//#include "mach.c"
 #endif
 
 extern emit arm8;
