@@ -12,6 +12,8 @@ do
 done
 gcc -o$out/tic $link
 
+gcc -Wall -ggdb -O0 -o$out/elfs elfs.c
+
 if [ ! -f $out/test.c ]; then
 echo -- creating source
 cat << EOF > $out/test.c
