@@ -2,7 +2,7 @@
 #include "core.h"
 #include "exec.h"
 
-#ifdef fuse
+#ifndef part
 #include "core.c"
 #include "hash.c"
 
