@@ -4,13 +4,23 @@ for file in main core hash ia64 arm8 exec mach
 do
   src=$file.c
   dst=$out/$file.o
-  if [ $src -nt $dst ]
-  then
-    echo compile $src
+  if [ $src -nt $dst ]; then
+    echo -- compile $src
     gcc -Dpart -Wall -c -ggdb -O0 -o$dst $src
   fi
   link="$link $dst"
 done
 gcc -o$out/tic $link
 
-./$out/tic a hello.c
+if [ ! -f $out/test.c ]; then
+echo -- creating source
+cat << EOF > $out/test.c
+int main() {
+    if(3) return 4;
+    else return 2;
+    return 42;
+}
+EOF
+fi
+
+./$out/tic a $out/test.c
