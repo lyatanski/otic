@@ -21,6 +21,28 @@ item* hget(hash** map, char* key, long len);
 #define sget(h, k) hget(h, k, sizeof(k)-1)
 void  hrid(hash** map);
 
+typedef enum {
+  unit,
+  _val, _add, _sub, _mul, _div, _mod,
+  when, jump, call, proc, give,
+  ops,
+} spec;
+
+typedef union {
+  item*    hash;
+  int64_t  ival;
+  uint64_t fval;
+} form;
+
+
+typedef struct node node;
+struct node {
+  spec  kind;
+  node* then;
+  node* next;
+  form  data;
+};
+
 // arch
 typedef void (*vent)();
 typedef void (*txt)(void* dat);
@@ -38,6 +60,8 @@ typedef struct {
   char* name;
   word* list;
   hash* pile;
+  node* head;
+  node* tail;
   emit  arch;
 } mode;
 

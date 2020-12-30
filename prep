@@ -4,13 +4,12 @@ for file in main core hash ia64 arm8 exec mach
 do
   src=$file.c
   dst=$out/$file.o
-  if [ $src -nt $dst ]; then
+  #if [ $src -nt $dst ]; then
     echo -- compile $src
-    gcc -Dpart -Wall -c -ggdb -O0 -o$dst $src
-  fi
+    gcc -Dpart -Wall -c -ggdb -O0 -o$dst $src || exit $?
+  #fi
   link="$link $dst"
 done
-gcc -o$out/tic $link
 
 gcc -Wall -ggdb -O0 -o$out/elfs elfs.c
 
@@ -25,4 +24,4 @@ int main() {
 EOF
 fi
 
-./$out/tic a $out/test.c
+gcc -o$out/tic $link && ./$out/tic a $out/test.c

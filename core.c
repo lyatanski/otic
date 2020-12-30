@@ -9,10 +9,6 @@ typedef struct {
   char           data[1];
 } file;
 
-typedef union {
-  item* hash;
-} from;
-
 struct word {
 #define toktag 1
 #define toknum 2
@@ -25,45 +21,49 @@ struct word {
   int   kind;
   word* next;
   int   size;
-  from  data;
+  form  data;
 };
 
-//typedef struct node node;
-//struct node {
-//  spec  kind;
-//  node* cond;
-//  node* then;
-//  node* altr;
-//};
-
 //typedef struct {
-//  unsigned short is_void     :2;
-//  unsigned short is_bool     :2;
-//  unsigned short is_char     :2;
-//  unsigned short is_short    :2;
-//  unsigned short is_int      :2;
-//  unsigned short is_long     :2;
-//  unsigned short is_float    :2;
-//  unsigned short is_double   :2;
+//  uint16_t align;
 //
-//  unsigned short align;
+//  uint16_t is_void    :1;
+//  uint16_t is_bool    :1;
+//  uint16_t is_char    :1;
+//  uint16_t is_short   :1;
+//  uint16_t is_int     :1;
+//  uint16_t is_long    :2;
+//  uint16_t is_float   :1;
+//  uint16_t is_double  :1;
 //
-//  unsigned int   is_typedef  :1;
-//  unsigned int   is_static   :1;
-//  unsigned int   is_extern   :1;
-//  unsigned int   is_inline   :1;
-//  unsigned int   is_thread   :1;
+//  uint16_t is_abs     :1;
 //
-//  unsigned int   is_struct   :1;
-//  unsigned int   is_union    :1;
-//  unsigned int   is_enum     :1;
+//  uint16_t is_typedef :1;
+//  uint16_t is_static  :1;
+//  uint16_t is_extern  :1;
+//  uint16_t is_inline  :1;
+//  uint16_t is_thread  :1;
 //
-//  unsigned int   is_sig   :1;
-//  unsigned int   is_abs :1;
-//
+//  uint16_t is_struct  :1;
+//  uint16_t is_union   :1;
+//  uint16_t is_enum    :1;
 //} type;
 
+node* grow(mode* self, spec kind, form data) {
+  if(self->tail) {
+    self->tail->next = malloc(sizeof(node));
+    self->tail = self->tail->next;
+  }
+  else self->tail = malloc(sizeof(node));
+  self->tail->kind = kind;
+  self->tail->next = NULL;
+  self->tail->data = data;
+  return self->tail;
+}
+
 void  init(mode* self) {
+  self->tail = NULL;
+  self->head = grow(self, unit, (form){});
   hnew(&self->pile);
 }
 
@@ -84,7 +84,7 @@ file* scan(char* name) {
   fclose(fp);
   return f;
 }
-void term(word** prev, int kind, from data) {
+void term(word** prev, int kind, form data) {
   word* tok = malloc(sizeof(word));
   tok->kind = kind;
   tok->next = NULL;
@@ -93,16 +93,7 @@ void term(word** prev, int kind, from data) {
   (*prev)->next = tok;
   (*prev) = tok;
 }
-#define dict(p, k, ...) term(p, k, (from){__VA_ARGS__})
-
-//node* grow(spec kind) {
-//  node* nd = malloc(sizeof(node));
-//  nd->kind = kind;
-//  nd->cond = NULL;
-//  nd->then = NULL;
-//  nd->altr = NULL;
-//  return nd;
-//}
+#define dict(p, k, ...) term(p, k, (form){__VA_ARGS__})
 
 //void emit(file* f) {
 //  FILE* fp = fopen(f->name, "wb");
@@ -177,17 +168,32 @@ word* chop(file* f, hash** h) {
         if(c[1] == '.' && c[2] == '.') { dict(&tail, tok3(c)); break; }
         else if (!(c[1] >= '0' && c[1] <= '9')) { dict(&tail, tok1(c)); break; }
         // else fall trough to number
-      case '0' ... '9':
-        tok = c++;
-        //if(c[0] == '0' && (c[2] == 'X' || c[2] == 'x'))
-        //  while((*c >= '0' && *c <= '9')
-        //     || (*c >= 'A' && *c <= 'F') || (*c >= 'a' && *c <= 'f')) ++c;
-        //if(c[0] == '0' && (c[2] == 'B' || c[2] == 'b'))
-        //  while(*c == '0' || *c == '1') ++c;
-        while(*c >= '0' && *c <= '9') ++c;
-        dict(&tail, toknum, hget(h, tok, c - tok));
+      case '0' ... '9': {
+        // TODO octal
+        int64_t ival = 0;
+        int64_t fval = 0;
+        while(*c >= '0' && *c <= '9')   ival = ival * 10 + *c++ - '0';
+        if(*c == '.') {
+          c++;
+          while(*c >= '0' && *c <= '9') fval = fval * 10 + *c++ - '0';
+        }
+        else if(*c == 'X' || *c == 'x') {
+          while(*c++) {
+            switch (*c) {
+              case '0' ... '9': ival = ival * 16 + *c - '0';      continue;
+              case 'a' ... 'f': ival = ival * 16 + *c - 'a' + 10; continue;
+              case 'A' ... 'F': ival = ival * 16 + *c - 'A' + 10; continue;
+            }
+            break;
+          }
+        }
+        else if(!ival && (*c == 'B' || *c == 'b')) {
+          while(*c == '0' || *c == '1') ival = ival * 2 + *c++ - '0';
+        }
+        dict(&tail, toknum, .ival=ival);
         c--;
         break;
+      }
       default:
         tok = c;
         while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
@@ -322,12 +328,12 @@ int args(word** tok, hash** map) {
   return 1;
 }
 
-void expr(word** tok, hash** map) {
+void expr(mode* self, word** tok, hash** map) {
     int rank = 0xffff;
 
     switch((*tok)->kind) {
       case toknum:
-        printf("expr %d\n", (*tok)->data.hash->key[0]-'0');
+        grow(self, _val, (*tok)->data);
         *tok = (*tok)->next;
       break;
       case tokstr:
@@ -377,37 +383,42 @@ void expr(word** tok, hash** map) {
     }
 }
 
-void stmt(word** tok, hash** map) {
-  printf("stmt ");
+void stmt(mode* self, word** tok, hash** map) {
   if(twin(tok, tokd('{'))) {
-    printf("span\n");
     while(!twin(tok, tokd('}')))
-      stmt(tok, map);
+      stmt(self, tok, map);
   }
   else if(same(tok, sget(map, "if"))) {
-    printf("when  ");
+    node * nd1 = grow(self, jump, (*tok)->data);
+    grow(self, when, (*tok)->data);
     skip(tok, tokd('('));
-    expr(tok, map);
+    expr(self, tok, map);
     skip(tok, tokd(')'));
-    stmt(tok, map);
-    if(same(tok, sget(map, "else")))
-      stmt(tok, map);
+    stmt(self, tok, map);
+    if(same(tok, sget(map, "else"))) {
+      node * nd2 = grow(self, jump, (*tok)->data);
+      nd1->then = self->tail;
+      stmt(self, tok, map);
+      nd2->then = self->tail;
+    }
+    else
+      nd1->then = self->tail;
   }
   else if(same(tok, sget(map, "while"))) {
     printf("loop\n");
     skip(tok, tokd('('));
-    expr(tok, map);
+    expr(self, tok, map);
     skip(tok, tokd(')'));
-    stmt(tok, map);
+    stmt(self, tok, map);
   }
   else if(same(tok, sget(map, "return"))) {
-    printf("done\n");
-    expr(tok, map);
+    grow(self, give, (*tok)->data);
+    expr(self, tok, map);
     skip(tok, tokd(';'));
   }
   else {
     printf("expr\n");
-    expr(tok, map);
+    expr(self, tok, map);
     skip(tok, tokd(';'));
   }
 }
@@ -416,6 +427,10 @@ int post(word** tok, hash** map) {
   return 0;
 }
 
+char debug[ops][5] = { "unit",
+  "_val", "_add", "_sub", "_mul", "_div", "_mod",
+  "when", "jump", "call", "proc", "give",
+};
 void make(mode* self) {
   // unit = function
   //      | variable
@@ -427,6 +442,14 @@ void make(mode* self) {
   word* list = self->list;
   hash** map = &(self->pile);
 
+  //while(list) {
+  //  if(list->kind == toknum)      printf("token num %d\n", list->data.ival);
+  //  else if(list->kind == tokstr) printf("token str %s\n", list->data.hash->key);
+  //  else if(list->kind == toktag) printf("token tag %s\n", list->data.hash->key);
+  //  else                          printf("token %x %c\n", list->kind, list->kind);
+  //  list = list->next;
+  //}
+
   while(list) {
     // every statement begins with type
     type(&list, map);
@@ -434,8 +457,9 @@ void make(mode* self) {
     // type name "(" args ")" "{" stmt "}"     // function decl
     if(args(&list, map)) {
       // function
-      printf("its a function \n");
-      stmt(&list, map);
+      grow(self, proc, list->data);
+      //printf("its a function \n");
+      stmt(self, &list, map);
     }
 
     // type name "[" size "]"              ";" // variable decl
@@ -445,7 +469,17 @@ void make(mode* self) {
     //}
   }
 
-  self->arch.show();
+  node* it = self->head;
+  while(it) {
+    printf(" %p %s", it, debug[it->kind]);
+    //if(it->kind == proc) printf(" %s", it->data.hash->key);
+    if(it->kind == _val) printf(" %ld", it->data.ival);
+    if(it->kind == jump) printf(" %p", it->then->next);
+    printf("\n");
+    it = it->next;
+  }
+
+  //self->arch.show();
 
   shed(code);
 }
