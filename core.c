@@ -169,27 +169,25 @@ word* chop(file* f, hash** h) {
         else if (!(c[1] >= '0' && c[1] <= '9')) { dict(&tail, tok1(c)); break; }
         // else fall trough to number
       case '0' ... '9': {
-        // TODO octal
         int64_t ival = 0;
         int64_t fval = 0;
-        while(*c >= '0' && *c <= '9')   ival = ival * 10 + *c++ - '0';
-        if(*c == '.') {
-          c++;
-          while(*c >= '0' && *c <= '9') fval = fval * 10 + *c++ - '0';
-        }
-        else if(*c == 'X' || *c == 'x') {
+        while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
+        if(*c == '.')
+          while(*c++ && (*c >= '0' && *c <= '9')) fval = fval * 10 + *c - '0';
+        else if(*c == 'B' || *c == 'b')
+          while(*c++ && (*c == '0' || *c == '1')) ival = ival *  2 + *c - '0';
+        else if(*c == 'O' || *c == 'o')
+          while(*c++ && (*c >= '0' && *c <= '7')) ival = ival *  8 + *c - '0';
+        else if(*c == 'X' || *c == 'x')
           while(*c++) {
             switch (*c) {
               case '0' ... '9': ival = ival * 16 + *c - '0';      continue;
-              case 'a' ... 'f': ival = ival * 16 + *c - 'a' + 10; continue;
               case 'A' ... 'F': ival = ival * 16 + *c - 'A' + 10; continue;
+              case 'a' ... 'f': ival = ival * 16 + *c - 'a' + 10; continue;
             }
             break;
           }
-        }
-        else if(!ival && (*c == 'B' || *c == 'b')) {
-          while(*c == '0' || *c == '1') ival = ival * 2 + *c++ - '0';
-        }
+        // XXX octal if ival == 0 && fval != -1
         dict(&tail, toknum, .ival=ival);
         c--;
         break;
@@ -443,7 +441,7 @@ void make(mode* self) {
   hash** map = &(self->pile);
 
   //while(list) {
-  //  if(list->kind == toknum)      printf("token num %d\n", list->data.ival);
+  //  if(list->kind == toknum)      printf("token num %ld\n", list->data.ival);
   //  else if(list->kind == tokstr) printf("token str %s\n", list->data.hash->key);
   //  else if(list->kind == toktag) printf("token tag %s\n", list->data.hash->key);
   //  else                          printf("token %x %c\n", list->kind, list->kind);
