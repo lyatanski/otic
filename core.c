@@ -180,7 +180,7 @@ word* chop(file* f, hash** h) {
           while(*c++ && (*c >= '0' && *c <= '7')) ival = ival *  8 + *c - '0';
         else if(*c == 'X' || *c == 'x')
           while(*c++) {
-            switch (*c) {
+            switch(*c) {
               case '0' ... '9': ival = ival * 16 + *c - '0';      continue;
               case 'A' ... 'F': ival = ival * 16 + *c - 'A' + 10; continue;
               case 'a' ... 'f': ival = ival * 16 + *c - 'a' + 10; continue;

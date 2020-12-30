@@ -34,7 +34,6 @@ typedef union {
   uint64_t fval;
 } form;
 
-
 typedef struct node node;
 struct node {
   spec  kind;

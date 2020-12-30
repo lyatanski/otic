@@ -19,7 +19,7 @@ enum machine {
     uint32_t flags;                                                           \
     uint16_t ehsize, phsize, phnum, shsize, shnum, shstr;                     \
   } hdr;                                                                      \
-  *(hdr*)(P+S) = (hdr){{0x7F, 'E', 'L', 'F'},                                 \
+  *(hdr*)(P+S) = (hdr) {{{{0x7F, 'E', 'L', 'F'}}},                            \
   .ver      = 1,                                                              \
   .version  = 1,                                                              \
   .entry    = 0x400000+sizeof(hdr)+sizeof(phdr ## B),                         \
