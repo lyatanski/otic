@@ -10,8 +10,8 @@ enum machine {
   typedef uint ## B ## _t uintXX_t;                                           \
   typedef struct {                                                            \
     union {                                                                   \
-      struct { uint8_t magic[4], class, data, ver, osabi, abiver; };          \
       uint8_t id[16];                                                         \
+      struct { uint8_t magic[4], class, data, ver, osabi, abiver; };          \
     };                                                                        \
     uint16_t type, machine;                                                   \
     uint32_t version;                                                         \
@@ -19,14 +19,15 @@ enum machine {
     uint32_t flags;                                                           \
     uint16_t ehsize, phsize, phnum, shsize, shnum, shstr;                     \
   } hdr;                                                                      \
-  *(hdr*)(P+S) = (hdr) {{{{0x7F, 'E', 'L', 'F'}}},                            \
-  .ver      = 1,                                                              \
-  .version  = 1,                                                              \
-  .entry    = 0x400000+sizeof(hdr)+sizeof(phdr ## B),                         \
-  .phoff    = sizeof(hdr),                                                    \
-  .ehsize   = sizeof(hdr),                                                    \
-  .phsize   = sizeof(phdr ## B),                                              \
-  __VA_ARGS__ };                                                              \
+  *(hdr*)(P+S) = (hdr) {                                                      \
+    {{0x7F, 'E', 'L', 'F'}},                                                  \
+    .ver      = 1,                                                            \
+    .version  = 1,                                                            \
+    .entry    = 0x400000+sizeof(hdr)+sizeof(phdr ## B),                       \
+    .phoff    = sizeof(hdr),                                                  \
+    .ehsize   = sizeof(hdr),                                                  \
+    .phsize   = sizeof(phdr ## B),                                            \
+    __VA_ARGS__ };                                                            \
   S += sizeof(hdr);                                                           \
 }
 
