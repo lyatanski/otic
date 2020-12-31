@@ -2,11 +2,11 @@
 #include "core.h"
 
 typedef struct {
-  char*          head;
-  char*          tail;
-  unsigned int   size;
-  char           name[512];
-  char           data[1];
+  char*        head;
+  char*        tail;
+  unsigned int size;
+  char         name[512];
+  char         data[1];
 } file;
 
 struct word {
@@ -27,26 +27,21 @@ struct word {
 //typedef struct {
 //  uint16_t align;
 //
-//  uint16_t is_void    :1;
-//  uint16_t is_bool    :1;
-//  uint16_t is_char    :1;
-//  uint16_t is_short   :1;
-//  uint16_t is_int     :1;
-//  uint16_t is_long    :2;
-//  uint16_t is_float   :1;
-//  uint16_t is_double  :1;
+//  uint16_t _void    :1, _bool    :1, _char    :1,
+//           _short   :2, _int     :2, _long    :2,
+//           _float   :1, _double  :1;
 //
-//  uint16_t is_abs     :1;
+//  uint16_t _const   :1;
+//  uint16_t _signed  :2;
+//  uint16_t _static  :1;
+//  uint16_t _extern  :1;
+//  uint16_t _inline  :1;
+//  uint16_t _thread  :1;
 //
-//  uint16_t is_typedef :1;
-//  uint16_t is_static  :1;
-//  uint16_t is_extern  :1;
-//  uint16_t is_inline  :1;
-//  uint16_t is_thread  :1;
-//
-//  uint16_t is_struct  :1;
-//  uint16_t is_union   :1;
-//  uint16_t is_enum    :1;
+//  uint16_t _typedef :1;
+//  uint16_t _struct  :1;
+//  uint16_t _union   :1;
+//  uint16_t _enum    :1;
 //} type;
 
 node* grow(mode* self, spec kind, form data) {
@@ -187,7 +182,6 @@ word* chop(file* f, hash** h) {
             }
             break;
           }
-        // XXX octal if ival == 0 && fval != -1
         dict(&tail, toknum, .ival=ival);
         c--;
         break;
