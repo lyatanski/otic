@@ -4,6 +4,8 @@
 
 #define mov    0xb8
 #define ret    0xc3
+#define cmp    0x83
+#define jmp    0xeb
 #define jcs    0x70
 #define jcl    0x0f80
 #define    jo  0x0
@@ -31,7 +33,7 @@ int iw(char* exe, uint16_t val) { *(typeof(val)*)exe = val; return sizeof(val); 
 int id(char* exe, uint32_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
 int io(char* exe, uint64_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
 
-void emit_i386() {
+void ia64_emit() {
   printf("i386\n");
 }
 
@@ -47,8 +49,33 @@ void ia64_text(void* data) {
   exe[size++] = ret;
 }
 
+void ia64_when(void* data) {
+  uint8_t ofst = 0;
+
+  char* exe = data;
+  int size = 0;
+
+  exe[size++] = cmp;
+  exe[size++] = modrm();
+
+  exe[size++] = jcs + je;
+  exe[size++] = ofst;
+
+}
+
+void ia64_loop(void* data) {
+  char* exe = data;
+  size_t size = 0;
+
+  ia64_when(data);
+  // body
+  exe[size++] = jmp;
+  size +=  ib(exe, -size);
+
+}
+
 emit ia64 = {
-  .show = emit_i386,
+  .show = ia64_emit,
   .text = ia64_text
 };
 
