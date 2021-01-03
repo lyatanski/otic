@@ -471,7 +471,7 @@ void make(mode* self) {
     it = it->next;
   }
 
-  //self->arch.show();
+  self->arch.show();
 
   shed(code);
 }

@@ -1,5 +1,18 @@
 #include "core.h"
 
+typedef struct {
+  uint8_t* head;
+  uint8_t* tail;
+  uint8_t* mend;
+  size_t   size;
+  uint8_t  data[1];
+} buff;
+
+typedef struct { 
+  uint8_t* a;
+  size_t l;
+} inst;
+
 #define eax 0
 
 #define mov    0xb8
@@ -27,18 +40,97 @@
 
 #define rex(...) (*(uint8_t*)&(struct { uint8_t b:1, x:1, r:1, w:1, _:4; }){._=4, __VA_ARGS__})
 #define modrm(...) (*(uint8_t*)&(struct { uint8_t rm:3, reg:3, mod:2; }){__VA_ARGS__})
+#define sib(...) (*(uint8_t*)&(struct { uint8_t base:3, idx:3, ss:2; }){__VA_ARGS__})
 
-int ib(char* exe, uint8_t  val) { *(typeof(val)*)exe = val; return sizeof(val); }
-int iw(char* exe, uint16_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
-int id(char* exe, uint32_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
-int io(char* exe, uint64_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
+unsigned int ib(uint8_t* exe, uint8_t  val) { *(typeof(val)*)exe = val; return sizeof(val); }
+unsigned int iw(uint8_t* exe, uint16_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
+unsigned int id(uint8_t* exe, uint32_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
+unsigned int io(uint8_t* exe, uint64_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
+
+//#define ib(b, v) sizeof(*(uint8_t *)(b) = (v))
+//#define iw(b, v) sizeof(*(uint16_t*)(b) = (v))
+//#define id(b, v) sizeof(*(uint32_t*)(b) = (v))
+//#define io(b, v) sizeof(*(uint64_t*)(b) = (v))
+
+int ia64_move(buff* data, int num) {
+  *data->tail++ = mov + eax;
+  data->tail += id(data->tail, num);
+  return 5;
+}
+
+inst ia64_jump(buff* data) {
+  *data->tail++ = jmp;
+  //data->mend = data->tail++;
+  return (inst){data->tail++, 2};
+}
+
+inst ia64_when(buff* data) {
+  *data->tail++ = cmp;
+  *data->tail++ = modrm(.mod=3, .reg=7, .rm=eax);
+  data->tail += ib(data->tail, 0);
+
+  *data->tail++ = jcs + je;
+  return (inst){data->tail++, 2};
+}
+
+int ia64_mend(buff* data, int size) {
+  *data->mend = size;
+  return 0;
+}
 
 void ia64_emit() {
+  uint8_t exp[] = { 0xB8, 0x03, 0x00, 0x00, 0x00, 0x83, 0xF8, 0x00, 0x74, 0x07, 0xB8, 0x04, 0x00, 0x00, 0x00, 0xEB, 0x05, 0xB8, 0x08, 0x00, 0x00, 0x00, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3 };
+  //uint8_t exp[] = { 0xB8, 0x03, 0x00, 0x00, 0x00, 0x83, 0xF8, 0x00, 0x74, 0x05, 0xB8, 0x04, 0x00, 0x00, 0x00, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3 };
+  buff* b;
+  b = malloc(sizeof(buff)+1024);
+  b->tail = b->head = b->data;
+  b->size = 0;
+
   printf("i386\n");
+
+  int els = 1;
+  int len = 0;
+
+  ia64_move(b, 3);
+  inst _cond = ia64_when(b);
+
+  len = 0;
+  // for earch instruction in then
+  len += ia64_move(b, 4);
+
+  if(els) {
+    // jump over the instructions in else
+    inst _else = ia64_jump(b);
+    *_cond.a = len + _else.l;
+    _cond = _else;
+
+    len = 0;
+    // for earch instruction in else
+    len += ia64_move(b, 8);
+  }
+  *_cond.a = len;
+
+  ia64_move(b, 42);
+  *b->tail++ = ret;
+
+  int size = b->tail - b->head;
+  if(size != sizeof(exp))
+    printf("encoding size mismatch, got %d, exp %ld\n", size, sizeof(exp));
+  for(int i = 0; i < size; i++)
+    if(b->head[i] != exp[i]) printf("---difference in %d, got %2.2x, exp %2.2x\n", i, b->head[i], exp[i]);
+  for(int i = 0; i < sizeof(exp); i++)
+    printf("%2.2d ", i);
+  printf("\n");
+  for(int i = 0; i < sizeof(exp); i++)
+    printf("%2.2x ", exp[i]);
+  printf("\n");
+  for(int i = 0; i < size; i++)
+    printf("%2.2x ", b->head[i]);
+  printf("\n");
 }
 
 void ia64_text(void* data) {
-  char* exe = data;
+  uint8_t* exe = data;
   int size = 0;
 
   //mov eax, 42
@@ -47,31 +139,6 @@ void ia64_text(void* data) {
 
   //ret
   exe[size++] = ret;
-}
-
-void ia64_when(void* data) {
-  uint8_t ofst = 0;
-
-  char* exe = data;
-  int size = 0;
-
-  exe[size++] = cmp;
-  exe[size++] = modrm();
-
-  exe[size++] = jcs + je;
-  exe[size++] = ofst;
-
-}
-
-void ia64_loop(void* data) {
-  char* exe = data;
-  size_t size = 0;
-
-  ia64_when(data);
-  // body
-  exe[size++] = jmp;
-  size +=  ib(exe, -size);
-
 }
 
 emit ia64 = {

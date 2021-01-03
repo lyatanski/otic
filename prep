@@ -24,4 +24,4 @@ int main() {
 EOF
 fi
 
-gcc -o$out/tic $link && ./$out/tic a $out/test.c
+gcc -o$out/tic $link && ./$out/tic i $out/test.c
