@@ -1,28 +1,30 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-typedef struct {
-  char*        head;
-  char*        tail;
-  unsigned int size;
-  char         name[512];
-  char         data[1];
-} file;
-
-struct word {
-#define toktag 1
-#define toknum 2
-#define tokstr 3
-#define tok1(x) (x[0])
-#define tok2(x) (x+=1, x[-1] | x[0]  << 8)
-#define tok3(x) (x+=2, x[-2] | x[-1] << 8 | x[0] << 16)
-#define toki(x, y, z, ...) (x | y << 8 | z << 16)
-#define tokd(...) toki(__VA_ARGS__, 0, 0, 0)
-  int   kind;
-  word* next;
-  int   size;
-  form  data;
+struct file {
+  char*  head;
+  char*  body;
+  char*  tail;
+  size_t size;
+  size_t line;
+  //char*  name;
+  char   data[1];
 };
+
+//#define tok1(x) (x[0])
+//#define tok2(x) (x+=1, x[-1] | x[0]  << 8)
+//#define tok3(x) (x+=2, x[-2] | x[-1] << 8 | x[0] << 16)
+enum tok {
+  tokend,
+  toktag,
+  toknum,
+  tokstr,
+};
+#define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
+#define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
+#define tok1(x) ((x)+=0, tokd((x)[-0]))
+#define tok2(x) ((x)+=1, tokd((x)[-1], (x)[-0]))
+#define tok3(x) ((x)+=2, tokd((x)[-2], (x)[-1], (x)[0]))
 
 //typedef struct {
 //  uint16_t align;
@@ -44,24 +46,6 @@ struct word {
 //  uint16_t _enum    :1;
 //} type;
 
-node* grow(mode* self, spec kind, form data) {
-  if(self->tail) {
-    self->tail->next = malloc(sizeof(node));
-    self->tail = self->tail->next;
-  }
-  else self->tail = malloc(sizeof(node));
-  self->tail->kind = kind;
-  self->tail->next = NULL;
-  self->tail->data = data;
-  return self->tail;
-}
-
-void  init(mode* self) {
-  self->tail = NULL;
-  self->head = grow(self, unit, (form){});
-  hnew(&self->pile);
-}
-
 file* scan(char* name) {
   file* f;
 
@@ -72,74 +56,57 @@ file* scan(char* name) {
 
   f = malloc(sizeof(file)+size);
   if(!f) return NULL;
-  f->head = f->data;
+  f->head = f->body = f->data;
   f->tail = f->head + size;
   f->size = size;
+  f->line = 1;
   fread(f->head, 1, f->size, fp);
   fclose(fp);
   return f;
 }
-void term(word** prev, int kind, form data) {
-  word* tok = malloc(sizeof(word));
-  tok->kind = kind;
-  tok->next = NULL;
-  tok->size = 0;
-  tok->data = data;
-  (*prev)->next = tok;
-  (*prev) = tok;
-}
-#define dict(p, k, ...) term(p, k, (form){__VA_ARGS__})
-
-//void emit(file* f) {
-//  FILE* fp = fopen(f->name, "wb");
-//  fwrite(f->head, 1, f->size, fp);
-//  fclose(fp);
-//}
 
 void shed(file* f) {
     free(f);
 }
 
-word* chop(file* f, hash** h) {
-  int   line = 0;
+#define term(...) head = (word){__VA_ARGS__}
+word chop(mode* self) {
   char* tok;
-  char* c = f->head;
   word  head = {};
-  word* tail = &head;
+  char* c = self->code->body;
 
-  while(c != f->tail) {
+  while(*c) {
     switch(*c) {
-      case '\n': case '\r': ++line; break;
+      case '\n': case '\r': ++self->code->line; break;
       case ' ': case '\f': case '\t': case '\v': break;
       case '#': case ',': case ';': case ':': case '?': case '~':
       case '(': case ')': case '[': case ']': case '{': case '}':
-        dict(&tail, tok1(c)); break;
+        term(tok1(c)); break;
       case '=': case '!': case '*': case '%': case '^':
-        dict(&tail, c[1] == '=' ? tok2(c) : tok1(c)); break;
+        term(c[1] == '='? tok2(c): tok1(c)); break;
       case '&':
-        dict(&tail, c[1] == '=' || c[1] == '&' ? tok2(c) : tok1(c)); break;
+        term(c[1] == '=' || c[1] == '&'? tok2(c): tok1(c)); break;
       case '|':
-        dict(&tail, c[1] == '=' || c[1] == '|' ? tok2(c) : tok1(c)); break;
+        term(c[1] == '=' || c[1] == '|'? tok2(c): tok1(c)); break;
       case '+':
-        dict(&tail, c[1] == '=' || c[1] == '+' ? tok2(c) : tok1(c)); break;
+        term(c[1] == '=' || c[1] == '+'? tok2(c): tok1(c)); break;
       case '-':
-        dict(&tail, c[1] == '=' || c[1] == '-' || c[1] == '>' ? tok2(c)
-                                                              : tok1(c)); break;
+        term(c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c)); break;
       case '<':
-        dict(&tail, c[1] == '<' && c[2] == '=' ? tok3(c) :
-                    c[1] == '<' || c[1] == '=' ? tok2(c) : tok1(c)); break;
+        term(c[1] == '<' && c[2] == '='? tok3(c):
+             c[1] == '<' || c[1] == '='? tok2(c): tok1(c)); break;
       case '>':
-        dict(&tail, c[1] == '>' && c[2] == '=' ? tok3(c) :
-                    c[1] == '>' || c[1] == '=' ? tok2(c) : tok1(c)); break;
+        term(c[1] == '>' && c[2] == '='? tok3(c):
+             c[1] == '>' || c[1] == '='? tok2(c): tok1(c)); break;
       case '/':
         if(c[1] == '/') // line comment
-          while (*c != '\r' && *c != '\n' && c != f->tail) ++c;
+          while (*c != '\r' && *c != '\n') ++c;
         else if(c[1] == '*') // block comment
-          while (c[0] != '*' && c[1] != '/' && c != f->tail) ++c;
-        else dict(&tail, c[1] == '=' ? tok2(c) : tok1(c));
+          while (c[0] != '*' && c[1] != '/') ++c;
+        else term(c[1] == '='? tok2(c): tok1(c));
         break;
       //case '\'':
-      //  dict(&tail, tokstr); c+=2; break;
+      //  term(tokstr); c+=2; break;
       case '"':
         tok = ++c;
         while(*c != '"' && *c != '\0') {
@@ -156,12 +123,11 @@ word* chop(file* f, hash** h) {
           //}
           ++c;
         }
-        dict(&tail, tokstr, hget(h, tok, c - tok));
-        break;
+        term(tokstr, .hash=hget(self->pool, tok, c - tok)); break;
       case '.':
         // '.', '...' or number
-        if(c[1] == '.' && c[2] == '.') { dict(&tail, tok3(c)); break; }
-        else if (!(c[1] >= '0' && c[1] <= '9')) { dict(&tail, tok1(c)); break; }
+        if(c[1] == '.' && c[2] == '.') { term(tok3(c)); break; }
+        else if (!(c[1] >= '0' && c[1] <= '9')) { term(tok1(c)); break; }
         // else fall trough to number
       case '0' ... '9': {
         int64_t ival = 0;
@@ -182,8 +148,8 @@ word* chop(file* f, hash** h) {
             }
             break;
           }
-        dict(&tail, toknum, .ival=ival);
         c--;
+        term(toknum, .ival=ival);
         break;
       }
       default:
@@ -191,51 +157,48 @@ word* chop(file* f, hash** h) {
         while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
            || (*c >= '0' && *c <= '9') || *c == '_') c++;
         if(c - tok > 0) {
-          dict(&tail, toktag, hget(h, tok, c - tok));
+          term(toktag, .hash=hget(self->pool, tok, c - tok));
           c--;
         }
         break;
     }
-    ++c;
+    self->code->body = ++c;
+    if(head.kind) break;
   }
-  return head.next;
+  self->talk = head;
+  return head;
 }
 
-int same(word** tok, item* hash) {
-    //printf("compare %p %d %s == %p %d %s\n", (*tok)->data.hash, (*tok)->data.hash->len, (*tok)->data.hash->key, hash, hash->len, hash->key);
-    return ((*tok)->kind == toktag && (*tok)->data.hash == hash)? (*tok) = (*tok)->next, 1 : 0;
+int same(mode* self, item* hash) {
+    return (self->talk.kind == toktag && self->talk.hash == hash)? chop(self), 1 : 0;
 }
 
-int twin(word** tok, int   kind) {
-    return ((*tok)->kind == kind)? (*tok) = (*tok)->next, 1 : 0;
- }
+int twin(mode* self, int   kind) {
+    return (self->talk.kind == kind)? chop(self), 1 : 0;
+}
 
-int skip(word** tok, int   kind) {
-    if((*tok)->kind != kind) fail("expected %x, got %x %s\n", kind, (*tok)->kind, (*tok)->kind == 1? (*tok)->data.hash->key: "");
-    (*tok) = (*tok)->next;
+int skip(mode* self, int   kind) {
+    if(self->talk.kind != kind) fail("expected %x, got %x\n", kind, self->talk.kind);
+    chop(self);
     return 1;
 }
 
-int know(word** tok, hash** map) {
-  return 1;
-}
-
-void type(word** tok, hash** map) {
-  // "typedef" type                  name     ";"
-  // "struct"  name?             "{" decl "}" ";"
-  // "union"   name?             "{" decl "}" ";"
-  // "enum"    name?             "{" list "}" ";"
-
-  word* list = *tok;
+void type(mode* self) {
+  // "typedef" type      name     ";"
+  // "struct"  name? "{" decl "}" ";"
+  // "union"   name? "{" decl "}" ";"
+  // "enum"    name? "{" list "}" ";"
 
   //skip type tag
-  if(list->kind < 4) printf("skipping type %x %s\n", list->kind, list->data.hash->key);
-  else               printf("skipping type %x %c\n", list->kind, list->kind);
-  *tok = list = list->next;
+  printf("skipping %p ", self->talk.hash);
+  fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout);
+  printf("\n");
+  chop(self);
 
-  if(list->kind < 4) printf("skipping name %x %s\n", list->kind, list->data.hash->key);
-  else               printf("skipping name %x %c\n", list->kind, list->kind);
-  *tok = list = list->next;
+  printf("skipping %p ", self->talk.hash);
+  fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout);
+  printf("\n");
+  chop(self);
 
   //item* h_typedef  = sget(map, "typedef");
   //item* h_static   = sget(map, "static");
@@ -311,147 +274,134 @@ void type(word** tok, hash** map) {
   //}
 }
 
-int args(word** tok, hash** map) {
-  word* p = *tok;
-  if(!skip(tok, tokd('('))) return 0;
-  while(!skip(tok, tokd(')'))) {
-    p = p->next;
+int args(mode* self) {
+  if(!twin(self, tokd('('))) return 0;
+  while(!twin(self, tokd(')'))) {
+    chop(self);
   }
   return 1;
 }
 
-void expr(mode* self, word** tok, hash** map) {
-    int rank = 0xffff;
+void expr(mode* self) {
+  int rank = 0xffff;
 
-    switch((*tok)->kind) {
-      case toknum:
-        grow(self, _val, (*tok)->data);
-        *tok = (*tok)->next;
-      break;
-      case tokstr:
-      break;
-      case toktag:
-      case tokd('('): /* type cast     */ skip(tok, tokd(')')); break;
-      case tokd('*'): /* pointer deref */ break;
-      case tokd('&'): /* address of    */ break;
-      break;
-      //case tokd('['):      break;
-      default:
-        printf("expr unexpected %x %s\n", (*tok)->kind, (*tok)->kind == 1? (*tok)->data.hash->key: "");
-    }
+  switch(self->talk.kind) {
+    case toknum:
+      chop(self);
+    break;
+    case tokstr:
+    break;
+    case toktag:
+    case tokd('('): /* type cast     */ skip(self, tokd(')')); break;
+    case tokd('*'): /* pointer deref */ break;
+    case tokd('&'): /* address of    */ break;
+    break;
+    //case tokd('['):      break;
+    default:
+      printf("expr unexpected %x\n", self->talk.kind);
+  }
 
-    while((*tok)->kind >= rank) {
-      switch((*tok)->kind) {
-        case tokd('='):      break;
-        case tokd('?'):      break;
-        case tokd('|'):      break;
-        case tokd('^'):      break;
-        case tokd('&'):      break;
-        case tokd('<'):      break;
-        case tokd('>'):      break;
-        case tokd('+'):      break;
-        case tokd('-'):      break;
-        case tokd('*'):      break;
-        case tokd('/'):      break;
-        case tokd('%'):      break;
-        case tokd('['):      break;
-        case tokd('|', '|'): break;
-        case tokd('&', '&'): break;
-        case tokd('=', '='): break;
-        case tokd('!', '='): break;
-        case tokd('<', '='): break;
-        case tokd('>', '='): break;
-        case tokd('<', '<'): break;
-        case tokd('>', '>'): break;
-        case tokd('+', '+'): case tokd('-', '-'):  break;
-        case tokd('('):
-          // function call
-          while(skip(tok, tokd(')'))) {
-            //expr(Assign);
-          }
-          break;
-        default: fail("error %x", (*tok)->kind); break;
-      }
+  while(self->talk.kind >= rank) {
+    switch(self->talk.kind) {
+      case tokd('='):      break;
+      case tokd('?'):      break;
+      case tokd('|'):      break;
+      case tokd('^'):      break;
+      case tokd('&'):      break;
+      case tokd('<'):      break;
+      case tokd('>'):      break;
+      case tokd('+'):      break;
+      case tokd('-'):      break;
+      case tokd('*'):      break;
+      case tokd('/'):      break;
+      case tokd('%'):      break;
+      case tokd('['):      break;
+      case tokd('|', '|'): break;
+      case tokd('&', '&'): break;
+      case tokd('=', '='): break;
+      case tokd('!', '='): break;
+      case tokd('<', '='): break;
+      case tokd('>', '='): break;
+      case tokd('<', '<'): break;
+      case tokd('>', '>'): break;
+      case tokd('+', '+'): case tokd('-', '-'):  break;
+      case tokd('('):
+        // function call
+        while(skip(self, tokd(')'))) {
+          //expr(Assign);
+        }
+        break;
+      default: fail("error %x", self->talk.kind); break;
     }
+  }
 }
 
-void stmt(mode* self, word** tok, hash** map) {
-  if(twin(tok, tokd('{'))) {
-    while(!twin(tok, tokd('}')))
-      stmt(self, tok, map);
+void stmt(mode* self) {
+  if(twin(self, tokd('{'))) {
+    printf("block\n");
+    while(!twin(self, tokd('}'))) stmt(self);
   }
-  else if(same(tok, sget(map, "if"))) {
-    node * nd1 = grow(self, jump, (*tok)->data);
-    grow(self, when, (*tok)->data);
-    skip(tok, tokd('('));
-    expr(self, tok, map);
-    skip(tok, tokd(')'));
-    stmt(self, tok, map);
-    if(same(tok, sget(map, "else"))) {
-      node * nd2 = grow(self, jump, (*tok)->data);
-      nd1->then = self->tail;
-      stmt(self, tok, map);
-      nd2->then = self->tail;
+  else if(same(self, sget(self->pool, "if"))) {
+    printf("if\n");
+    skip(self, tokd('('));
+    expr(self);
+    skip(self, tokd(')'));
+    stmt(self);
+    if(same(self, sget(self->pool, "else"))) {
+      stmt(self);
     }
-    else
-      nd1->then = self->tail;
   }
-  else if(same(tok, sget(map, "while"))) {
+  else if(same(self, sget(self->pool, "while"))) {
     printf("loop\n");
-    skip(tok, tokd('('));
-    expr(self, tok, map);
-    skip(tok, tokd(')'));
-    stmt(self, tok, map);
+    skip(self, tokd('('));
+    expr(self);
+    skip(self, tokd(')'));
+    stmt(self);
   }
-  else if(same(tok, sget(map, "return"))) {
-    grow(self, give, (*tok)->data);
-    expr(self, tok, map);
-    skip(tok, tokd(';'));
+  else if(same(self, sget(self->pool, "return"))) {
+    printf("return\n");
+    expr(self);
+    skip(self, tokd(';'));
   }
   else {
     printf("expr\n");
-    expr(self, tok, map);
-    skip(tok, tokd(';'));
+    expr(self);
+    skip(self, tokd(';'));
   }
 }
 
-int post(word** tok, hash** map) {
+int post(mode* self) {
   return 0;
 }
 
-char debug[ops][5] = { "unit",
-  "_val", "_add", "_sub", "_mul", "_div", "_mod",
-  "when", "jump", "call", "proc", "give",
-};
 void make(mode* self) {
   // unit = function
   //      | variable
   //      | typedecl
 
-  file* code = scan(self->name);
-  self->list = chop(code, &self->pile);
+  self->code = scan(self->name);
 
-  word* list = self->list;
-  hash** map = &(self->pile);
-
-  //while(list) {
-  //  if(list->kind == toknum)      printf("token num %ld\n", list->data.ival);
-  //  else if(list->kind == tokstr) printf("token str %s\n", list->data.hash->key);
-  //  else if(list->kind == toktag) printf("token tag %s\n", list->data.hash->key);
-  //  else                          printf("token %x %c\n", list->kind, list->kind);
-  //  list = list->next;
+  //for(int i= 0; i < 100; i++) {
+  //while(self->talk.kind) {
+  //  if(self->talk.kind == toknum)        printf("token num %ld", self->talk.ival);
+  //  else if(self->talk.kind == tokstr) { printf("token str %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
+  //  else if(self->talk.kind == toktag) { printf("token tag %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
+  //  else                                 printf("token %x %c", self->talk.kind, self->talk.kind);
+  //  printf("\n");
+  //  chop(self);
   //}
 
-  while(list) {
+  do {
+    chop(self);
+
     // every statement begins with type
-    type(&list, map);
+    type(self);
 
     // type name "(" args ")" "{" stmt "}"     // function decl
-    if(args(&list, map)) {
+    if(args(self)) {
       // function
-      grow(self, proc, list->data);
       //printf("its a function \n");
-      stmt(self, &list, map);
+      stmt(self);
     }
 
     // type name "[" size "]"              ";" // variable decl
@@ -459,20 +409,9 @@ void make(mode* self) {
     //}
     //else {
     //}
-  }
-
-  node* it = self->head;
-  while(it) {
-    printf(" %p %s", it, debug[it->kind]);
-    //if(it->kind == proc) printf(" %s", it->data.hash->key);
-    if(it->kind == _val) printf(" %ld", it->data.ival);
-    if(it->kind == jump) printf(" %p", it->then->next);
-    printf("\n");
-    it = it->next;
-  }
+  } while(self->talk.kind);
 
   self->arch.show();
-
-  shed(code);
+  shed(self->code);
 }
 

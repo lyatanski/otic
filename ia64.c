@@ -70,7 +70,7 @@ inst ia64_when(buff* data) {
   data->tail += ib(data->tail, 0);
 
   *data->tail++ = jcs + je;
-  return (inst){data->tail++, 2};
+  return (inst){data->tail++, 5};
 }
 
 int ia64_mend(buff* data, int size) {
@@ -127,6 +127,8 @@ void ia64_emit() {
   for(int i = 0; i < size; i++)
     printf("%2.2x ", b->head[i]);
   printf("\n");
+
+  free(b);
 }
 
 void ia64_text(void* data) {

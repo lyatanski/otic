@@ -25,11 +25,9 @@ extern emit ia64;
 #endif
 
 int main(int argc, char** argv) {
+  mode self = {};
+
   if(argc != 3) return 1;
-
-  mode self;
-  init(&self);
-
   switch(argv[1][0]) {
     case 'a': self.arch = arm8; break;
     case 'i': self.arch = ia64; break;
