@@ -32,19 +32,13 @@ typedef struct {
 } buff;
 
 // arch
-typedef void (*vent)();
 typedef void (*flow)(buff*, uint32_t);
 typedef void (*mend)(buff*);
-typedef void (*txt)(void* dat);
 typedef struct {
-  vent  prep;
-  vent  halt;
-  vent  show;
-  txt   text;
-
   flow  move;
   flow  when;
   flow  jump;
+  mend  done;
   mend  back;
 } emit;
 

@@ -282,8 +282,5 @@ void arm8_text(void* data) {
 }
 
 emit arm8 = {
-  .show = arm8_emit,
-  .halt = arm8_halt,
-  .text = arm8_text,
 };
 

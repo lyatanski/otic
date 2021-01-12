@@ -286,6 +286,7 @@ void expr(mode* self) {
 
   switch(self->talk.kind) {
     case toknum:
+      self->arch.move(&self->data, self->talk.ival);
       chop(self);
     break;
     case tokstr:
@@ -337,18 +338,19 @@ void expr(mode* self) {
 
 void stmt(mode* self) {
   if(twin(self, tokd('{'))) {
-    printf("block\n");
     while(!twin(self, tokd('}'))) stmt(self);
   }
   else if(same(self, sget(self->pool, "if"))) {
-    printf("if\n");
     skip(self, tokd('('));
     expr(self);
     skip(self, tokd(')'));
+    self->arch.when(&self->data, 0);
     stmt(self);
     if(same(self, sget(self->pool, "else"))) {
+      self->arch.jump(&self->data, 1);
       stmt(self);
     }
+    self->arch.back(&self->data);
   }
   else if(same(self, sget(self->pool, "while"))) {
     printf("loop\n");
@@ -358,8 +360,8 @@ void stmt(mode* self) {
     stmt(self);
   }
   else if(same(self, sget(self->pool, "return"))) {
-    printf("return\n");
     expr(self);
+    self->arch.done(&self->data);
     skip(self, tokd(';'));
   }
   else {
@@ -415,8 +417,6 @@ void make(mode* self) {
   } while(self->talk.kind);
 
   shed(self->code);
-
-  self->arch.text(self->data.head);
 
   self->exec(self->data.head, 1024);
   self->drop(self->data.head, 1024);
