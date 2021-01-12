@@ -201,8 +201,8 @@ void type(mode* self) {
 }
 
 int args(mode* self) {
-  if(!twin(self, tokd('('))) return 0;
-  while(!twin(self, tokd(')'))) {
+  if(!twin(self, '(')) return 0;
+  while(!twin(self, ')')) {
     chop(self);
   }
   return 1;
@@ -219,7 +219,7 @@ void expr(mode* self) {
     case tokstr:
     break;
     case toktag:
-    case tokd('('): /* type cast     */ skip(self, tokd(')')); break;
+    case tokd('('): /* type cast     */ skip(self, ')'); break;
     case tokd('*'): /* pointer deref */ break;
     case tokd('&'): /* address of    */ break;
     break;
@@ -254,7 +254,7 @@ void expr(mode* self) {
       case tokd('+', '+'): case tokd('-', '-'):  break;
       case tokd('('):
         // function call
-        while(skip(self, tokd(')'))) {
+        while(!twin(self, ')')) {
           //expr(Assign);
         }
         break;
@@ -264,11 +264,11 @@ void expr(mode* self) {
 }
 
 void stmt(mode* self) {
-  if(twin(self, tokd('{'))) {
-    while(!twin(self, tokd('}'))) stmt(self);
+  if(twin(self, '{')) {
+    while(!twin(self, '}')) stmt(self);
   }
   else if(same(self, sget(self->pool, "if"))) {
-    skip(self, tokd('(')); expr(self); skip(self, tokd(')'));
+    skip(self, '('); expr(self); skip(self, ')');
     self->arch.when(&self->data, 0);
     stmt(self);
     if(same(self, sget(self->pool, "else"))) {
@@ -278,15 +278,15 @@ void stmt(mode* self) {
     self->arch.back(&self->data);
   }
   else if(same(self, sget(self->pool, "while"))) {
-    skip(self, tokd('(')); expr(self); skip(self, tokd(')'));
+    skip(self, '('); expr(self); skip(self, ')');
     stmt(self);
   }
   else if(same(self, sget(self->pool, "return"))) {
-    expr(self); skip(self, tokd(';'));
+    expr(self); skip(self, ';');
     self->arch.done(&self->data);
   }
   else {
-    expr(self); skip(self, tokd(';'));
+    expr(self); skip(self, ';');
   }
 }
 
