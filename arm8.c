@@ -253,16 +253,18 @@ void arm8_emit() {
   printf("%x\n%x\n%s\n", r, e, r==e? "true": "false");
 }
 
-void arm8_calc() {
+void arm8_move(buff* data, uint32_t num) {
 }
 
-void arm8_test() {
+void arm8_when(buff* data, uint32_t num) {
 }
 
-void arm8_jump() {
+void arm8_jump(buff* data, uint32_t num) {
 }
 
-void arm8_prep() {
+void arm8_done(buff* data) {
+}
+void arm8_mend(buff* data) {
 }
 
 void arm8_halt() {
@@ -282,5 +284,10 @@ void arm8_text(void* data) {
 }
 
 emit arm8 = {
+  .move = arm8_move,
+  .when = arm8_when,
+  .jump = arm8_jump,
+  .done = arm8_done,
+  .back = arm8_mend,
 };
 

@@ -198,79 +198,6 @@ void type(mode* self) {
   fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout);
   printf("\n");
   chop(self);
-
-  //item* h_typedef  = sget(map, "typedef");
-  //item* h_static   = sget(map, "static");
-  //item* h_extern   = sget(map, "extern");
-  //item* h_inline   = sget(map, "inline");
-  //item* h_struct   = sget(map, "struct");
-  //item* h_union    = sget(map, "union");
-  //item* h_enum     = sget(map, "enum");
-  //item* h_signed   = sget(map, "signed");
-  //item* h_unsigned = sget(map, "unsigned");
-  //item* h_void     = sget(map, "void");
-  //item* h_bool     = sget(map, "_Bool");
-  //item* h_char     = sget(map, "char");
-  //item* h_short    = sget(map, "short");
-  //item* h_int      = sget(map, "int");
-  //item* h_long     = sget(map, "long");
-  //item* h_float    = sget(map, "float");
-  //item* h_double   = sget(map, "double");
-
-  //while(know(tok, map)) {
-  //  if((*tok)->data.hash == h_typedef)   t.is_typedef  = 1;
-  //  if((*tok)->data.hash == h_static)    t.is_static   = 1;
-  //  if((*tok)->data.hash == h_extern)    t.is_extern   = 1;
-  //  if((*tok)->data.hash == h_inline)    t.is_inline   = 1;
-
-  //  if((*tok)->data.hash == h_struct)    t.is_struct   = 1;
-  //  if((*tok)->data.hash == h_union)     t.is_union    = 1;
-  //  if((*tok)->data.hash == h_enum)      t.is_enum     = 1;
-
-  //  if((*tok)->data.hash == h_signed)    t.is_sig      = 1;
-  //  if((*tok)->data.hash == h_unsigned)  t.is_abs      = 1;
-
-  //  if((*tok)->data.hash == h_void)      t.is_void    += 1;
-  //  if((*tok)->data.hash == h_bool)      t.is_bool    += 1;
-  //  if((*tok)->data.hash == h_char)      t.is_char    += 1;
-  //  if((*tok)->data.hash == h_short)     t.is_short   += 1;
-  //  if((*tok)->data.hash == h_int)       t.is_int     += 1;
-  //  if((*tok)->data.hash == h_long)      t.is_long    += 1;
-  //  if((*tok)->data.hash == h_float)     t.is_float   += 1;
-  //  if((*tok)->data.hash == h_double)    t.is_double  += 1;
-
-  //  //if(!(twin(&t, &(type){           .is_void=1            })
-  //  //   ||twin(&t, &(type){           .is_bool=1            })
-  //  //   ||twin(&t, &(type){.is_sig=1, .is_char=1            })
-  //  //   ||twin(&t, &(type){.is_abs=1, .is_char=1            })
-  //  //   ||twin(&t, &(type){           .is_short=1           })
-  //  //   ||twin(&t, &(type){           .is_short=1, .is_int=1})
-  //  //   ||twin(&t, &(type){.is_sig=1, .is_short=1           })
-  //  //   ||twin(&t, &(type){.is_sig=1, .is_short=1, .is_int=1})
-  //  //   ||twin(&t, &(type){.is_abs=1, .is_short=1           })
-  //  //   ||twin(&t, &(type){.is_abs=1, .is_short=1, .is_int=1})
-  //  //   ||twin(&t, &(type){                        .is_int=1})
-  //  //   ||twin(&t, &(type){.is_sig=1                        })
-  //  //   ||twin(&t, &(type){.is_sig=1,              .is_int=1})
-  //  //   ||twin(&t, &(type){.is_abs=1                        })
-  //  //   ||twin(&t, &(type){.is_abs=1,              .is_int=1})
-  //  //   ||twin(&t, &(type){           .is_long=1            })
-  //  //   ||twin(&t, &(type){           .is_long=1,  .is_int=1})
-  //  //   ||twin(&t, &(type){           .is_long=2,  .is_int=1})
-  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=1            })
-  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=2            })
-  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=1,  .is_int=1})
-  //  //   ||twin(&t, &(type){.is_sig=1, .is_long=2,  .is_int=1})
-  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=1            })
-  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=2            })
-  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=1,  .is_int=1})
-  //  //   ||twin(&t, &(type){.is_abs=1, .is_long=2,  .is_int=1})
-  //  //   ||twin(&t, &(type){           .is_float=1           })
-  //  //   ||twin(&t, &(type){           .is_double=1          })
-  //  //   )) fail("invalid type");
-  //  *tok = (*tok)->next;
-  //  break;
-  //}
 }
 
 int args(mode* self) {
@@ -341,9 +268,7 @@ void stmt(mode* self) {
     while(!twin(self, tokd('}'))) stmt(self);
   }
   else if(same(self, sget(self->pool, "if"))) {
-    skip(self, tokd('('));
-    expr(self);
-    skip(self, tokd(')'));
+    skip(self, tokd('(')); expr(self); skip(self, tokd(')'));
     self->arch.when(&self->data, 0);
     stmt(self);
     if(same(self, sget(self->pool, "else"))) {
@@ -353,21 +278,15 @@ void stmt(mode* self) {
     self->arch.back(&self->data);
   }
   else if(same(self, sget(self->pool, "while"))) {
-    printf("loop\n");
-    skip(self, tokd('('));
-    expr(self);
-    skip(self, tokd(')'));
+    skip(self, tokd('(')); expr(self); skip(self, tokd(')'));
     stmt(self);
   }
   else if(same(self, sget(self->pool, "return"))) {
-    expr(self);
+    expr(self); skip(self, tokd(';'));
     self->arch.done(&self->data);
-    skip(self, tokd(';'));
   }
   else {
-    printf("expr\n");
-    expr(self);
-    skip(self, tokd(';'));
+    expr(self); skip(self, tokd(';'));
   }
 }
 
@@ -376,6 +295,10 @@ int post(mode* self) {
 }
 
 void  show(void* data, size_t size) {
+  uint8_t* buff = data;
+  for( int i = 0; i < size; i++)
+    printf("%2.2x ", buff[i]);
+  printf("\n");
 }
 
 void make(mode* self) {
@@ -418,7 +341,7 @@ void make(mode* self) {
 
   shed(self->code);
 
-  self->exec(self->data.head, 1024);
+  self->exec(self->data.head, self->data.tail - self->data.head);
   self->drop(self->data.head, 1024);
 }
 
