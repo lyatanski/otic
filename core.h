@@ -21,15 +21,31 @@ item* hget(hash map, char* key, long len);
 #define sget(h, k) hget(h, k, sizeof(k)-1)
 void  hrid(hash map);
 
+typedef struct mode mode;
+typedef struct {
+  uint8_t* head;
+  uint8_t* body;
+  uint8_t* tail;
+  uint8_t* mend;
+  size_t   size;
+  uint8_t  data[1];
+} buff;
+
 // arch
 typedef void (*vent)();
+typedef void (*flow)(buff*, uint32_t);
+typedef void (*mend)(buff*);
 typedef void (*txt)(void* dat);
 typedef struct {
   vent  prep;
   vent  halt;
-  vent  jump;
   vent  show;
   txt   text;
+
+  flow  move;
+  flow  when;
+  flow  jump;
+  mend  back;
 } emit;
 
 // core
@@ -42,13 +58,13 @@ typedef struct {
     uint64_t fval;
   };
 } word;
-typedef struct {
+struct mode{
   char* name;
   file* code;
   word  talk;
   hash  pool;
   emit  arch;
-} mode;
+};
 
 //void  init(mode*);
 void  make(mode*);

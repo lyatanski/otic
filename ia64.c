@@ -1,19 +1,5 @@
 #include "core.h"
 
-typedef struct {
-  uint8_t* head;
-  uint8_t* body;
-  uint8_t* tail;
-  uint8_t* mend;
-  size_t   size;
-  uint8_t  data[1];
-} buff;
-
-typedef struct { 
-  uint8_t* a;
-  size_t l;
-} inst;
-
 #define eax 0
 
 #define mov    0xb8
@@ -50,20 +36,20 @@ void id(buff* data, uint32_t val) BODY
 void io(buff* data, uint64_t val) BODY
 #undef  BODY
 
-void ia64_move(buff* data, int num) {
+void ia64_move(buff* data, uint32_t num) {
   ib(data, mov + eax);
   id(data, num);
 }
 
 void ia64_mend(buff* data) { *data->body = data->tail - data->body - 1; }
 
-void ia64_jump(buff* data, int fix) {
+void ia64_jump(buff* data, uint32_t fix) {
   ib(data, jmp);
   if(fix) *data->body = data->tail - data->body;
   data->body = data->tail++;
 }
 
-void ia64_when(buff* data) {
+void ia64_when(buff* data, uint32_t cond) {
   ib(data, cmp);
   ib(data, modrm(.mod=3, .reg=7, .rm=eax));
   ib(data, 0);
@@ -83,7 +69,7 @@ void ia64_emit() {
   printf("i386\n");
 
   ia64_move(b, 3);
-  ia64_when(b);
+  ia64_when(b, 0);
 
   // for earch instruction in then
   ia64_move(b, 4);
@@ -131,6 +117,11 @@ void ia64_text(void* data) {
 
 emit ia64 = {
   .show = ia64_emit,
-  .text = ia64_text
+  .text = ia64_text,
+
+  .move = ia64_move,
+  .when = ia64_when,
+  .jump = ia64_jump,
+  .back = ia64_mend,
 };
 

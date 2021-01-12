@@ -91,6 +91,7 @@ word chop(mode* self) {
       case '+':
         term(c[1] == '=' || c[1] == '+'? tok2(c): tok1(c)); break;
       case '-':
+        //head.kind = c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c); break;
         term(c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c)); break;
       case '<':
         term(c[1] == '<' && c[2] == '='? tok3(c):
@@ -109,7 +110,7 @@ word chop(mode* self) {
       //  term(tokstr); c+=2; break;
       case '"':
         tok = ++c;
-        while(*c != '"' && *c != '\0') {
+        while(*c != '"') {
           //if(*c == '\n' || *c == '\0') fail("unterminated string %s", c);
           //if(*c == '\\') switch (*++c) {
           //  case 'a': '\a'; break;
@@ -141,12 +142,10 @@ word chop(mode* self) {
           while(*c++ && (*c >= '0' && *c <= '7')) ival = ival *  8 + *c - '0';
         else if(*c == 'X' || *c == 'x')
           while(*c++) {
-            switch(*c) {
-              case '0' ... '9': ival = ival * 16 + *c - '0';      continue;
-              case 'A' ... 'F': ival = ival * 16 + *c - 'A' + 10; continue;
-              case 'a' ... 'f': ival = ival * 16 + *c - 'a' + 10; continue;
-            }
-            break;
+            if(*c >= '0' && *c <= '9')      ival = ival * 16 + *c - '0';
+            else if(*c >= 'A' && *c <= 'F') ival = ival * 16 + *c - 'A' + 10;
+            else if(*c >= 'a' && *c <= 'f') ival = ival * 16 + *c - 'a' + 10;
+            else break;
           }
         c--;
         term(toknum, .ival=ival);
