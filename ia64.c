@@ -2,6 +2,7 @@
 
 typedef struct {
   uint8_t* head;
+  uint8_t* body;
   uint8_t* tail;
   uint8_t* mend;
   size_t   size;
@@ -42,40 +43,33 @@ typedef struct {
 #define modrm(...) (*(uint8_t*)&(struct { uint8_t rm:3, reg:3, mod:2; }){__VA_ARGS__})
 #define sib(...) (*(uint8_t*)&(struct { uint8_t base:3, idx:3, ss:2; }){__VA_ARGS__})
 
-unsigned int ib(uint8_t* exe, uint8_t  val) { *(typeof(val)*)exe = val; return sizeof(val); }
-unsigned int iw(uint8_t* exe, uint16_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
-unsigned int id(uint8_t* exe, uint32_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
-unsigned int io(uint8_t* exe, uint64_t val) { *(typeof(val)*)exe = val; return sizeof(val); }
+#define BODY { *(typeof(val)*)data->tail = val; data->tail += sizeof(val); }
+void ib(buff* data, uint8_t  val) BODY
+void iw(buff* data, uint16_t val) BODY
+void id(buff* data, uint32_t val) BODY
+void io(buff* data, uint64_t val) BODY
+#undef  BODY
 
-//#define ib(b, v) sizeof(*(uint8_t *)(b) = (v))
-//#define iw(b, v) sizeof(*(uint16_t*)(b) = (v))
-//#define id(b, v) sizeof(*(uint32_t*)(b) = (v))
-//#define io(b, v) sizeof(*(uint64_t*)(b) = (v))
-
-int ia64_move(buff* data, int num) {
-  *data->tail++ = mov + eax;
-  data->tail += id(data->tail, num);
-  return 5;
+void ia64_move(buff* data, int num) {
+  ib(data, mov + eax);
+  id(data, num);
 }
 
-inst ia64_jump(buff* data) {
-  *data->tail++ = jmp;
-  //data->mend = data->tail++;
-  return (inst){data->tail++, 2};
+void ia64_mend(buff* data) { *data->body = data->tail - data->body - 1; }
+
+void ia64_jump(buff* data, int fix) {
+  ib(data, jmp);
+  if(fix) *data->body = data->tail - data->body;
+  data->body = data->tail++;
 }
 
-inst ia64_when(buff* data) {
-  *data->tail++ = cmp;
-  *data->tail++ = modrm(.mod=3, .reg=7, .rm=eax);
-  data->tail += ib(data->tail, 0);
+void ia64_when(buff* data) {
+  ib(data, cmp);
+  ib(data, modrm(.mod=3, .reg=7, .rm=eax));
+  ib(data, 0);
 
-  *data->tail++ = jcs + je;
-  return (inst){data->tail++, 5};
-}
-
-int ia64_mend(buff* data, int size) {
-  *data->mend = size;
-  return 0;
+  ib(data, jcs + je);
+  data->body = data->tail++;
 }
 
 void ia64_emit() {
@@ -88,30 +82,22 @@ void ia64_emit() {
 
   printf("i386\n");
 
-  int els = 1;
-  int len = 0;
-
   ia64_move(b, 3);
-  inst _cond = ia64_when(b);
+  ia64_when(b);
 
-  len = 0;
   // for earch instruction in then
-  len += ia64_move(b, 4);
+  ia64_move(b, 4);
 
-  if(els) {
-    // jump over the instructions in else
-    inst _else = ia64_jump(b);
-    *_cond.a = len + _else.l;
-    _cond = _else;
+  if(1) {
+    ia64_jump(b, 1);
 
-    len = 0;
     // for earch instruction in else
-    len += ia64_move(b, 8);
+    ia64_move(b, 8);
   }
-  *_cond.a = len;
+  ia64_mend(b);
 
   ia64_move(b, 42);
-  *b->tail++ = ret;
+  ib(b, ret);
 
   int size = b->tail - b->head;
   if(size != sizeof(exp))
@@ -137,7 +123,7 @@ void ia64_text(void* data) {
 
   //mov eax, 42
   exe[size++] = mov + eax;
-  size += id(exe+size, 42);
+  //id(exe+size, 42);
 
   //ret
   exe[size++] = ret;
