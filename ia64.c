@@ -33,12 +33,12 @@ void ia64_move(buff* data, uint32_t num) {
   id(data, num);
 }
 
-void ia64_mend(buff* data) { *data->body = data->tail - data->body - 1; }
+void ia64_mend(buff* data) { *data->back = data->tail - data->back - 1; }
 
 void ia64_jump(buff* data, uint32_t fix) {
   ib(data, jmp);
-  if(fix) *data->body = data->tail - data->body;
-  data->body = data->tail++;
+  if(fix) *data->back = data->tail - data->back;
+  data->back = data->tail++;
 }
 
 void ia64_when(buff* data, uint32_t cond) {
@@ -47,7 +47,7 @@ void ia64_when(buff* data, uint32_t cond) {
   ib(data, 0);
 
   ib(data, jcs + je);
-  data->body = data->tail++;
+  data->back = data->tail++;
 }
 
 void ia64_emit() {
@@ -99,11 +99,30 @@ void ia64_text(void* data) {
   buff b;
   b.tail = b.head = data;
 
-  //mov eax, 42
-  ib(&b, mov+eax);
-  id(&b, 42);
+  ////mov eax, 42
+  //ib(&b, mov+eax);
+  //id(&b, 42);
 
-  //ret
+  ////ret
+  //ib(&b, ret);
+
+  ia64_move(&b, 3);
+  ia64_when(&b, 0);
+
+  // for earch instruction in then
+  ia64_move(&b, 4);
+  ib(&b, ret);
+
+  if(1) {
+    ia64_jump(&b, 1);
+
+    // for earch instruction in else
+    ia64_move(&b, 8);
+    ib(&b, ret);
+  }
+  ia64_mend(&b);
+
+  ia64_move(&b, 42);
   ib(&b, ret);
 }
 

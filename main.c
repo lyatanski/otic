@@ -28,17 +28,13 @@ int main(int argc, char** argv) {
   mode self = {};
 
   if(argc != 3) return 1;
+  self.hold = hold;
+  self.drop = drop;
+  self.exec = show;
   switch(argv[1][0]) {
     case 'a': self.arch = arm8; break;
     case 'i': self.arch = ia64; break;
-    case 'e': {
-      size_t size = 60;
-      void* data = hold(size);
-      base.text(data);
-      exec(data);
-      drop(data, size);
-      return 0;
-    }
+    case 'e': self.arch = base; self.exec = exec; break;
     default : return 1;
   }
 

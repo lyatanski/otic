@@ -24,7 +24,7 @@ void  hrid(hash map);
 typedef struct mode mode;
 typedef struct {
   uint8_t* head;
-  uint8_t* body;
+  uint8_t* back;
   uint8_t* tail;
   uint8_t* mend;
   size_t   size;
@@ -49,7 +49,11 @@ typedef struct {
 } emit;
 
 // core
+typedef void* (*poke)(void*, size_t);
+typedef void  (*pack)(void*, size_t);
+
 typedef struct file file;
+
 typedef struct {
   int   kind;
   union {
@@ -58,14 +62,19 @@ typedef struct {
     uint64_t fval;
   };
 } word;
+
 struct mode{
   char* name;
   file* code;
   word  talk;
   hash  pool;
   emit  arch;
+  buff  data;
+  poke  hold;
+  poke  drop;
+  pack  exec;
 };
 
-//void  init(mode*);
 void  make(mode*);
+void  show(void*, size_t);
 

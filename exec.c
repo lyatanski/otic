@@ -6,7 +6,7 @@
 #endif
 #include "core.h"
 
-void* hold(int size) {
+void* hold(void* memory, size_t size) {
 #ifdef _WIN32
   return VirtualAlloc(0, size,
     MEM_COMMIT | MEM_RESERVE,
@@ -16,9 +16,10 @@ void* hold(int size) {
     PROT_READ | PROT_WRITE | PROT_EXEC,
     MAP_ANONYMOUS | MAP_PRIVATE, /*fd=*/-1, /*offset=*/0);
 #endif
+  return NULL;
 }
 
-void prep(void* memory, int size) {
+void prep(void* memory, size_t size) {
 #ifdef _WIN32
   VirtualProtect(memory, size, PAGE_EXECUTE_READ, 0);
 #else
@@ -26,16 +27,18 @@ void prep(void* memory, int size) {
 #endif
 }
 
-void drop(void* memory, int size) {
+void* drop(void* memory, size_t size) {
 #ifdef _WIN32
   VirtualFree(address, 0, MEM_RELEASE);
 #else
   munmap(memory, size);
 #endif
+  return NULL;
 }
 
 typedef int (*func)();
-void exec(void* memory) {
+void exec(void* memory, size_t size) {
+  //prep(memory, 0);
   int return_code = ((func)memory)();
   printf("%d\n", return_code);
 }

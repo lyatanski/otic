@@ -373,12 +373,16 @@ int post(mode* self) {
   return 0;
 }
 
+void  show(void* data, size_t size) {
+}
+
 void make(mode* self) {
   // unit = function
   //      | variable
   //      | typedecl
 
   self->code = scan(self->name);
+  self->data.head = self->data.tail = self->hold(0, 1024);
 
   //for(int i= 0; i < 100; i++) {
   //while(self->talk.kind) {
@@ -410,7 +414,11 @@ void make(mode* self) {
     //}
   } while(self->talk.kind);
 
-  self->arch.show();
   shed(self->code);
+
+  self->arch.text(self->data.head);
+
+  self->exec(self->data.head, 1024);
+  self->drop(self->data.head, 1024);
 }
 
