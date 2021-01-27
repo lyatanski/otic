@@ -38,6 +38,8 @@ typedef struct {
   flow  move;
   flow  when;
   flow  jump;
+  flow  args;
+  flow  call;
   mend  done;
   mend  back;
 } emit;

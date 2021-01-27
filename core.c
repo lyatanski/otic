@@ -14,17 +14,12 @@ struct file {
 //#define tok1(x) (x[0])
 //#define tok2(x) (x+=1, x[-1] | x[0]  << 8)
 //#define tok3(x) (x+=2, x[-2] | x[-1] << 8 | x[0] << 16)
-enum tok {
-  tokend,
-  toktag,
-  toknum,
-  tokstr,
-};
+enum { tokend, toktag, toknum, tokstr };
 #define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
 #define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
-#define tok1(x) ((x)+=0, tokd((x)[-0]))
-#define tok2(x) ((x)+=1, tokd((x)[-1], (x)[-0]))
-#define tok3(x) ((x)+=2, tokd((x)[-2], (x)[-1], (x)[0]))
+#define tok1(x) ((x)+=1, tokd((x)[-1]))
+#define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
+#define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
 
 //typedef struct {
 //  uint16_t align;
@@ -65,105 +60,102 @@ file* scan(char* name) {
   return f;
 }
 
-void shed(file* f) {
-    free(f);
+void shed(file* data) {
+    free(data);
 }
 
 #define term(...) head = (word){__VA_ARGS__}
+//#define term(...) self->code->body = ++c; return (word){__VA_ARGS__}
 word chop(mode* self) {
   char* tok;
   word  head = {};
   char* c = self->code->body;
 
-  while(*c) {
-    switch(*c) {
-      case '\n': case '\r': ++self->code->line; break;
-      case ' ': case '\f': case '\t': case '\v': break;
-      case '#': case ',': case ';': case ':': case '?': case '~':
-      case '(': case ')': case '[': case ']': case '{': case '}':
-        term(tok1(c)); break;
-      case '=': case '!': case '*': case '%': case '^':
-        term(c[1] == '='? tok2(c): tok1(c)); break;
-      case '&':
-        term(c[1] == '=' || c[1] == '&'? tok2(c): tok1(c)); break;
-      case '|':
-        term(c[1] == '=' || c[1] == '|'? tok2(c): tok1(c)); break;
-      case '+':
-        term(c[1] == '=' || c[1] == '+'? tok2(c): tok1(c)); break;
-      case '-':
-        //head.kind = c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c); break;
-        term(c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c)); break;
-      case '<':
-        term(c[1] == '<' && c[2] == '='? tok3(c):
-             c[1] == '<' || c[1] == '='? tok2(c): tok1(c)); break;
-      case '>':
-        term(c[1] == '>' && c[2] == '='? tok3(c):
-             c[1] == '>' || c[1] == '='? tok2(c): tok1(c)); break;
-      case '/':
-        if(c[1] == '/') // line comment
-          while (*c != '\r' && *c != '\n') ++c;
-        else if(c[1] == '*') // block comment
-          while (c[0] != '*' && c[1] != '/') ++c;
-        else term(c[1] == '='? tok2(c): tok1(c));
-        break;
-      //case '\'':
-      //  term(tokstr); c+=2; break;
-      case '"':
-        tok = ++c;
-        while(*c != '"') {
-          //if(*c == '\n' || *c == '\0') fail("unterminated string %s", c);
-          //if(*c == '\\') switch (*++c) {
-          //  case 'a': '\a'; break;
-          //  case 'b': '\b'; break;
-          //  case 't': '\t'; break;
-          //  case 'n': '\n'; break;
-          //  case 'v': '\v'; break;
-          //  case 'f': '\f'; break;
-          //  case 'r': '\r'; break;
-          //  default: break;
-          //}
-          ++c;
-        }
-        term(tokstr, .hash=hget(self->pool, tok, c - tok)); break;
-      case '.':
-        // '.', '...' or number
-        if(c[1] == '.' && c[2] == '.') { term(tok3(c)); break; }
-        else if (!(c[1] >= '0' && c[1] <= '9')) { term(tok1(c)); break; }
-        // else fall trough to number
-      case '0' ... '9': {
-        int64_t ival = 0;
-        int64_t fval = 0;
-        while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
-        if(*c == '.')
-          while(*c++ && (*c >= '0' && *c <= '9')) fval = fval * 10 + *c - '0';
-        else if(*c == 'B' || *c == 'b')
-          while(*c++ && (*c == '0' || *c == '1')) ival = ival *  2 + *c - '0';
-        else if(*c == 'O' || *c == 'o')
-          while(*c++ && (*c >= '0' && *c <= '7')) ival = ival *  8 + *c - '0';
-        else if(*c == 'X' || *c == 'x')
-          while(*c++) {
-            if(*c >= '0' && *c <= '9')      ival = ival * 16 + *c - '0';
-            else if(*c >= 'A' && *c <= 'F') ival = ival * 16 + *c - 'A' + 10;
-            else if(*c >= 'a' && *c <= 'f') ival = ival * 16 + *c - 'a' + 10;
-            else break;
-          }
-        c--;
-        term(toknum, .ival=ival);
-        break;
+  pass: switch(*c) {
+    case '\n': self->code->line++;
+    case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
+    case '#': case ',': case ';': case ':': case '?': case '~':
+    case '(': case ')': case '[': case ']': case '{': case '}':
+      term(tok1(c)); break;
+    case '=': case '!': case '*': case '%': case '^':
+      term(c[1] == '='? tok2(c): tok1(c)); break;
+    case '&':
+      term(c[1] == '=' || c[1] == '&'? tok2(c): tok1(c)); break;
+    case '|':
+      term(c[1] == '=' || c[1] == '|'? tok2(c): tok1(c)); break;
+    case '+':
+      term(c[1] == '=' || c[1] == '+'? tok2(c): tok1(c)); break;
+    case '-':
+      //kind = c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c); break;
+      term(c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c)); break;
+    case '<':
+      term(c[1] == '<' && c[2] == '='? tok3(c):
+           c[1] == '<' || c[1] == '='? tok2(c): tok1(c)); break;
+    case '>':
+      term(c[1] == '>' && c[2] == '='? tok3(c):
+           c[1] == '>' || c[1] == '='? tok2(c): tok1(c)); break;
+    case '/':
+      if(c[1] == '/') // line comment
+        while(*c != '\r' && *c != '\n') ++c;
+      else if(c[1] == '*') // block comment
+        while(c[0] != '*' && c[1] != '/') ++c; //XXX: *c will be /, should skip
+      else term(c[1] == '='? tok2(c): tok1(c));
+      break;
+    //case '\'':
+    //  term(tokstr); c+=2; break;
+    case '"':
+      tok = ++c;
+      while(*c != '"') {
+        //if(*c == '\n' || *c == '\0') fail("unterminated string %s", c);
+        //if(*c == '\\') switch (*++c) {
+        //  case 'a': '\a'; break;
+        //  case 'b': '\b'; break;
+        //  case 't': '\t'; break;
+        //  case 'n': '\n'; break;
+        //  case 'v': '\v'; break;
+        //  case 'f': '\f'; break;
+        //  case 'r': '\r'; break;
+        //  default: break;
+        //}
+        ++c;
       }
-      default:
-        tok = c;
-        while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
-           || (*c >= '0' && *c <= '9') || *c == '_') c++;
-        if(c - tok > 0) {
-          term(toktag, .hash=hget(self->pool, tok, c - tok));
-          c--;
+      ++c;
+      term(tokstr, .hash=hget(self->pool, tok, c - tok)); break;
+    case '.':
+      // '.', '...' or number
+      if(c[1] == '.' && c[2] == '.') { term(tok3(c)); break; }
+      else if (!(c[1] >= '0' && c[1] <= '9')) { term(tok1(c)); break; }
+      // else fall trough to number
+    case '0' ... '9': {
+      int64_t ival = 0;
+      int64_t fval = 0;
+      while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
+      if(*c == '.')
+        while(*c++ && (*c >= '0' && *c <= '9')) fval = fval * 10 + *c - '0';
+      else if(*c == 'B' || *c == 'b')
+        while(*c++ && (*c == '0' || *c == '1')) ival = ival *  2 + *c - '0';
+      else if(*c == 'O' || *c == 'o')
+        while(*c++ && (*c >= '0' && *c <= '7')) ival = ival *  8 + *c - '0';
+      else if(*c == 'X' || *c == 'x')
+        while(*c++) {
+          if     (*c >= '0' && *c <= '9') ival = ival * 16 + *c - '0';
+          else if(*c >= 'A' && *c <= 'F') ival = ival * 16 + *c - 'A' + 10;
+          else if(*c >= 'a' && *c <= 'f') ival = ival * 16 + *c - 'a' + 10;
+          else break;
         }
-        break;
+      term(toknum, .ival=ival);
+      break;
     }
-    self->code->body = ++c;
-    if(head.kind) break;
+    default:
+      tok = c;
+      while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
+         || (*c >= '0' && *c <= '9') || *c == '_') c++;
+      if(c - tok > 0) {
+        term(toktag, .hash=hget(self->pool, tok, c - tok));
+      }
+      break;
   }
+  self->code->body = c;
   self->talk = head;
   return head;
 }
@@ -279,6 +271,8 @@ void stmt(mode* self) {
   }
   else if(same(self, sget(self->pool, "while"))) {
     skip(self, '('); expr(self); skip(self, ')');
+    self->arch.when(&self->data, 1);
+    self->arch.call(&self->data, (uint32_t)"foobar\n");
     stmt(self);
   }
   else if(same(self, sget(self->pool, "return"))) {
@@ -288,10 +282,6 @@ void stmt(mode* self) {
   else {
     expr(self); skip(self, ';');
   }
-}
-
-int post(mode* self) {
-  return 0;
 }
 
 void  show(void* data, size_t size) {

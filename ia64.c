@@ -1,23 +1,31 @@
 #include "core.h"
 
-typedef enum {
-  eax = 0
-} ia64_regs;
+enum {
+  eax, ecx, edx, ebx, esp, ebp, esi, edi,
+  r8, r9, r10, r11, r12, r13, r14, r15,                  // 64 bit only
+  xmm0, xmm1, xmm2,  xmm3,  xmm4,  xmm5,  xmm6,  xmm7,
+  xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15,  // 64 bit only
+  rax=eax, rcx=ecx, rdx=edx, rbx=ebx, rsp=esp, rbp=ebp, rsi=esi, rdi=edi,
+};
 
-typedef enum {
-  mov = 0xb8,
-  ret = 0xc3,
-  cmp = 0x83,
-  jmp = 0xeb,
-  jcs = 0x70,
-  jcl = 0x0f80
-} ia64_inst;
+enum {
+  mov  = 0xb8,
+  ret  = 0xc3,
+  cmp  = 0x83,
+  call = 0xe8,
+  jmp  = 0xeb,
+  jcs  = 0x70,
+  jcl  = 0x0f80
+};
 
 enum { jo, jno, jb, jae, je, jne, jbe, ja, js, jns, jp, jnp, jl, jge, jle, jg };
 
 #define rex(...) (*(uint8_t*)&(struct { uint8_t b:1, x:1, r:1, w:1, _:4; }){._=4, __VA_ARGS__})
 #define modrm(...) (*(uint8_t*)&(struct { uint8_t rm:3, reg:3, mod:2; }){__VA_ARGS__})
 #define sib(...) (*(uint8_t*)&(struct { uint8_t base:3, idx:3, ss:2; }){__VA_ARGS__})
+
+uint8_t mspe[] = {           rcx, rdx, r8, r9 };
+uint8_t elfs[] = { rdi, rsi, rdx, rcx, r8, r9 };
 
 #define BODY { *(typeof(val)*)data->tail = val; data->tail += sizeof(val); }
 void ib(buff* data, uint8_t  val) BODY
@@ -49,11 +57,24 @@ void ia64_when(buff* data, uint32_t cond) {
   data->back = data->tail++;
 }
 
+void ia64_args(buff* data, uint32_t ptr) {
+}
+
+void ia64_call(buff* data, uint32_t disp) {
+  ib(data, mov+rax); id(data, 1);
+  ib(data, mov+rdi); id(data, 1);
+  ib(data, mov+rsi); id(data, disp);
+  ib(data, mov+rdx); id(data, 7);
+  iw(data, 0x050f);
+}
+
 emit ia64 = {
   .move = ia64_move,
   .when = ia64_when,
   .jump = ia64_jump,
   .done = ia64_done,
   .back = ia64_mend,
+  .args = ia64_args,
+  .call = ia64_call,
 };
 
