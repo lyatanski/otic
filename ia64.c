@@ -68,6 +68,36 @@ void ia64_call(buff* data, uint32_t disp) {
   iw(data, 0x050f);
 }
 
+void ia64_push(buff* data, uint32_t addr) {
+}
+
+void ia64_pull(buff* data, uint32_t addr) {
+}
+
+void ia64_math(buff* data, uint32_t oper) {
+  switch(oper) {
+    case '+': break;
+    case '-': break;
+    case '*': break;
+    case '/': break;
+    case '%': break;
+    case '^': break;
+    case '<': break;
+    case '>': break;
+  }
+}
+
+void ia64_diff(buff* data, uint32_t oper) {
+  switch(oper) {
+    case '=': break;
+    case '!': break;
+    case '<': break;
+    case '>': break;
+    //case '>=': break;
+    //case '<=': break;
+  }
+}
+
 emit ia64 = {
   .move = ia64_move,
   .when = ia64_when,

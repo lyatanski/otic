@@ -11,10 +11,7 @@ struct file {
   char   data[1];
 };
 
-//#define tok1(x) (x[0])
-//#define tok2(x) (x+=1, x[-1] | x[0]  << 8)
-//#define tok3(x) (x+=2, x[-2] | x[-1] << 8 | x[0] << 16)
-enum { tokend, toktag, toknum, tokstr };
+enum { tend, ttag, tnum };
 #define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
 #define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
@@ -64,71 +61,66 @@ void shed(file* data) {
     free(data);
 }
 
-#define term(...) head = (word){__VA_ARGS__}
-//#define term(...) self->code->body = ++c; return (word){__VA_ARGS__}
-word chop(mode* self) {
-  char* tok;
-  word  head = {};
-  char* c = self->code->body;
+void chop(mode* self) {
+  int64_t ival = 0;
+  int64_t fval = 0;
+  int     kind = tend;
+  char*   c = self->code->body;
 
-  pass: switch(*c) {
+  pass: switch(*(self->code->body = c)) {
     case '\n': self->code->line++;
     case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
     case '#': case ',': case ';': case ':': case '?': case '~':
     case '(': case ')': case '[': case ']': case '{': case '}':
-      term(tok1(c)); break;
+      kind = tok1(c); break;
     case '=': case '!': case '*': case '%': case '^':
-      term(c[1] == '='? tok2(c): tok1(c)); break;
+      kind = c[1] == '='? tok2(c): tok1(c); break;
     case '&':
-      term(c[1] == '=' || c[1] == '&'? tok2(c): tok1(c)); break;
+      kind = c[1] == '=' || c[1] == '&'? tok2(c): tok1(c); break;
     case '|':
-      term(c[1] == '=' || c[1] == '|'? tok2(c): tok1(c)); break;
+      kind = c[1] == '=' || c[1] == '|'? tok2(c): tok1(c); break;
     case '+':
-      term(c[1] == '=' || c[1] == '+'? tok2(c): tok1(c)); break;
+      kind = c[1] == '=' || c[1] == '+'? tok2(c): tok1(c); break;
     case '-':
-      //kind = c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c); break;
-      term(c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c)); break;
+      kind = c[1] == '=' || c[1] == '-' || c[1] == '>'? tok2(c): tok1(c); break;
     case '<':
-      term(c[1] == '<' && c[2] == '='? tok3(c):
-           c[1] == '<' || c[1] == '='? tok2(c): tok1(c)); break;
+      kind = c[1] == '<' && c[2] == '='? tok3(c):
+             c[1] == '<' || c[1] == '='? tok2(c): tok1(c); break;
     case '>':
-      term(c[1] == '>' && c[2] == '='? tok3(c):
-           c[1] == '>' || c[1] == '='? tok2(c): tok1(c)); break;
+      kind = c[1] == '>' && c[2] == '='? tok3(c):
+             c[1] == '>' || c[1] == '='? tok2(c): tok1(c); break;
     case '/':
       if(c[1] == '/') // line comment
         while(*c != '\r' && *c != '\n') ++c;
       else if(c[1] == '*') // block comment
         while(c[0] != '*' && c[1] != '/') ++c; //XXX: *c will be /, should skip
-      else term(c[1] == '='? tok2(c): tok1(c));
+      else kind = (c[1] == '='? tok2(c): tok1(c));
       break;
     //case '\'':
-    //  term(tokstr); c+=2; break;
+    //  kind = '"'; c+=2; break;
     case '"':
-      tok = ++c;
-      while(*c != '"') {
+      while(*c++ && *c != '"') {
         //if(*c == '\n' || *c == '\0') fail("unterminated string %s", c);
         //if(*c == '\\') switch (*++c) {
         //  case 'a': '\a'; break;
         //  case 'b': '\b'; break;
-        //  case 't': '\t'; break;
-        //  case 'n': '\n'; break;
-        //  case 'v': '\v'; break;
         //  case 'f': '\f'; break;
+        //  case 'n': '\n'; break;
+        //  case 't': '\t'; break;
+        //  case 'v': '\v'; break;
         //  case 'r': '\r'; break;
         //  default: break;
         //}
-        ++c;
+        c++;
       }
-      ++c;
-      term(tokstr, .hash=hget(self->pool, tok, c - tok)); break;
+      c++;
+      kind = '"'; break;
     case '.':
       // '.', '...' or number
-      if(c[1] == '.' && c[2] == '.') { term(tok3(c)); break; }
-      else if (!(c[1] >= '0' && c[1] <= '9')) { term(tok1(c)); break; }
+      if     (c[1] == '.' && c[2] == '.') { kind = tok3(c); break; }
+      else if(c[1] <= '0' || c[1] >= '9') { kind = tok1(c); break; }
       // else fall trough to number
-    case '0' ... '9': {
-      int64_t ival = 0;
-      int64_t fval = 0;
+    case '0' ... '9':
       while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
       if(*c == '.')
         while(*c++ && (*c >= '0' && *c <= '9')) fval = fval * 10 + *c - '0';
@@ -143,25 +135,24 @@ word chop(mode* self) {
           else if(*c >= 'a' && *c <= 'f') ival = ival * 16 + *c - 'a' + 10;
           else break;
         }
-      term(toknum, .ival=ival);
-      break;
-    }
-    default:
-      tok = c;
+      kind = tnum; break;
+    case '_': case 'a' ... 'z': case 'A' ... 'Z':
       while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
          || (*c >= '0' && *c <= '9') || *c == '_') c++;
-      if(c - tok > 0) {
-        term(toktag, .hash=hget(self->pool, tok, c - tok));
-      }
-      break;
+      kind = ttag; break;
+    default: break;
   }
+
+  if(kind == '"' || kind == ttag)
+    self->talk.hash = hget(self->pool, self->code->body, c - self->code->body);
+  else
+    self->talk.ival = kind == tnum? ival: 0;
+  self->talk.kind = kind;
   self->code->body = c;
-  self->talk = head;
-  return head;
 }
 
 int same(mode* self, item* hash) {
-    return (self->talk.kind == toktag && self->talk.hash == hash)? chop(self), 1 : 0;
+    return (self->talk.kind == ttag && self->talk.hash == hash)? chop(self), 1 : 0;
 }
 
 int twin(mode* self, int   kind) {
@@ -204,13 +195,13 @@ void expr(mode* self) {
   int rank = 0xffff;
 
   switch(self->talk.kind) {
-    case toknum:
+    case tnum:
       self->arch.move(&self->data, self->talk.ival);
       chop(self);
     break;
-    case tokstr:
+    case '"':
     break;
-    case toktag:
+    case ttag:
     case tokd('('): /* type cast     */ skip(self, ')'); break;
     case tokd('*'): /* pointer deref */ break;
     case tokd('&'): /* address of    */ break;
@@ -286,7 +277,7 @@ void stmt(mode* self) {
 
 void  show(void* data, size_t size) {
   uint8_t* buff = data;
-  for( int i = 0; i < size; i++)
+  for(int i = 0; i < size; i++)
     printf("%2.2x ", buff[i]);
   printf("\n");
 }
@@ -301,9 +292,9 @@ void make(mode* self) {
 
   //for(int i= 0; i < 100; i++) {
   //while(self->talk.kind) {
-  //  if(self->talk.kind == toknum)        printf("token num %ld", self->talk.ival);
-  //  else if(self->talk.kind == tokstr) { printf("token str %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
-  //  else if(self->talk.kind == toktag) { printf("token tag %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
+  //  if(self->talk.kind == tnum)        printf("token num %ld", self->talk.ival);
+  //  else if(self->talk.kind == '"') { printf("token str %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
+  //  else if(self->talk.kind == ttag) { printf("token tag %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
   //  else                                 printf("token %x %c", self->talk.kind, self->talk.kind);
   //  printf("\n");
   //  chop(self);

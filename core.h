@@ -4,8 +4,8 @@
 #include <stdlib.h>     /* malloc, free     */
 #include <stdint.h>     /* uint32_t...      */
 
-#define POOL (1 << 13)
 #define fail(...) (printf(__VA_ARGS__), exit(1))
+#define POOL (1 << 13)
 
 // hash
 typedef struct item item;
