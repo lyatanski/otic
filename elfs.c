@@ -78,21 +78,21 @@ int main() {
   int  size = 0;
   char file[1024] = {};
   ehdr(64, file, size,
-  .class    = 2,
-  .data     = 1,
-  .type     = 2,
-  .machine  = arm8,
-  .phnum    = 1,
+    .class    = 2,
+    .data     = 1,
+    .type     = 2,
+    .machine  = arm8,
+    .phnum    = 1,
   );
   phdr(64, file, size,
-  .type     = 1,
-  .flags    = 5,
-  .offset   = 0,
-  .vaddr    = 0x400000,
-  .paddr    = 0x400000,
-  .filesz   = 0xc,
-  .memsz    = 0xc,
-  .align    = 0x10000,
+    .type     = 1,
+    .flags    = 5,
+    .offset   = 0,
+    .vaddr    = 0x400000,
+    .paddr    = 0x400000,
+    .filesz   = 0xc,
+    .memsz    = 0xc,
+    .align    = 0x10000,
   );
   size += texta(file+size);
   FILE* fp = fopen("tiny64", "wb");
