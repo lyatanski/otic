@@ -18,25 +18,11 @@ enum { tend, ttag, tnum };
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
 
-//typedef struct {
-//  uint16_t align;
-//
-//  uint16_t _void    :1, _bool    :1, _char    :1,
-//           _short   :2, _int     :2, _long    :2,
-//           _float   :1, _double  :1;
-//
-//  uint16_t _const   :1;
-//  uint16_t _signed  :2;
-//  uint16_t _static  :1;
-//  uint16_t _extern  :1;
-//  uint16_t _inline  :1;
-//  uint16_t _thread  :1;
-//
-//  uint16_t _typedef :1;
-//  uint16_t _struct  :1;
-//  uint16_t _union   :1;
-//  uint16_t _enum    :1;
-//} type;
+void logs(mode* self) {
+  printf("skipping %p ", self->talk.hash);
+  fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout);
+  printf("\n");
+}
 
 file* scan(char* name) {
   file* f;
@@ -58,7 +44,7 @@ file* scan(char* name) {
 }
 
 void shed(file* data) {
-    free(data);
+  free(data);
 }
 
 void chop(mode* self) {
@@ -90,11 +76,11 @@ void chop(mode* self) {
       kind = c[1] == '>' && c[2] == '='? tok3(c):
              c[1] == '>' || c[1] == '='? tok2(c): tok1(c); break;
     case '/':
-      if(c[1] == '/') // line comment
-        while(*c != '\r' && *c != '\n') ++c;
-      else if(c[1] == '*') // block comment
-        while(c[0] != '*' && c[1] != '/') ++c; //XXX: *c will be /, should skip
-      else kind = (c[1] == '='? tok2(c): tok1(c));
+      switch(c[1]) {
+        case '/': while(*c++ != '\n'); goto pass;
+        case '*': while(c[-2] != '*' || c[-1] != '/')c++; goto pass;
+        default: kind = (c[1] == '='? tok2(c): tok1(c));
+      }
       break;
     //case '\'':
     //  kind = '"'; c+=2; break;
@@ -160,27 +146,9 @@ int twin(mode* self, int   kind) {
 }
 
 int skip(mode* self, int   kind) {
-    if(self->talk.kind != kind) fail("expected %x, got %x\n", kind, self->talk.kind);
+    if(self->talk.kind != kind) fail("line %ld expected %x, got %x\n", self->code->line+1, kind, self->talk.kind);
     chop(self);
     return 1;
-}
-
-void type(mode* self) {
-  // "typedef" type      name     ";"
-  // "struct"  name? "{" decl "}" ";"
-  // "union"   name? "{" decl "}" ";"
-  // "enum"    name? "{" list "}" ";"
-
-  //skip type tag
-  printf("skipping %p ", self->talk.hash);
-  fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout);
-  printf("\n");
-  chop(self);
-
-  printf("skipping %p ", self->talk.hash);
-  fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout);
-  printf("\n");
-  chop(self);
 }
 
 int args(mode* self) {
@@ -246,7 +214,7 @@ void expr(mode* self) {
   }
 }
 
-void stmt(mode* self) {
+void  stmt(mode* self) {
   if(twin(self, '{')) {
     while(!twin(self, '}')) stmt(self);
   }
@@ -263,7 +231,7 @@ void stmt(mode* self) {
   else if(same(self, sget(self->pool, "while"))) {
     skip(self, '('); expr(self); skip(self, ')');
     self->arch.when(&self->data, 1);
-    self->arch.call(&self->data, (uint32_t)"foobar\n");
+    //self->arch.call(&self->data, (uint32_t)"foobar\n");
     stmt(self);
   }
   else if(same(self, sget(self->pool, "return"))) {
@@ -282,7 +250,66 @@ void  show(void* data, size_t size) {
   printf("\n");
 }
 
-void make(mode* self) {
+void  decl(mode* self) {
+  // declaration begins with type or struct or union or enum
+  // "typedef" type      name     ";"
+  // "struct"  name? "{" decl "}" ";"
+  // "union"   name? "{" decl "}" ";"
+  // "enum"    name? "{" list "}" ";"
+
+  item* type = self->talk.hash;
+  if(((meta*)type->val)->kind != typedecl) return;
+  chop(self);
+
+  self->decl[self->top++] = (meta){.kind=function, .type=type};
+  self->talk.hash->val = &self->decl[self->top-1];
+  //logs(self);
+  chop(self);
+
+  // type name "(" args ")" "{" stmt "}"     // function decl
+  if(args(self)) {
+    // function
+    //printf("its a function \n");
+    stmt(self);
+  }
+
+  // type name "[" size "]"              ";" // variable decl
+  //if(post(&list, map)) {
+  //}
+  //else {
+  //}
+
+  //if(same(self, sget(self->pool, "struct"))
+  //|| same(self, sget(self->pool, "union"))) {
+  //  skip(self, '{');
+  //  while(!twin(self, '}')) {
+  //    rvar(self);
+  //    skip(self, ';');
+  //  }
+  //  skip(self, '}');
+  //  skip(self, ';');
+  //}
+  //if(same(self, sget(self->pool, "enum"))) {
+  //  skip(self, '{');
+  //  while(!twin(self, '}')) {
+  //    rtok(self);
+  //    skip(self, ',');
+  //  }
+  //  skip(self, '}');
+  //  skip(self, ';');
+  //}
+  //
+  //if(self->talk.hash.val.kind == type) {
+  //  t = self->talk.hash;
+  //  chop(self);
+  //}
+  //
+  //mark* n = malloc(sizeof(mark));
+  //n->base = t;
+  //self->talk.hash->val = n;
+}
+
+void  make(mode* self) {
   // unit = function
   //      | variable
   //      | typedecl
@@ -290,34 +317,26 @@ void make(mode* self) {
   self->code = scan(self->name);
   self->data.head = self->data.tail = self->hold(0, 1024);
 
-  //for(int i= 0; i < 100; i++) {
-  //while(self->talk.kind) {
-  //  if(self->talk.kind == tnum)        printf("token num %ld", self->talk.ival);
-  //  else if(self->talk.kind == '"') { printf("token str %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
-  //  else if(self->talk.kind == ttag) { printf("token tag %p ", self->talk.hash); fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout); }
-  //  else                                 printf("token %x %c", self->talk.kind, self->talk.kind);
-  //  printf("\n");
-  //  chop(self);
-  //}
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "void")->val = &self->decl[self->top-1];
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "bool")->val = &self->decl[self->top-1];
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "char")->val = &self->decl[self->top-1];
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "short")->val = &self->decl[self->top-1];
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "int")->val = &self->decl[self->top-1];
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "long")->val = &self->decl[self->top-1];
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "float")->val = &self->decl[self->top-1];
+  self->decl[self->top++] = (meta){.kind=typedecl};
+  sget(self->pool, "double")->val = &self->decl[self->top-1];
 
   do {
     chop(self);
-
-    // every statement begins with type
-    type(self);
-
-    // type name "(" args ")" "{" stmt "}"     // function decl
-    if(args(self)) {
-      // function
-      //printf("its a function \n");
-      stmt(self);
-    }
-
-    // type name "[" size "]"              ";" // variable decl
-    //if(post(&list, map)) {
-    //}
-    //else {
-    //}
+    decl(self);
   } while(self->talk.kind);
 
   shed(self->code);

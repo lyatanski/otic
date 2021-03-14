@@ -59,6 +59,26 @@ typedef struct {
   };
 } word;
 
+typedef enum { variable, function, typedecl, _struct, _union } name_kind;
+typedef struct {
+  name_kind kind;
+  union {
+    struct {
+      item*    type;
+      item*    next; // for function parameters, alt names elem, prop
+      uint8_t* code; // for function
+      uint32_t size; // for array
+    };
+    struct {
+      uint8_t  _const   :1, _signed  :2, _static  :1,
+               _extern  :1, _inline  :1, _thread  :1, _pointer :1;
+      uint16_t _void    :1, _bool    :1, _char    :1,
+               _short   :1, _long    :2, _number  :1,
+               _float   :1, _double  :1;
+    };
+  };
+} meta;
+
 struct mode{
   char* name;
   file* code;
@@ -69,6 +89,9 @@ struct mode{
   poke  hold;
   poke  drop;
   pack  exec;
+
+  uint8_t top;
+  meta  decl[256];
 };
 
 void  make(mode*);

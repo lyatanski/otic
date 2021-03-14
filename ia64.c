@@ -81,7 +81,15 @@ void ia64_math(buff* data, uint32_t oper) {
     case '*': break;
     case '/': break;
     case '%': break;
+  }
+}
+
+void ia64_bits(buff* data, uint32_t oper) {
+  switch(oper) {
+    case '&': break;
+    case '|': break;
     case '^': break;
+    case '~': break;
     case '<': break;
     case '>': break;
   }
