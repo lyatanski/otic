@@ -1,8 +1,8 @@
 #include "core.h"
 
 enum {
-  eax, ecx, edx, ebx, esp, ebp, esi, edi,
-  r8, r9, r10, r11, r12, r13, r14, r15,                  // 64 bit only
+  eax, ecx, edx,  ebx,  esp,  ebp,  esi,  edi,
+  ir8, ir9, ir10, ir11, ir12, ir13, ir14, ir15,          // 64 bit only
   xmm0, xmm1, xmm2,  xmm3,  xmm4,  xmm5,  xmm6,  xmm7,
   xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15,  // 64 bit only
   rax=eax, rcx=ecx, rdx=edx, rbx=ebx, rsp=esp, rbp=ebp, rsi=esi, rdi=edi,
@@ -24,8 +24,8 @@ enum { jo, jno, jb, jae, je, jne, jbe, ja, js, jns, jp, jnp, jl, jge, jle, jg };
 #define modrm(...) (*(uint8_t*)&(struct { uint8_t rm:3, reg:3, mod:2; }){__VA_ARGS__})
 #define sib(...) (*(uint8_t*)&(struct { uint8_t base:3, idx:3, ss:2; }){__VA_ARGS__})
 
-uint8_t mspe[] = {           rcx, rdx, r8, r9 };
-uint8_t elfs[] = { rdi, rsi, rdx, rcx, r8, r9 };
+uint8_t mspe[] = {           rcx, rdx, ir8, ir9 };
+uint8_t elfs[] = { rdi, rsi, rdx, rcx, ir8, ir9 };
 
 #define BODY { *(typeof(val)*)data->tail = val; data->tail += sizeof(val); }
 void ib(buff* data, uint8_t  val) BODY
