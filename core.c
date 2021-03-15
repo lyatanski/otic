@@ -146,17 +146,10 @@ int twin(mode* self, int   kind) {
 }
 
 int skip(mode* self, int   kind) {
-    if(self->talk.kind != kind) fail("line %ld expected %x, got %x\n", self->code->line+1, kind, self->talk.kind);
+    if(self->talk.kind != kind)
+        fail("line %ld expected %x, got %x\n", self->code->line+1, kind, self->talk.kind);
     chop(self);
     return 1;
-}
-
-int args(mode* self) {
-  if(!twin(self, '(')) return 0;
-  while(!twin(self, ')')) {
-    chop(self);
-  }
-  return 1;
 }
 
 void expr(mode* self) {
@@ -267,17 +260,27 @@ void  decl(mode* self) {
   chop(self);
 
   // type name "(" args ")" "{" stmt "}"     // function decl
-  if(args(self)) {
+  if(twin(self, '(')) {
     // function
-    //printf("its a function \n");
+    while(!twin(self, ')')) {
+      item* type = self->talk.hash;
+      if(((meta*)type->val)->kind != typedecl) return;
+      chop(self);
+
+      self->decl[self->top++] = (meta){.kind=function, .type=type};
+      self->talk.hash->val = &self->decl[self->top-1];
+      chop(self);
+      twin(self, ',');
+    }
+
     stmt(self);
   }
-
-  // type name "[" size "]"              ";" // variable decl
-  //if(post(&list, map)) {
-  //}
-  //else {
-  //}
+  else
+  if(twin(self, '[')) {
+    // array
+    self->decl[self->top-1].size = self->talk.ival;
+    skip(self, ']');
+  }
 
   //if(same(self, sget(self->pool, "struct"))
   //|| same(self, sget(self->pool, "union"))) {
