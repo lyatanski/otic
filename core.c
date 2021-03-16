@@ -152,6 +152,22 @@ int skip(mode* self, int   kind) {
     return 1;
 }
 
+int rank(int op) {
+  switch (op) {
+    default:                                                      return  0;
+    case '?':                                                     return  3;
+    case tokd('|', '|'):                                          return  4;
+    case tokd('&', '&'):                                          return  5;
+    case '|':                                                     return  6;
+    case '^':                                                     return  7;
+    case '&':                                                     return  8;
+    case tokd('=', '='): case tokd('!', '='):                     return  9;
+    case '<': case tokd('<', '='): case '>': case tokd('>', '='): return 10;
+    case '+': case '-':                                           return 11;
+    case '*': case '/': case '%':                                 return 12;
+  }
+}
+
 void expr(mode* self) {
   int rank = 0xffff;
 
