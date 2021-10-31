@@ -10,11 +10,11 @@ goals:
   - package manager
 
 why not:
-- clang
+- clang/gcc lib
   - massive
   - lacks build system & package manager
 - tinycc
-  - complex codebase
+  - messy codebase
   - lacks optimization
   - lacks build system & package manager
 - golang
@@ -26,3 +26,11 @@ gcc -Wall -O3 -otic main.c
 
 run: ./tic <arch> <code> where arch could be "e" for inideate execution
 ./tic a hello.c
+
+
+syntax:
+                                 optional
+decl = <type> <name>             = <init> ; // for variable
+     | <type> <name> [<size>   ] = <init> ; // for array
+     | <type> <name> (<params> ) { <body> } // for call
+     | struct name   {<members>}          ;

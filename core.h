@@ -1,8 +1,8 @@
 // vim: ts=2:sw=2
 #pragma once
-#include <stdio.h>      /* FILE, printf     */
-#include <stdlib.h>     /* malloc, free     */
-#include <stdint.h>     /* uint32_t...      */
+#include <stdio.h>  /* FILE, printf */
+#include <stdlib.h> /* malloc, free */
+#include <stdint.h> /* uint32_t,... */
 
 #define fail(...) (printf(__VA_ARGS__), exit(1))
 #define POOL (1 << 13)
@@ -62,27 +62,20 @@ typedef struct {
 typedef enum { variable, function, typedecl, _struct, _union } name_kind;
 typedef struct {
   name_kind kind;
-  union {
-    struct {
-      item*    type;
-      item*    next; // for function parameters, alt names elem, prop
-      uint8_t* code; // for function
-      uint32_t size; // for array
-    };
-    struct {
-      uint8_t  _const   :1, _signed  :2, _static  :1,
-               _extern  :1, _inline  :1, _thread  :1, _pointer :1;
-      uint16_t _void    :1, _bool    :1, _char    :1,
-               _short   :1, _long    :2, _number  :1,
-               _float   :1, _double  :1;
-    };
-  };
+  uint8_t   _const   :1, _static  :1, _extern  :1,
+            _signed  :2, _inline  :1, _thread  :1, _pointer :1;
+  item*     type;
+  item*     next; // for function parameters, alt names elem, prop
+  uint8_t*  code; // for function
+  uint32_t  size; // for total size
+  //bool      used; // indicates unused variables
+  //uint32_t  more; // for element count, no need for next as they will be following in the array
 } meta;
 
-struct mode{
+struct mode {
   char* name;
   file* code;
-  word  talk;
+  word  talk; // last
   hash  pool;
   emit  arch;
   buff  data;
