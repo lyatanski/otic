@@ -78,7 +78,7 @@ void chop(mode* self) {
     case '/':
       switch(c[1]) {
         case '/': while(*c++ != '\n'); goto pass;
-        case '*': while(c[-2] != '*' || c[-1] != '/')c++; goto pass;
+        case '*': while(c[-2] != '*' || c[-1] != '/') c++; goto pass;
         default: kind = (c[1] == '='? tok2(c): tok1(c));
       }
       break;
