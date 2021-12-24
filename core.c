@@ -168,14 +168,13 @@ int rank(int op) {
   }
 }
 
+#define emit(self, call, ...) (self->arch.call(&self->data, __VA_ARGS__))
 void expr(mode* self) {
   int rank = 0xffff;
 
   switch(self->talk.kind) {
     case tnum:
-      self->arch.move(&self->data, self->talk.ival);
-      //self.emit[move](self, self->talk.ival)
-      //self.emit(self, move, self->talk.ival)
+      emit(self, move, self->talk.ival);
       chop(self);
     break;
     case '"':
@@ -231,23 +230,23 @@ void  stmt(mode* self) {
   }
   else if(same(self, sget(self->pool, "if"))) {
     skip(self, '('); expr(self); skip(self, ')');
-    self->arch.when(&self->data, 0);
+    emit(self, when, 0);
     stmt(self);
     if(same(self, sget(self->pool, "else"))) {
-      self->arch.jump(&self->data, 1);
+      emit(self, jump, 1);
       stmt(self);
     }
     self->arch.back(&self->data);
   }
   else if(same(self, sget(self->pool, "while"))) {
     skip(self, '('); expr(self); skip(self, ')');
-    self->arch.when(&self->data, 1);
+    emit(self, when, 1);
     //self->arch.call(&self->data, (uint32_t)"foobar\n");
     stmt(self);
   }
   else if(same(self, sget(self->pool, "return"))) {
     expr(self); skip(self, ';');
-    self->arch.done(&self->data);
+    emit(self, done, 1);
   }
   else {
     expr(self); skip(self, ';');
