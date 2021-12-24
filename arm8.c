@@ -285,10 +285,10 @@ void arm8_text(void* data) {
 }
 
 emit arm8 = {
-  .move = arm8_move,
-  .when = arm8_when,
-  .jump = arm8_jump,
-  .done = arm8_done,
-  .back = arm8_mend,
+  .move = (flow)arm8_move,
+  .when = (flow)arm8_when,
+  .jump = (flow)arm8_jump,
+  .done = (flow)arm8_done,
+  .back = (flow)arm8_mend,
 };
 

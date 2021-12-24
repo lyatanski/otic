@@ -8,8 +8,21 @@ enum {
   rax=eax, rcx=ecx, rdx=edx, rbx=ebx, rsp=esp, rbp=ebp, rsi=esi, rdi=edi,
 };
 
+enum { MR, RM, OI, M, D };
+enum { mov, add, sub, mul, mod, jcc };
+uint8_t opco[][5] = {
+  [mov] = { [RM] = 0x89, [OI] = 0xb8, },
+  [add] = { [MR] = 0x01, [RM] = 0x03, },
+  [sub] = { [MR] = 0x29, [RM] = 0x2b, },
+  [mul] = { [M]  = 0xf7, },
+  [mod] = { [M]  = 0xf7, },
+  [jcc] = { [D]  = 0x70, },
+};
+
 enum {
-  mov  = 0xb8,
+  push = 0x50,
+  pop  = 0x58,
+  //mov  = 0xb8,
   ret  = 0xc3,
   cmp  = 0x83,
   call = 0xe8,
@@ -35,10 +48,12 @@ void io(buff* data, uint64_t val) BODY
 #undef  BODY
 
 void ia64_move(buff* data, uint32_t num) {
-  ib(data, mov + eax);
+  // if(64 = bit) ib(data, rex(.w=1))
+  ib(data, opco[mov][OI] + eax);
   id(data, num);
 }
 
+void ia64_mark(buff* data) { *data->back = data->tail - data->back - 1; }
 void ia64_mend(buff* data) { *data->back = data->tail - data->back - 1; }
 void ia64_done(buff* data) { ib(data, ret); }
 
@@ -49,9 +64,7 @@ void ia64_jump(buff* data, uint32_t fix) {
 }
 
 void ia64_when(buff* data, uint32_t cond) {
-  ib(data, cmp);
-  ib(data, modrm(.mod=3, .reg=7, .rm=eax));
-  ib(data, 0);
+  ib(data, cmp); ib(data, modrm(.mod=3, .reg=7, .rm=eax)); ib(data, 0);
 
   ib(data, jcs + je);
   data->back = data->tail++;
@@ -60,32 +73,34 @@ void ia64_when(buff* data, uint32_t cond) {
 void ia64_args(buff* data, uint32_t ptr) {
 }
 
-void ia64_call(buff* data, uint32_t disp) {
-  ib(data, mov+rax); id(data, 1);
-  ib(data, mov+rdi); id(data, 1);
-  ib(data, mov+rsi); id(data, disp);
-  ib(data, mov+rdx); id(data, 7);
+void ia64_body(buff* data, uint32_t disp) {
+  ib(data, push + rbp);
+  ib(data, rex(.w=1)); ib(data, opco[mov][RM]); ib(data, modrm(.mod=3, .reg=rsp, .rm=rbp));
+  // funtion body
+  ib(data, pop + rbp);
+  ib(data, ret);
+}
+
+void ia64_echo(buff* data, uint32_t addr) {
+  ib(data, opco[mov][OI]+rax); id(data, 1);
+  ib(data, opco[mov][OI]+rdi); id(data, 1);
+  ib(data, opco[mov][OI]+rsi); id(data, addr);
+  ib(data, opco[mov][OI]+rdx); id(data, 7);
   iw(data, 0x050f);
 }
 
-void ia64_push(buff* data, uint32_t addr) {
+void ia64_juxx(buff* data, uint32_t cond, uint32_t disp) {
+  ib(data, opco[jcc][D] + cond); ib(data, disp);
 }
 
-void ia64_pull(buff* data, uint32_t addr) {
-}
-
-void ia64_math(buff* data, uint32_t oper) {
+void ia64_calc(buff* data, uint32_t oper) {
   switch(oper) {
-    case '+': break;
-    case '-': break;
-    case '*': break;
-    case '/': break;
-    case '%': break;
-  }
-}
-
-void ia64_bits(buff* data, uint32_t oper) {
-  switch(oper) {
+    case '+': ib(data, opco[add][MR]); ib(data, modrm(.mod=3, .reg=edx, .rm=eax)); break;
+    case '-': ib(data, opco[sub][MR]); ib(data, modrm(.mod=3, .reg=edx, .rm=eax)); break;
+    case '*': ib(data, opco[mul][M] ); ib(data, modrm(.mod=3, .reg=5,   .rm=esi)); break;
+    case '/': ib(data, opco[mod][M] ); ib(data, modrm(.mod=3, .reg=7,   .rm=esi)); break;
+    case '%': ib(data, opco[mod][M] ); ib(data, modrm(.mod=3, .reg=7,   .rm=esi));
+              ib(data, opco[mov][RM]); ib(data, modrm(.mod=3, .reg=edx, .rm=eax)); break;
     case '&': break;
     case '|': break;
     case '^': break;
@@ -107,12 +122,12 @@ void ia64_diff(buff* data, uint32_t oper) {
 }
 
 emit ia64 = {
-  .move = ia64_move,
-  .when = ia64_when,
-  .jump = ia64_jump,
-  .done = ia64_done,
-  .back = ia64_mend,
-  .args = ia64_args,
-  .call = ia64_call,
+  .move = (flow)ia64_move,
+  .when = (flow)ia64_when,
+  .jump = (flow)ia64_jump,
+  .done = (flow)ia64_done,
+  .back = (flow)ia64_mend,
+  .args = (flow)ia64_args,
+  .call = (flow)ia64_echo,
 };
 

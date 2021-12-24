@@ -32,17 +32,19 @@ typedef struct {
 } buff;
 
 // arch
-typedef void (*flow)(buff*, uint32_t);
-typedef void (*mend)(buff*);
+typedef void (*flow)(buff*, ...);
 typedef struct {
   flow  move;
   flow  when;
   flow  jump;
   flow  args;
   flow  call;
-  mend  done;
-  mend  back;
+  flow  done;
+  flow  back;
 } emit;
+// emit[];
+// emit[mark]();
+// emit[move](rax, 4);
 
 // core
 typedef void* (*poke)(void*, size_t);

@@ -174,6 +174,8 @@ void expr(mode* self) {
   switch(self->talk.kind) {
     case tnum:
       self->arch.move(&self->data, self->talk.ival);
+      //self.emit[move](self, self->talk.ival)
+      //self.emit(self, move, self->talk.ival)
       chop(self);
     break;
     case '"':
