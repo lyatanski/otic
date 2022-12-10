@@ -241,7 +241,7 @@ void  stmt(mode* self) {
   else if(same(self, sget(self->pool, "while"))) {
     skip(self, '('); expr(self); skip(self, ')');
     emit(self, when, 1);
-    //self->arch.call(&self->data, (uint32_t)"foobar\n");
+    emit(self, echo, puts, "foo");
     stmt(self);
   }
   else if(same(self, sget(self->pool, "return"))) {

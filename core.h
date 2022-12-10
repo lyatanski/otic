@@ -38,7 +38,7 @@ typedef struct {
   flow  when;
   flow  jump;
   flow  args;
-  flow  call;
+  flow  echo;
   flow  done;
   flow  back;
 } emit;

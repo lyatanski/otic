@@ -49,8 +49,7 @@ void io(buff* data, uint64_t val) BODY
 
 void ia64_move(buff* data, uint32_t num) {
   // if(64 = bit) ib(data, rex(.w=1))
-  ib(data, opco[mov][OI] + eax);
-  id(data, num);
+  ib(data, opco[mov][OI] + eax); id(data, num);
 }
 
 void ia64_mark(buff* data) { *data->back = data->tail - data->back - 1; }
@@ -79,6 +78,13 @@ void ia64_body(buff* data, uint32_t disp) {
   // funtion body
   ib(data, pop + rbp);
   ib(data, ret);
+}
+
+void ia64_echo2(buff* data, uint32_t func, uint32_t addr) {
+  ib(data, opco[mov][OI] + eax); id(data, func);
+  ib(data, opco[mov][OI] + rdi); id(data, addr);
+  ib(data, 0xff);
+  ib(data, modrm(.mod=3, .reg=2, .rm=eax));
 }
 
 void ia64_echo(buff* data, uint32_t addr) {
@@ -128,6 +134,6 @@ emit ia64 = {
   .done = (flow)ia64_done,
   .back = (flow)ia64_mend,
   .args = (flow)ia64_args,
-  .call = (flow)ia64_echo,
+  .echo = (flow)ia64_echo2,
 };
 
