@@ -1,17 +1,5 @@
 out=bins
 mkdir -p $out
-for file in main core hash ia64 arm8 exec mach
-do
-  src=$file.c
-  dst=$out/$file.o
-  #if [ $src -nt $dst ]; then
-    echo -- compile $src
-    gcc -Dpart -Wall -c -ggdb -O0 -o$dst $src || exit $?
-  #fi
-  link="$link $dst"
-done
-
-gcc -Wall -ggdb -O0 -o$out/elfs elfs.c
 
 if [ ! -f $out/test.c ]; then
 echo -- creating source
@@ -23,5 +11,19 @@ int main() {
 }
 EOF
 fi
+
+gcc -Wall -ggdb -O0 -o$out/one main.c
+gcc -Wall -ggdb -O0 -o$out/elfs elfs.c
+
+for file in main core hash ia64 arm8 exec mach
+do
+  src=$file.c
+  dst=$out/$file.o
+  #if [ $src -nt $dst ]; then
+    echo -- compile $src
+    gcc -Dpart -Wall -c -ggdb -O0 -o$dst $src || exit $?
+  #fi
+  link="$link $dst"
+done
 
 gcc -o$out/tic $link && ./$out/tic e $out/test.c
