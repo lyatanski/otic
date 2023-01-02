@@ -42,9 +42,6 @@ typedef struct {
   flow  done;
   flow  back;
 } emit;
-// emit[];
-// emit[mark]();
-// emit[move](rax, 4);
 
 // core
 typedef void* (*poke)(void*, size_t);

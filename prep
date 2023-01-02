@@ -12,6 +12,7 @@ int main() {
 EOF
 fi
 
+echo -- compile all-in
 gcc -Wall -ggdb -O0 -o$out/one main.c
 gcc -Wall -ggdb -O0 -o$out/elfs elfs.c
 

@@ -186,7 +186,7 @@ void expr(mode* self) {
     break;
     //case tokd('['):      break;
     default:
-      printf("expr unexpected %x\n", self->talk.kind);
+      fail("expr unexpected %x\n", self->talk.kind);
   }
 
   while(self->talk.kind >= rank) {
