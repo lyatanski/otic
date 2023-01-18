@@ -14,9 +14,8 @@ fi
 
 echo -- compile all-in
 gcc -Wall -ggdb -O0 -o$out/one main.c
-gcc -Wall -ggdb -O0 -o$out/elfs elfs.c
 
-for file in main core hash ia64 arm8 exec mach
+for file in main core hash ia64 arm8 exec elfs mach
 do
   src=$file.c
   dst=$out/$file.o

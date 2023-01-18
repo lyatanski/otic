@@ -7,6 +7,8 @@ enum {
   r24, r25, r26, r27, r28, r29, r30,
 };
 
+typedef struct { uint32_t rd: 5, rn: 5, imm: 6, rm: 5, _0: 1, shift: 2, _c: 5, S: 1, op: 1, sf: 1; } datr;
+typedef struct { uint32_t rd: 5, rn: 5, imm: 6, rm: 5, _0: 1, shift: 2, _c: 5, opc: 2, sf: 1; } datr1;
 typedef union {
   struct { uint32_t rd  : 5, imm :16, hw  : 2, _   : 6, opc : 2, sf  : 1; } dati;
   struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, _   : 7; } brur;
