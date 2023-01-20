@@ -286,7 +286,7 @@ void arm8_text(void* data) {
   exe[size++] = 0xd65f03c0;
 }
 
-emit arm8 = {
+const emit arm8 = {
   .move = (flow)arm8_move,
   .when = (flow)arm8_when,
   .jump = (flow)arm8_jump,

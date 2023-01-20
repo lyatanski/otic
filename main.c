@@ -16,8 +16,8 @@
 //#include "mach.c"
 #endif
 
-extern emit arm8;
-extern emit ia64;
+extern const emit ia64;
+extern const emit arm8;
 #ifdef __aarch64__
 #define base arm8
 #else // __x86_64__
@@ -40,6 +40,9 @@ int main(int argc, char** argv) {
 
   self.name = argv[2];
   make(&self);
+
+  self.name = "bins/ia64.o";
+  elfs(&self);
 
   return 0;
 }

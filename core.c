@@ -1,28 +1,12 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-struct file {
-  char*  head;
-  char*  body;
-  char*  tail;
-  size_t size;
-  size_t line;
-  //char*  name;
-  char   data[1];
-};
-
 enum { tend, ttag, tnum };
 #define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
 #define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
-
-void logs(mode* self) {
-  printf("skipping %p ", self->talk.hash);
-  fwrite(self->talk.hash->key, self->talk.hash->len, 1, stdout);
-  printf("\n");
-}
 
 file* scan(char* name) {
   file* f;
@@ -273,7 +257,6 @@ void  decl(mode* self) {
 
   self->decl[self->top++] = (meta){.kind=function, .type=type};
   self->talk.hash->val = &self->decl[self->top-1];
-  //logs(self);
   chop(self);
 
   // type name "(" args ")" "{" stmt "}"     // function decl

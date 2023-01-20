@@ -57,7 +57,15 @@ typedef struct {
 typedef void* (*poke)(void*, size_t);
 typedef void  (*pack)(void*, size_t);
 
-typedef struct file file;
+typedef struct {
+  char*  head;
+  char*  body;
+  char*  tail;
+  size_t size;
+  size_t line;
+  //char*  name;
+  char   data[1];
+} file;
 
 typedef struct {
   int   kind;
@@ -98,4 +106,7 @@ struct mode {
 
 void  make(mode*);
 void  show(void*, size_t);
+file* scan(char*);
+
+void  elfs(mode*);
 

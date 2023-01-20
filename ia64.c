@@ -276,7 +276,7 @@ void ia64_echo2(buff* data, u32i func, u32i addr) {
   ib(data, modrm(.mod=3, .reg=2, .rm=eax.reg.enc));
 }
 
-emit ia64 = {
+const emit ia64 = {
   .move = (flow)ia64_move,
   .when = (flow)ia64_when,
   .jump = (flow)ia64_jump,
