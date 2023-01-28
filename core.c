@@ -237,19 +237,11 @@ void  stmt(mode* self) {
   }
 }
 
-void  show(void* data, size_t size) {
-  uint8_t* buff = data;
-  for(int i = 0; i < size; i++)
-    printf("%2.2x ", buff[i]);
-  printf("\n");
-}
-
 void  decl(mode* self) {
   // declaration begins with type or struct or union or enum
-  // "typedef" type      name     ";"
-  // "struct"  name? "{" decl "}" ";"
-  // "union"   name? "{" decl "}" ";"
-  // "enum"    name? "{" list "}" ";"
+  // "list"  name? "{" decl "}" ";"
+  // "suit"  name? "{" decl "}" ";"
+  // "enum"  name? "{" list "}" ";"
 
   item* type = self->talk.hash;
   if(((meta*)type->val)->kind != typedecl) return;
@@ -282,8 +274,8 @@ void  decl(mode* self) {
     skip(self, ']');
   }
 
-  //if(same(self, sget(self->pool, "struct"))
-  //|| same(self, sget(self->pool, "union"))) {
+  //if(same(self, sget(self->pool, "list"))
+  //|| same(self, sget(self->pool, "suit"))) {
   //  skip(self, '{');
   //  while(!twin(self, '}')) {
   //    rvar(self);
@@ -344,7 +336,7 @@ void  make(mode* self) {
 
   shed(self->code);
 
-  self->exec(self->data.head, self->data.tail - self->data.head);
+  self->exec(&self->data);
   self->drop(self->data.head, 1024);
 }
 

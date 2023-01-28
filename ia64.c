@@ -60,13 +60,6 @@ R(ir8, 0); R(ir9, 1); R(ir10, 2); R(ir11, 3); R(ir12, 4); R(ir13, 5); R(ir14, 6)
 //byte mspe[] = {           rcx, rdx, ir8, ir9 };
 //byte elfs[] = { rdi, rsi, rdx, rcx, ir8, ir9 };
 
-// TODO remove
-void debug(buff* data) {
-  for(byte* b = data->head; b < data->tail; b++)
-    printf("%.2x", *b);
-  printf("\n");
-}
-
 #define BODY { *(typeof(val)*)data->tail = val; data->tail += sizeof(val); }
 void ib(buff* data, byte val) BODY
 void iw(buff* data, u16i val) BODY
