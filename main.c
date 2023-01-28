@@ -11,7 +11,7 @@
 
 #include "exec.c"
 
-//#include "elfs.c"
+#include "elfs.c"
 //#include "pe32.c"
 //#include "mach.c"
 #endif
