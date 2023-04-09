@@ -87,8 +87,8 @@ int   main(int argc, char** argv) {
   self.name = argv[2];
   make(&self);
 
-  //self.name = "bins/ia64.o";
-  //elfs(&self);
+  self.name = "bins/ia64.o";
+  elfs(&self);
 
   return 0;
 }
