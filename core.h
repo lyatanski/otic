@@ -29,10 +29,9 @@ struct item {
 typedef item hash[POOL];
 
 item* hget(hash map, char* key, long len);
-#define sget(h, k) hget(h, k, sizeof(k)-1)
+#define sget(self, k) hget(self->pool, k, sizeof(k)-1)
 void  hrid(hash map);
 
-typedef struct mode mode;
 typedef struct {
   byte* head;
   byte* back;
@@ -77,28 +76,17 @@ typedef struct {
   };
 } word;
 
-typedef enum { variable, function, typedecl, _struct, _union } name_kind;
-typedef struct {
-  name_kind kind;
-  uint8_t   _const   :1, _static  :1, _extern  :1,
-            _signed  :2, _inline  :1, _thread  :1, _pointer :1;
-  item*     type;
-  item*     next; // for function parameters, alt names elem, prop
-  uint8_t*  code; // for function
-  uint32_t  size; // for total size
-  //bool      used; // indicates unused variables
-  //uint32_t  more; // for element count, no need for next as they will be following in the array
-} meta;
-
-typedef struct {
-  u32i  name; // hash index
-  u32i  kind; // one of: type, list, suit, data, call
-  u32i  link; // data link to its type
-  u32i  addr;
+typedef enum { base, list, data, call } what;
+typedef struct meta meta;
+struct meta {
+  item* name;
+  byte* addr;
   u32i  size; // in case of list it is count of elements
-} symb;
+  what  kind;
+  meta* link; // data link to its type
+};
 
-struct mode {
+typedef struct {
   char* name;
   file* code;
   word  talk; // last
@@ -111,7 +99,7 @@ struct mode {
 
   byte  top;
   meta  decl[256];
-};
+} mode;
 
 void  make(mode*);
 file* scan(char*);

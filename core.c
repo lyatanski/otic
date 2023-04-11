@@ -70,7 +70,7 @@ void chop(mode* self) {
     //  kind = '"'; c+=2; break;
     case '"':
       while(*c++ && *c != '"') {
-        //if(*c == '\n' || *c == '\0') fail("unterminated string %s", c);
+        //if(*c == '\n' || *c == '\0') fail("unterminated string %s\n", c);
         //if(*c == '\\') switch (*++c) {
         //  case 'a': '\a'; break;
         //  case 'b': '\b'; break;
@@ -113,26 +113,27 @@ void chop(mode* self) {
     default: break;
   }
 
-  if(kind == '"' || kind == ttag)
+  if(kind == '"' || kind == ttag) {
     self->talk.hash = hget(self->pool, self->code->body, c - self->code->body);
+    //printf("hash %p %.*s\n", self->talk.hash, c - self->code->body, self->code->body);
+  }
   else
     self->talk.ival = kind == tnum? ival: 0;
   self->talk.kind = kind;
   self->code->body = c;
 }
 
-int same(mode* self, item* hash) {
-    return (self->talk.kind == ttag && self->talk.hash == hash)? chop(self), 1 : 0;
-}
+#define same(self, name) (\
+    (self)->talk.kind == ttag &&\
+    (self)->talk.hash == sget((self), (name)))
 
 int twin(mode* self, int   kind) {
     return (self->talk.kind == kind)? chop(self), 1 : 0;
 }
 
 int skip(mode* self, int   kind) {
-    if(self->talk.kind != kind)
-        fail("line %ld expected %x, got %x\n", self->code->line+1, kind, self->talk.kind);
-    chop(self);
+    if(!twin(self, kind))
+      fail("line %ld expected %x, got %x\n", self->code->line+1, kind, self->talk.kind);
     return 1;
 }
 
@@ -212,23 +213,27 @@ void  stmt(mode* self) {
   if(twin(self, '{')) {
     while(!twin(self, '}')) stmt(self);
   }
-  else if(same(self, sget(self->pool, "if"))) {
+  else if(same(self, "if")) {
+    chop(self);
     skip(self, '('); expr(self); skip(self, ')');
     emit(self, when, 0);
     stmt(self);
-    if(same(self, sget(self->pool, "else"))) {
+    if(same(self, "else")) {
+      chop(self);
       emit(self, jump, 1);
       stmt(self);
     }
     self->arch.back(&self->data);
   }
-  else if(same(self, sget(self->pool, "while"))) {
+  else if(same(self, "while")) {
+    chop(self);
     skip(self, '('); expr(self); skip(self, ')');
     emit(self, when, 1);
     emit(self, echo, puts, "foo");
     stmt(self);
   }
-  else if(same(self, sget(self->pool, "return"))) {
+  else if(same(self, "return")) {
+    chop(self);
     expr(self); skip(self, ';');
     emit(self, done, 1);
   }
@@ -237,31 +242,40 @@ void  stmt(mode* self) {
   }
 }
 
+#define seed(self, ...) {\
+  meta x = { __VA_ARGS__ }; \
+  x.name->val = self->decl+self->top; \
+  self->decl[self->top++] = x; }
+
+#define crux(slef, str, ...) \
+  seed((self), .kind = base, .name = sget((self), (str)), __VA_ARGS__)
+
 void  decl(mode* self) {
   // declaration begins with type or struct or union or enum
   // "list"  name? "{" decl "}" ";"
   // "suit"  name? "{" decl "}" ";"
   // "enum"  name? "{" list "}" ";"
 
-  item* type = self->talk.hash;
-  if(((meta*)type->val)->kind != typedecl) return;
-  chop(self);
+  meta* type = self->talk.hash->val;
+  if(!type || (type->kind != base && type->kind != list))
+    fail("expected type\n");
+  chop(self); // get the name
 
-  self->decl[self->top++] = (meta){.kind=function, .type=type};
-  self->talk.hash->val = &self->decl[self->top-1];
-  chop(self);
+  seed(self, .name=self->talk.hash, .link=type);
+  chop(self); // get next token
 
-  // type name "(" args ")" "{" stmt "}"     // function decl
+  // type name "(" args ")" "{" stmt "}"     // callable decl
   if(twin(self, '(')) {
-    // function
     while(!twin(self, ')')) {
-      item* type = self->talk.hash;
-      if(((meta*)type->val)->kind != typedecl) return;
+      self->decl[self->top-1].kind = call;
       chop(self);
 
-      self->decl[self->top++] = (meta){.kind=function, .type=type};
-      self->talk.hash->val = &self->decl[self->top-1];
+      meta* type = self->talk.hash->val;
+      if(!type || (type->kind != base && type->kind != list))
+        fail("expected type\n");
+
       chop(self);
+      seed(self, .name=self->talk.hash, .link=type);
       twin(self, ',');
     }
 
@@ -270,12 +284,14 @@ void  decl(mode* self) {
   else
   if(twin(self, '[')) {
     // array
+    self->decl[self->top-1].kind = list;
+    chop(self);
     self->decl[self->top-1].size = self->talk.ival;
     skip(self, ']');
   }
 
-  //if(same(self, sget(self->pool, "list"))
-  //|| same(self, sget(self->pool, "suit"))) {
+  //if(same(self, "list")
+  //|| same(self, "alias")) {
   //  skip(self, '{');
   //  while(!twin(self, '}')) {
   //    rvar(self);
@@ -284,7 +300,7 @@ void  decl(mode* self) {
   //  skip(self, '}');
   //  skip(self, ';');
   //}
-  //if(same(self, sget(self->pool, "enum"))) {
+  //if(same(self, "enum")) {
   //  skip(self, '{');
   //  while(!twin(self, '}')) {
   //    rtok(self);
@@ -305,29 +321,20 @@ void  decl(mode* self) {
 }
 
 void  make(mode* self) {
-  // unit = function
+  // unit = callable
   //      | variable
   //      | typedecl
 
   self->code = scan(self->name);
   self->data.head = self->data.tail = self->hold(0, 1024);
 
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "void")->val = &self->decl[self->top-1];
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "bool")->val = &self->decl[self->top-1];
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "char")->val = &self->decl[self->top-1];
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "short")->val = &self->decl[self->top-1];
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "int")->val = &self->decl[self->top-1];
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "long")->val = &self->decl[self->top-1];
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "float")->val = &self->decl[self->top-1];
-  self->decl[self->top++] = (meta){.kind=typedecl};
-  sget(self->pool, "double")->val = &self->decl[self->top-1];
+  crux(self, "void",  .size=0);
+  crux(self, "bool",  .size=1);
+  crux(self, "byte",  .size=1);
+  crux(self, "char",  .size=1);
+  crux(self, "short", .size=2);
+  crux(self, "int",   .size=4);
+  crux(self, "long",  .size=8);
 
   do {
     chop(self);

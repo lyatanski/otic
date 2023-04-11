@@ -3,7 +3,7 @@
 
 static const u32i bits[] = {0, 32, 64};
 enum { bits_none, bits_32 = 1, bits_64 };
-static const char* data[] = {"", "lsb", "msb"};
+static const char* elf_data[] = {"", "lsb", "msb"};
 enum { data_none, data_2lsb, data_2msb };
 enum { issue_current = 1 };
 enum { type_none, type_rel, type_exe, type_dyn, type_core };
@@ -86,7 +86,7 @@ void elfs(mode* self) {
   self->code = scan(self->name);
   elfs_id* id = (elfs_id*)self->code->head;
   printf("bits    %d\n", bits[id->bits]);
-  printf("data    %s\n", data[id->data]);
+  printf("data    %s\n", elf_data[id->data]);
 
   if(id->bits == bits_64) elfs_sh64(self);
 }
