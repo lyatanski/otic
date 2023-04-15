@@ -33,10 +33,19 @@ item* hget(hash map, char* key, long len);
 void  hrid(hash map);
 
 typedef struct {
+  //char*  name;
+  char*  head;
+  char*  body;
+  char*  tail;
+  size_t size;
+  size_t line;
+  char   data[1];
+} file;
+
+typedef struct {
   byte* head;
   byte* back;
   byte* tail;
-  byte* mend;
   size_t size;
   byte  data[1];
 } buff;
@@ -58,21 +67,11 @@ typedef void* (*poke)(void*, size_t);
 typedef void  (*pack)(buff*);
 
 typedef struct {
-  //char*  name;
-  char*  head;
-  char*  body;
-  char*  tail;
-  size_t size;
-  size_t line;
-  char   data[1];
-} file;
-
-typedef struct {
-  int   kind;
+  u32i  kind;
   union {
-    item*    hash;
-    uint64_t ival;
-    uint64_t fval;
+    item* hash;
+    u64i  ival;
+    u64i  fval;
   };
 } word;
 

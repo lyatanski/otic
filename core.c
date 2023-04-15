@@ -13,7 +13,7 @@ file* scan(char* name) {
 
   FILE* fp = fopen(name, "r");
   fseek(fp, 0, SEEK_END);
-  unsigned int size = ftell(fp);
+  size_t size = ftell(fp);
   rewind(fp);
 
   f = malloc(sizeof(file)+size);
@@ -32,10 +32,10 @@ void shed(file* data) {
 }
 
 void chop(mode* self) {
-  int64_t ival = 0;
-  int64_t fval = 0;
-  int     kind = tend;
-  char*   c = self->code->body;
+  s64i  ival = 0;
+  s64i  fval = 0;
+  u32i  kind = tend;
+  char* c = self->code->body;
 
   pass: switch(*(self->code->body = c)) {
     case '\n': self->code->line++;
@@ -253,8 +253,17 @@ void  stmt(mode* self) {
 void  decl(mode* self) {
   // declaration begins with type or struct or union or enum
   // "list"  name? "{" decl "}" ";"
-  // "suit"  name? "{" decl "}" ";"
+  // "poly"  name? "{" decl "}" ";"
   // "enum"  name? "{" list "}" ";"
+
+  if(same(self, "list")) {
+    skip(self, '{');
+    while(!twin(self, '}')) {
+      skip(self, ';');
+    }
+    skip(self, '}');
+  //  skip(self, ';');
+  }
 
   meta* type = self->talk.hash->val;
   if(!type || (type->kind != base && type->kind != list))
@@ -289,35 +298,6 @@ void  decl(mode* self) {
     self->decl[self->top-1].size = self->talk.ival;
     skip(self, ']');
   }
-
-  //if(same(self, "list")
-  //|| same(self, "alias")) {
-  //  skip(self, '{');
-  //  while(!twin(self, '}')) {
-  //    rvar(self);
-  //    skip(self, ';');
-  //  }
-  //  skip(self, '}');
-  //  skip(self, ';');
-  //}
-  //if(same(self, "enum")) {
-  //  skip(self, '{');
-  //  while(!twin(self, '}')) {
-  //    rtok(self);
-  //    skip(self, ',');
-  //  }
-  //  skip(self, '}');
-  //  skip(self, ';');
-  //}
-  //
-  //if(self->talk.hash.val.kind == type) {
-  //  t = self->talk.hash;
-  //  chop(self);
-  //}
-  //
-  //mark* n = malloc(sizeof(mark));
-  //n->base = t;
-  //self->talk.hash->val = n;
 }
 
 void  make(mode* self) {
