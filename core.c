@@ -9,20 +9,16 @@ enum { tend, ttag, tnum };
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
 
 file* scan(char* name) {
-  file* f;
-
   FILE* fp = fopen(name, "r");
   fseek(fp, 0, SEEK_END);
   size_t size = ftell(fp);
   rewind(fp);
 
-  f = malloc(sizeof(file)+size);
+  file* f = malloc(sizeof(file)+size);
   if(!f) return NULL;
-  f->head = f->body = f->data;
+  f->body = f->head;
   f->tail = f->head + size;
-  f->size = size;
-  f->line = 1;
-  fread(f->head, 1, f->size, fp);
+  fread(f->head, 1, size, fp);
   fclose(fp);
   return f;
 }
@@ -38,7 +34,7 @@ void chop(mode* self) {
   char* c = self->code->body;
 
   pass: switch(*(self->code->body = c)) {
-    case '\n': self->code->line++;
+    case '\n': self->line++;
     case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
     case '#': case ',': case ';': case ':': case '?': case '~':
     case '(': case ')': case '[': case ']': case '{': case '}':
@@ -124,17 +120,17 @@ void chop(mode* self) {
 }
 
 #define same(self, name) (\
-    (self)->talk.kind == ttag &&\
-    (self)->talk.hash == sget((self), (name)))
+  (self)->talk.kind == ttag &&\
+  (self)->talk.hash == sget((self), (name)))
 
 int twin(mode* self, int   kind) {
-    return (self->talk.kind == kind)? chop(self), 1 : 0;
+  return (self->talk.kind == kind)? chop(self), 1 : 0;
 }
 
 int skip(mode* self, int   kind) {
-    if(!twin(self, kind))
-      fail("line %ld expected %x, got %x\n", self->code->line+1, kind, self->talk.kind);
-    return 1;
+  if(!twin(self, kind))
+    fail("line %ld expected %x, got %x\n", self->line+1, kind, self->talk.kind);
+  return 1;
 }
 
 int rank(int op) {
@@ -153,7 +149,7 @@ int rank(int op) {
   }
 }
 
-#define emit(self, call, ...) (self->arch.call(&self->data, __VA_ARGS__))
+#define emit(self, call, ...) (self->arch.call(&self->data __VA_OPT__(,) __VA_ARGS__))
 void expr(mode* self) {
   int rank = 0xffff;
 
@@ -223,7 +219,7 @@ void  stmt(mode* self) {
       emit(self, jump, 1);
       stmt(self);
     }
-    self->arch.back(&self->data);
+    emit(self, back);
   }
   else if(same(self, "while")) {
     chop(self);
@@ -306,6 +302,7 @@ void  make(mode* self) {
   //      | typedecl
 
   self->code = scan(self->name);
+  self->line = 1;
   self->data.head = self->data.tail = self->hold(0, 1024);
 
   crux(self, "void",  .size=0);

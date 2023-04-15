@@ -33,13 +33,9 @@ item* hget(hash map, char* key, long len);
 void  hrid(hash map);
 
 typedef struct {
-  //char*  name;
-  char*  head;
   char*  body;
   char*  tail;
-  size_t size;
-  size_t line;
-  char   data[1];
+  char   head[1];
 } file;
 
 typedef struct {
@@ -87,11 +83,12 @@ struct meta {
 
 typedef struct {
   char* name;
-  file* code;
+  file* code; // source
+  size_t line;
   word  talk; // last
   hash  pool;
   emit  arch;
-  buff  data;
+  buff  data; // binary code
   poke  hold;
   poke  drop;
   pack  exec;
