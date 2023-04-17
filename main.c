@@ -58,7 +58,7 @@ void* drop(void* memory, size_t size) {
 }
 
 typedef int (*func)();
-void exec(buff* data) {
+void  exec(buff* data) {
   //prep(data->head, 0);
   int return_code = ((func)data->head)();
   printf("%d\n", return_code);
@@ -70,21 +70,76 @@ void  show(buff* data) {
   printf("\n");
 }
 
-int   main(int argc, char** argv) {
-  mode self = {};
+typedef struct opts opts;
+typedef void (*move)(mode*, opts*, char*);
+struct opts {
+  char* name;
+  char* full;
+  char* desc;
+  move  call;
+  byte  need:1,
+        args:1;
+};
 
-  if(argc != 3) return 1;
-  self.hold = hold;
-  self.drop = drop;
-  self.exec = show;
-  switch(argv[1][0]) {
-    case 'a': self.arch = arm8; break;
-    case 'i': self.arch = ia64; break;
-    case 'e': self.arch = base; self.exec = exec; break;
-    default : return 1;
+static void help(mode*, opts* self, char*) {
+  printf("usage: %s [options] file [file...]\n", "tic");
+  printf("options:\n");
+  while(self->name) {
+    printf("  %s", self->name);
+    if(self->full) printf(", %s", self->full);
+    else printf("\t");
+    printf("\t%s\n", self->desc);
+    self++;
   }
+  exit(0);
+}
 
-  self.name = argv[2];
+int  scmp(char* x, char* y) {
+  while(x && y && *x && *y && *x==*y) {x++; y++;}
+  return (!x || !y)? 1: *x - *y;
+}
+
+static void arch(mode* self, opts*, char* para) {
+  if(!scmp(para, "exec")) self->exec = exec;
+  else if(!scmp(para, "ia64")) self->arch = ia64;
+  else if(!scmp(para, "arm8")) self->arch = arm8;
+  else printf("architecture '%s' not supported\n", para);
+}
+
+static void apos(mode* self, opts*, char* para) {
+  self->name = para;
+}
+
+static void parse(mode* self, opts* opt, int argc, char** argv, move call) {
+  for(int i = 1; i < argc; i++) {
+    bool match = 0;
+    for(opts* back = opt; back->name; back++) {
+      if(!scmp(argv[i], back->name) || !scmp(argv[i], back->full)) {
+        match = 1;
+        if(back->call) {
+          if(back->args) back->call(self, opt, argv[++i]);
+          else back->call(self, opt, NULL);
+        }
+      }
+    }
+    if(!match) call(self, opt, argv[i]);
+  }
+}
+
+int   main(int argc, char** argv) {
+  mode self = {
+    .hold = hold,
+    .drop = drop,
+    .exec = show,
+    .arch = base,
+  };
+
+  opts args[] = {
+    {"-m", "--mode", .args = 1, .desc = "exec, ia64, arm8", .call = arch},
+    {"-h", "--help", .desc = "display this help", .call = help}, {},
+  };
+  parse(&self, args, argc, argv, apos);
+
   make(&self);
 
   //self.name = "bins/ia64.o";

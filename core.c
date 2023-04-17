@@ -240,8 +240,8 @@ void  stmt(mode* self) {
 
 #define seed(self, ...) {\
   meta x = { __VA_ARGS__ }; \
-  x.name->val = self->decl+self->top; \
-  self->decl[self->top++] = x; }
+  x.name->val = self->pile+self->top; \
+  self->pile[self->top++] = x; }
 
 #define crux(slef, str, ...) \
   seed((self), .kind = base, .name = sget((self), (str)), __VA_ARGS__)
@@ -266,13 +266,13 @@ void  decl(mode* self) {
     fail("expected type\n");
   chop(self); // get the name
 
-  seed(self, .name=self->talk.hash, .link=type);
+  seed(self, .name=self->talk.hash, .type=type);
   chop(self); // get next token
 
   // type name "(" args ")" "{" stmt "}"     // callable decl
   if(twin(self, '(')) {
     while(!twin(self, ')')) {
-      self->decl[self->top-1].kind = call;
+      self->pile[self->top-1].kind = call;
       chop(self);
 
       meta* type = self->talk.hash->val;
@@ -280,7 +280,7 @@ void  decl(mode* self) {
         fail("expected type\n");
 
       chop(self);
-      seed(self, .name=self->talk.hash, .link=type);
+      seed(self, .name=self->talk.hash, .type=type);
       twin(self, ',');
     }
 
@@ -289,9 +289,9 @@ void  decl(mode* self) {
   else
   if(twin(self, '[')) {
     // array
-    self->decl[self->top-1].kind = list;
+    self->pile[self->top-1].kind = list;
     chop(self);
-    self->decl[self->top-1].size = self->talk.ival;
+    self->pile[self->top-1].size = self->talk.ival;
     skip(self, ']');
   }
 }

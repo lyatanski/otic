@@ -21,8 +21,8 @@ typedef  uint8_t bool;
 // hash
 typedef struct item item;
 struct item {
-  char* key;
   int   len;
+  char* key;
   void* val;
   item* next;
 };
@@ -74,11 +74,11 @@ typedef struct {
 typedef enum { base, list, data, call } what;
 typedef struct meta meta;
 struct meta {
+  meta* type; // data link to its type
   item* name;
   byte* addr;
   u32i  size; // in case of list it is count of elements
   what  kind;
-  meta* link; // data link to its type
 };
 
 typedef struct {
@@ -88,13 +88,17 @@ typedef struct {
   word  talk; // last
   hash  pool;
   emit  arch;
+
   buff  data; // binary code
+  //buff data; // binary data
+  //size_t zero; // zero initialized data
+
   poke  hold;
   poke  drop;
   pack  exec;
 
   byte  top;
-  meta  decl[256];
+  meta  pile[256];
 } mode;
 
 void  make(mode*);

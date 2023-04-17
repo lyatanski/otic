@@ -27,4 +27,4 @@ do
   link="$link $dst"
 done
 
-gcc -o$out/tic $link && ./$out/tic e $out/test.c
+gcc -o$out/tic $link && ./$out/tic -m exec $out/test.c
