@@ -16,21 +16,18 @@ typedef  uint8_t bool;
 //typedef     void void;
 
 #define fail(...) (printf(__VA_ARGS__), exit(1))
-#define POOL (1 << 13)
 
 // hash
-typedef struct item item;
-struct item {
-  int   len;
+#define POOL (1 << 13)
+typedef struct {
+  u64i  len;
   char* key;
   void* val;
-  item* next;
-};
+} item;
 typedef item hash[POOL];
 
-item* hget(hash map, char* key, long len);
+item* hget(hash, char*, u64i);
 #define sget(self, k) hget(self->pool, k, sizeof(k)-1)
-void  hrid(hash map);
 
 typedef struct {
   char*  body;

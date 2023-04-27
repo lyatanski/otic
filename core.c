@@ -123,11 +123,11 @@ void chop(mode* self) {
   (self)->talk.kind == ttag &&\
   (self)->talk.hash == sget((self), (name)))
 
-int twin(mode* self, int   kind) {
+bool  twin(mode* self, int   kind) {
   return (self->talk.kind == kind)? chop(self), 1 : 0;
 }
 
-int skip(mode* self, int   kind) {
+bool  skip(mode* self, int   kind) {
   if(!twin(self, kind))
     fail("line %ld expected %x, got %x\n", self->line+1, kind, self->talk.kind);
   return 1;
@@ -150,7 +150,7 @@ int rank(int op) {
 }
 
 #define emit(self, call, ...) (self->arch.call(&self->data __VA_OPT__(,) __VA_ARGS__))
-void expr(mode* self) {
+void  expr(mode* self) {
   int rank = 0xffff;
 
   switch(self->talk.kind) {

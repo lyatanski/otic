@@ -1,41 +1,29 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-long  name(item* x, char* key, size_t len) {
+bool  name(item* x, char* key, u64i len) {
   if(x->len != len) return 0;
   char* p = x->key;
   while(len && *p++==*key++) len--;
   return !len || *p==*key;
 }
 
-item* hget(hash map, char* key, long len) {
-  unsigned long idx = 0x1;
-  for(int i = 0; i < len; i++) idx += (idx << 5) + (idx >> 27) + key[i];
+item* hget(hash self, char* mark, u64i size) {
+  u64i  clue = 0x01;
+  item* seek = NULL;
 
-  item* seek = map + (idx & (POOL - 1));
-  while(seek->key && !name(seek, key, len)) {
-    if(!seek->next) {
-      seek->next = malloc(sizeof(item));
-      *seek->next = (item){};
-    }
-    seek = seek->next;
-  }
+  // TODO add retry count to avoid endless cycle
+  do {
+    for(u64i i = 0; i < size; clue += (clue << 5) + (clue >> 27) + mark[i++]);
+    printf("clue %016lx %08lx\n", clue, clue & (POOL - 1));
+    seek = self + (clue & (POOL - 1));
+  } while(seek->key && !name(seek, mark, size));
+
   if(!seek->key) {
-    seek->key = key;
-    seek->len = len;
+    seek->key = mark;
+    seek->len = size;
   }
 
   return seek;
-}
-
-void  hrid(hash map) {
-  for(int i = 0; i < POOL; i++) {
-    item* next = map[i].next;
-    while(next) {
-      item* p = next;
-      next = next->next;
-      free(p);
-    }
-  }
 }
 
