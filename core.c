@@ -31,7 +31,7 @@ void chop(mode* self) {
   s64i  ival = 0;
   s64i  fval = 0;
   u32i  kind = tend;
-  char* c = self->code->body;
+  byte* c = self->code->body;
 
   pass: switch(*(self->code->body = c)) {
     case '\n': self->line++;
@@ -110,7 +110,7 @@ void chop(mode* self) {
   }
 
   if(kind == '"' || kind == ttag) {
-    self->talk.hash = hget(self->pool, self->code->body, c - self->code->body);
+    self->talk.hash = hget(self->pool, (char*)self->code->body, c - self->code->body);
     //printf("hash %p %.*s\n", self->talk.hash, c - self->code->body, self->code->body);
   }
   else
@@ -149,7 +149,7 @@ int rank(int op) {
   }
 }
 
-#define emit(self, call, ...) (self->arch.call(&self->data __VA_OPT__(,) __VA_ARGS__))
+#define emit(self, call, ...) (self->arch.call(self->data __VA_OPT__(,) __VA_ARGS__))
 void  expr(mode* self) {
   int rank = 0xffff;
 
@@ -210,16 +210,20 @@ void  stmt(mode* self) {
     while(!twin(self, '}')) stmt(self);
   }
   else if(same(self, "if")) {
+    byte* mark = NULL;
     chop(self);
     skip(self, '('); expr(self); skip(self, ')');
     emit(self, when, 0);
+    mark = self->data->body - 1;
     stmt(self);
     if(same(self, "else")) {
       chop(self);
-      emit(self, jump, 1);
+      emit(self, jump);
+      emit(self, back, mark);
+      mark = self->data->body - 1;
       stmt(self);
     }
-    emit(self, back);
+    emit(self, back, mark);
   }
   else if(same(self, "while")) {
     chop(self);
@@ -303,7 +307,9 @@ void  make(mode* self) {
 
   self->code = scan(self->name);
   self->line = 1;
-  self->data.head = self->data.tail = self->hold(0, 1024);
+  self->data = (file*)self->hold(0, 1024);
+  self->data->body = self->data->head;
+  self->data->tail = self->data->head + 1000;
 
   crux(self, "void",  .size=0);
   crux(self, "bool",  .size=1);
@@ -320,7 +326,7 @@ void  make(mode* self) {
 
   shed(self->code);
 
-  self->exec(&self->data);
-  self->drop(self->data.head, 1024);
+  self->exec(self->data);
+  self->drop(self->data, 1024);
 }
 

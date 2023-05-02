@@ -58,14 +58,14 @@ void* drop(void* memory, size_t size) {
 }
 
 typedef int (*func)();
-void  exec(buff* data) {
+void  exec(file* data) {
   //prep(data->head, 0);
   int return_code = ((func)data->head)();
   printf("%d\n", return_code);
 }
 
-void  show(buff* data) {
-  for(byte* b = data->head; b < data->tail; b++)
+void  show(file* data) {
+  for(byte* b = data->head; b < data->body; b++)
     printf("%.2x", *b);
   printf("\n");
 }

@@ -256,18 +256,18 @@ void arm8_emit() {
   printf("%x\n%x\n%s\n", r, e, r==e? "true": "false");
 }
 
-void arm8_move(buff* data, uint32_t num) {
+void arm8_move(file* data, uint32_t num) {
 }
 
-void arm8_when(buff* data, uint32_t num) {
+void arm8_when(file* data, uint32_t num) {
 }
 
-void arm8_jump(buff* data, uint32_t num) {
+void arm8_jump(file* data, uint32_t num) {
 }
 
-void arm8_done(buff* data) {
+void arm8_done(file* data) {
 }
-void arm8_mend(buff* data) {
+void arm8_mend(file* data) {
 }
 
 void arm8_halt() {

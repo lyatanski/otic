@@ -60,24 +60,24 @@ R(ir8, 0); R(ir9, 1); R(ir10, 2); R(ir11, 3); R(ir12, 4); R(ir13, 5); R(ir14, 6)
 //byte mspe[] = {           rcx, rdx, ir8, ir9 };
 //byte elfs[] = { rdi, rsi, rdx, rcx, ir8, ir9 };
 
-#define BODY { *(typeof(val)*)data->tail = val; data->tail += sizeof(val); }
-void ib(buff* data, byte val) BODY
-void iw(buff* data, u16i val) BODY
-void id(buff* data, u32i val) BODY
-void io(buff* data, u64i val) BODY
+#define BODY { *(typeof(val)*)data->body = val; data->body += sizeof(val); }
+void ib(file* data, byte val) BODY
+void iw(file* data, u16i val) BODY
+void id(file* data, u32i val) BODY
+void io(file* data, u64i val) BODY
 #undef  BODY
 
-void ia64_push(buff* data, para src) {
+void ia64_push(file* data, para src) {
   //if(src.reg.x64) ib(data, rex(.b=1));
   ib(data, 0x50 + src.reg.enc);
 }
 
-void ia64_pop(buff* data, para dst) {
+void ia64_pop(file* data, para dst) {
   //if(src.reg.x64) ib(data, rex(.b=1));
   ib(data, 0x58 + dst.reg.enc);
 }
 
-void ia64_mov(buff* data, para dst, para src) {
+void ia64_mov(file* data, para dst, para src) {
   int size = 1;
   if(size > 4) ib(data, rex(.w=1));
 
@@ -118,7 +118,7 @@ void ia64_mov(buff* data, para dst, para src) {
   else fail("mov encoding problem");
 }
 
-void ia64_call(buff* data, para addr) {
+void ia64_call(file* data, para addr) {
   if(imm == addr.type) {
     ib(data, 0xe8);
     id(data, addr.imm8);
@@ -129,18 +129,22 @@ void ia64_call(buff* data, para addr) {
   }
 }
 
-void ia64_ret(buff* data) {
+void ia64_ret(file* data) {
   ib(data, 0xc3);
 }
 
-void ia64_jump(buff* data, u32i fix) {
+void ia64_jump(file* data) {
   ib(data, 0xeb);
-  if(fix) *data->back = data->tail - data->back;
-  data->back = data->tail++;
+  data->body++;
+}
+
+void ia64_mark(file* data) {  }
+void ia64_mend(file* data, byte* prev) {
+  *prev = data->body - prev - 1;
 }
 
 typedef enum { jo, jno, jb, jae, je, jne, jbe, ja, js, jns, jp, jnp, jl, jge, jle, jg } cond;
-void ia64_jmpc(buff* data, cond oper, s32i offs) {
+void ia64_jmpc(file* data, cond oper, s32i offs) {
   if((int8_t)offs == offs) {
     ib(data, 0x70 + oper);
     ib(data, offs - 2);
@@ -152,7 +156,7 @@ void ia64_jmpc(buff* data, cond oper, s32i offs) {
 }
 
 typedef enum { test, not = 2, neg, umul, smul, udiv, sdiv } aext;
-void ia64_aext(buff* data, aext op, para src) {
+void ia64_aext(file* data, aext op, para src) {
   // dst is ax/eax/rax
   // for div remainder in dx/edx/rdx
   int size = 4;
@@ -162,7 +166,7 @@ void ia64_aext(buff* data, aext op, para src) {
 }
 
 typedef enum { add, or, adc, sbb, and, sub, xor, cmp } calc;
-void ia64_ical(buff* data, calc op, para dst, para src) {
+void ia64_ical(file* data, calc op, para dst, para src) {
   int size = 4;
   ib(data, 0x80 | bits(.rm=1, .size=(size > 1)));
   ib(data, modrm(.mod=3, .reg=op, .rm=dst.reg.enc));
@@ -170,7 +174,7 @@ void ia64_ical(buff* data, calc op, para dst, para src) {
 }
 
 #define calc(op, code)                                                        \
-void ia64_##op(buff* data, para dst, para src) {                              \
+void ia64_##op(file* data, para dst, para src) {                              \
   int size = 4;                                                               \
   if(size > 4) ib(data, rex(.w=1));                                           \
   if(imm == src.type) {                                                       \
@@ -192,7 +196,7 @@ calc(cmp, 0x38)
 #undef  calc
 
 typedef enum { shl = 4, shr = 5, sar = 7 } shft;
-void ia64_shft(buff* data, shft op, para dst, para src) {
+void ia64_shft(file* data, shft op, para dst, para src) {
   // src can only be reg CL or imm
   int size = 4;
   if(size > 4) ib(data, rex(.w=1));
@@ -208,7 +212,7 @@ void ia64_shft(buff* data, shft op, para dst, para src) {
   // d3 for cl?
 }
 
-void ia64_calc(buff* data, u32i oper) {
+void ia64_calc(file* data, u32i oper) {
   switch(oper) {
     case '+': ia64_add (data, eax, edx);  break;
     case '-': ia64_sub (data, eax, edx);  break;
@@ -224,7 +228,7 @@ void ia64_calc(buff* data, u32i oper) {
   }
 }
 
-void ia64_diff(buff* data, char oper, para dst, para src) {
+void ia64_diff(file* data, char oper, para dst, para src) {
   switch(oper) {
     case '=': break;
     case '!': break;
@@ -236,24 +240,18 @@ void ia64_diff(buff* data, char oper, para dst, para src) {
 }
 
 // TODO remove
-void ia64_when(buff* data, u32i cond) {
+void ia64_when(file* data, u32i cond) {
   ia64_cmp(data, eax, (para){imm, .imm8 = 0});
-
-  // XXX ia64_jmpc is the same
-  ib(data, 0x70 + je);
-  data->back = data->tail++;
+  ia64_jmpc(data, je, 0);
 }
 
 // TODO remove
-void ia64_move(buff* data, u32i val) {
+void ia64_move(file* data, u32i val) {
   ia64_mov(data, eax, (para){imm, .imm8=val});
 }
 
-void ia64_mark(buff* data) {  }
-void ia64_mend(buff* data) { *data->back = data->tail - data->back - 1; }
-
 // TODO remove
-void ia64_body(buff* data) {
+void ia64_body(file* data) {
   ia64_push(data, rbp);
   ia64_mov(data, rbp, rsp);
   // funtion body
@@ -262,7 +260,7 @@ void ia64_body(buff* data) {
 }
 
 // TODO remove
-void ia64_echo2(buff* data, u32i func, u32i addr) {
+void ia64_echo2(file* data, u32i func, u32i addr) {
   ib(data, 0xb8 + eax.reg.enc); id(data, func); // mov
   ib(data, 0xb8 + edi.reg.enc); id(data, addr); // mov
   ib(data, 0xff);

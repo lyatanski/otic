@@ -30,21 +30,13 @@ item* hget(hash, char*, u64i);
 #define sget(self, k) hget(self->pool, k, sizeof(k)-1)
 
 typedef struct {
-  char*  body;
-  char*  tail;
-  char   head[1];
+  byte*  body;
+  byte*  tail;
+  byte   head[1];
 } file;
 
-typedef struct {
-  byte* head;
-  byte* back;
-  byte* tail;
-  size_t size;
-  byte  data[1];
-} buff;
-
 // arch
-typedef void (*flow)(buff*, ...);
+typedef void (*flow)(file*, ...);
 typedef struct {
   flow  move;
   flow  when;
@@ -57,7 +49,7 @@ typedef struct {
 
 // core
 typedef void* (*poke)(void*, size_t);
-typedef void  (*pack)(buff*);
+typedef void  (*pack)(file*);
 
 typedef struct {
   u32i  kind;
@@ -86,9 +78,9 @@ typedef struct {
   hash  pool;
   emit  arch;
 
-  buff  data; // binary code
-  //buff data; // binary data
-  //size_t zero; // zero initialized data
+  file* data; // binary code
+  //file* data; // binary data
+  //u64i  zero; // zero initialized data
 
   poke  hold;
   poke  drop;

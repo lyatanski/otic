@@ -28,3 +28,4 @@ do
 done
 
 gcc -o$out/tic $link && ./$out/tic -m exec $out/test.c
+gcc -o$out/tic $link && ./$out/tic $out/test.c
