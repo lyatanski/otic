@@ -274,5 +274,6 @@ const emit ia64 = {
   .done = (flow)ia64_ret,
   .back = (flow)ia64_mend,
   .echo = (flow)ia64_echo2,
+  .calc = (flow)ia64_calc,
 };
 

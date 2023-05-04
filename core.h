@@ -43,6 +43,7 @@ typedef struct {
   flow  echo;
   flow  done;
   flow  back;
+  flow  calc;
 } emit;
 
 // core

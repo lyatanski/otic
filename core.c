@@ -174,7 +174,8 @@ void  expr(mode* self) {
     break;
     case ttag:
     case tokd('('): /* type cast     */ skip(self, ')'); break;
-    case tokd('*'): /* pointer deref */ break;
+    //case tokd('*'): /* pointer deref */ break;
+    case tokd('@'): /* pointer deref */ break;
     case tokd('&'): /* address of    */ break;
     break;
     //case tokd('['):      break;
@@ -186,14 +187,10 @@ void  expr(mode* self) {
     switch(self->talk.kind) {
       case tokd('='):      break;
       case tokd('?'):      break;
-      case tokd('|'):      break;
-      case tokd('^'):      break;
-      case tokd('&'):      break;
-      case tokd('+'):      break;
-      case tokd('-'):      break;
-      case tokd('*'):      break;
-      case tokd('/'):      break;
-      case tokd('%'):      break;
+      case tokd('^'): case tokd('|'): case tokd('&'):
+      case tokd('+'): case tokd('-'): case tokd('*'):
+      case tokd('/'): case tokd('%'):
+        emit(self, calc, self->talk.kind); break;
       case tokd('['):      break;
       case tokd('<'):      break;
       case tokd('>'):      break;
@@ -201,8 +198,8 @@ void  expr(mode* self) {
       case tokd('>', '='): break;
       case tokd('!', '='): break;
       case tokd('=', '='): break;
-      case tokd('<', '<'): break;
-      case tokd('>', '>'): break;
+      case tokd('<', '<'): emit(self, calc, '<'); break;
+      case tokd('>', '>'): emit(self, calc, '>'); break;
       case tokd('+', '+'): break;
       case tokd('-', '-'): break;
       case tokd('|', '|'): break;
