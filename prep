@@ -16,7 +16,7 @@ echo -- compile all-in
 gcc -Wall -ggdb -Os -o$out/one main.c
 strip -s $out/one
 
-for file in main core hash ia64 arm8 elfs mach
+for file in main core ia64 arm8 elfs mach
 do
   src=$file.c
   dst=$out/$file.o

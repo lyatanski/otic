@@ -1,8 +1,8 @@
 // vim: ts=2:sw=2
 #pragma once
 #include <stdio.h>  /* FILE, printf */
-#include <stdlib.h> /* malloc, free */
-#include <stdint.h> /* uintXX_t,... */
+#include <stdlib.h> /* malloc, free, exit */
+#include <stdint.h> /* standard data types */
 
 typedef uint64_t u64i;
 typedef  int64_t s64i;
@@ -15,19 +15,17 @@ typedef  uint8_t bool;
 //typedef     char char;
 //typedef     void void;
 
+#define warn(...) (printf(__VA_ARGS__))
 #define fail(...) (printf(__VA_ARGS__), exit(1))
 
 // hash
 #define POOL (1 << 13)
 typedef struct {
-  u64i  len;
-  char* key;
-  void* val;
+  u64i  size;
+  char* name;
+  void* data;
 } item;
 typedef item hash[POOL];
-
-item* hget(hash, char*, u64i);
-#define sget(self, k) hget(self->pool, k, sizeof(k)-1)
 
 typedef struct {
   byte*  body;
@@ -73,25 +71,23 @@ struct meta {
 typedef struct {
   char* name;
   file* code; // source
-  size_t line;
+  u64i  line;
   word  talk; // last
   hash  pool;
   emit  arch;
 
-  file* data; // binary code
+  file* text; // binary code
   //file* data; // binary data
   //u64i  zero; // zero initialized data
 
   poke  hold;
   poke  drop;
-  pack  exec;
+  pack  show;
 
   byte  top;
   meta  pile[256];
 } mode;
 
 void  make(mode*);
-file* scan(char*);
-
 void  elfs(mode*);
 

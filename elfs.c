@@ -83,7 +83,6 @@ void elfs_sh64(mode* self) {
 }
 
 void elfs(mode* self) {
-  self->code = scan(self->name);
   elfs_id* id = (elfs_id*)self->code->head;
   printf("bits    %d\n", bits[id->bits]);
   printf("data    %s\n", elf_data[id->data]);

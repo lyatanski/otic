@@ -8,23 +8,35 @@ enum { tend, ttag, tnum };
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
 
-file* scan(char* name) {
-  FILE* fp = fopen(name, "r");
-  fseek(fp, 0, SEEK_END);
-  size_t size = ftell(fp);
-  rewind(fp);
-
-  file* f = malloc(sizeof(file)+size);
-  if(!f) return NULL;
-  f->body = f->head;
-  f->tail = f->head + size;
-  fread(f->head, 1, size, fp);
-  fclose(fp);
-  return f;
+item* match(item* x, char* name, u64i size) {
+  if(!x->name) {
+    x->name = name;
+    x->size = size;
+    return x;
+  }
+  if(x->size != size) return NULL;
+  for(char* p = x->name; size && *p++==*name++; size--);
+  return !size? x: NULL;
 }
 
-void shed(file* data) {
-  free(data);
+#define sget(self, k) hget(self->pool, k, sizeof(k)-1)
+item* hget(hash self, char* mark, u64i size) {
+  u64i  clue = 0x01;
+  item* seek = NULL;
+
+  // calculate string hash
+  for(u64i i = 0; i < size; clue += (clue << 5) + (clue >> 27) + mark[i++]);
+  //u64i  clue = 5381;
+  //for(u64i i = 0; i < size; clue += (clue << 5) + clue + mark[i++]);
+  //u64i  clue = 0;
+  //for(u64i i = 0; i < size; clue += (clue << 6) + (clue << 16)i - clue + mark[i++]);
+  //printf("clue %016lx %08lx % 4ld %.*s\n", clue, clue & (POOL - 1), size, (int)size, mark);
+
+  // lookup free spot or the same string
+  for(u64i i = 1; !seek && i <= 10; i++)
+    seek = match(self + ((i * clue) & (POOL - 1)), mark, size);
+
+  return seek;
 }
 
 void chop(mode* self) {
@@ -149,7 +161,7 @@ int rank(int op) {
   }
 }
 
-#define emit(self, call, ...) (self->arch.call(self->data __VA_OPT__(,) __VA_ARGS__))
+#define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
 void  expr(mode* self) {
   int rank = 0xffff;
 
@@ -177,23 +189,25 @@ void  expr(mode* self) {
       case tokd('|'):      break;
       case tokd('^'):      break;
       case tokd('&'):      break;
-      case tokd('<'):      break;
-      case tokd('>'):      break;
       case tokd('+'):      break;
       case tokd('-'):      break;
       case tokd('*'):      break;
       case tokd('/'):      break;
       case tokd('%'):      break;
       case tokd('['):      break;
-      case tokd('|', '|'): break;
-      case tokd('&', '&'): break;
-      case tokd('=', '='): break;
-      case tokd('!', '='): break;
+      case tokd('<'):      break;
+      case tokd('>'):      break;
       case tokd('<', '='): break;
       case tokd('>', '='): break;
+      case tokd('!', '='): break;
+      case tokd('=', '='): break;
       case tokd('<', '<'): break;
       case tokd('>', '>'): break;
-      case tokd('+', '+'): case tokd('-', '-'):  break;
+      case tokd('+', '+'): break;
+      case tokd('-', '-'): break;
+      case tokd('|', '|'): break;
+      case tokd('&', '&'): break;
+
       case tokd('('):
         // function call
         while(!twin(self, ')')) {
@@ -214,13 +228,13 @@ void  stmt(mode* self) {
     chop(self);
     skip(self, '('); expr(self); skip(self, ')');
     emit(self, when, 0);
-    mark = self->data->body - 1;
+    mark = self->text->body - 1;
     stmt(self);
     if(same(self, "else")) {
       chop(self);
       emit(self, jump);
       emit(self, back, mark);
-      mark = self->data->body - 1;
+      mark = self->text->body - 1;
       stmt(self);
     }
     emit(self, back, mark);
@@ -244,7 +258,7 @@ void  stmt(mode* self) {
 
 #define seed(self, ...) {\
   meta x = { __VA_ARGS__ }; \
-  x.name->val = self->pile+self->top; \
+  x.name->data = self->pile+self->top; \
   self->pile[self->top++] = x; }
 
 #define crux(slef, str, ...) \
@@ -265,7 +279,7 @@ void  decl(mode* self) {
   //  skip(self, ';');
   }
 
-  meta* type = self->talk.hash->val;
+  meta* type = self->talk.hash->data;
   if(!type || (type->kind != base && type->kind != list))
     fail("expected type\n");
   chop(self); // get the name
@@ -279,7 +293,7 @@ void  decl(mode* self) {
       self->pile[self->top-1].kind = call;
       chop(self);
 
-      meta* type = self->talk.hash->val;
+      meta* type = self->talk.hash->data;
       if(!type || (type->kind != base && type->kind != list))
         fail("expected type\n");
 
@@ -305,11 +319,10 @@ void  make(mode* self) {
   //      | variable
   //      | typedecl
 
-  self->code = scan(self->name);
   self->line = 1;
-  self->data = (file*)self->hold(0, 1024);
-  self->data->body = self->data->head;
-  self->data->tail = self->data->head + 1000;
+  self->text = (file*)self->hold(0, 1024);
+  self->text->body = self->text->head;
+  self->text->tail = self->text->head + 1000;
 
   crux(self, "void",  .size=0);
   crux(self, "bool",  .size=1);
@@ -324,9 +337,7 @@ void  make(mode* self) {
     decl(self);
   } while(self->talk.kind);
 
-  shed(self->code);
-
-  self->exec(self->data);
-  self->drop(self->data, 1024);
+  self->show(self->text);
+  self->drop(self->text, 1024);
 }
 

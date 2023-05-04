@@ -3,11 +3,8 @@
 
 #ifndef part
 #include "core.c"
-#include "hash.c"
-
 #include "ia64.c"
 #include "arm8.c"
-
 #include "elfs.c"
 //#include "pe32.c"
 //#include "mach.c"
@@ -26,6 +23,25 @@ extern const emit arm8;
 #else // __x86_64__
 #define base ia64
 #endif
+
+file* scan(char* name) {
+  FILE* fp = fopen(name, "r");
+  fseek(fp, 0, SEEK_END);
+  size_t size = ftell(fp);
+  rewind(fp);
+
+  file* f = malloc(sizeof(file)+size);
+  if(!f) return NULL;
+  f->body = f->head;
+  f->tail = f->head + size;
+  fread(f->head, 1, size, fp);
+  fclose(fp);
+  return f;
+}
+
+void shed(file* data) {
+  free(data);
+}
 
 void* hold(void* memory, size_t size) {
 #ifdef _WIN32
@@ -100,7 +116,7 @@ int  scmp(char* x, char* y) {
 }
 
 static void arch(mode* self, opts*, char* para) {
-  if(!scmp(para, "exec")) self->exec = exec;
+  if(!scmp(para, "exec")) self->show = exec;
   else if(!scmp(para, "ia64")) self->arch = ia64;
   else if(!scmp(para, "arm8")) self->arch = arm8;
   else printf("architecture '%s' not supported\n", para);
@@ -108,6 +124,7 @@ static void arch(mode* self, opts*, char* para) {
 
 static void apos(mode* self, opts*, char* para) {
   self->name = para;
+  self->code = scan(self->name);
 }
 
 static void parse(mode* self, opts* opt, int argc, char** argv, move call) {
@@ -130,7 +147,7 @@ int   main(int argc, char** argv) {
   mode self = {
     .hold = hold,
     .drop = drop,
-    .exec = show,
+    .show = show,
     .arch = base,
   };
 
@@ -141,8 +158,9 @@ int   main(int argc, char** argv) {
   parse(&self, args, argc, argv, apos);
 
   make(&self);
+  shed(self.code);
 
-  //self.name = "bins/ia64.o";
+  //self.code = scan("bins/ia64.o");
   //elfs(&self);
 
   return 0;
