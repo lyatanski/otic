@@ -222,7 +222,7 @@ void ia64_calc(file* text, u32i oper) {
     case '&': ia64_and (text, eax, edx);  break;
     case '|': ia64_or  (text, eax, edx);  break;
     case '^': ia64_xor (text, eax, edx);  break;
-    case '~': ia64_aext(text, not, edx);  break;     // TODO singe operand
+    case '~': ia64_aext(text, not, eax);  break;
     case '<': ia64_shft(text, shl, eax, edx); break; // TODO src is wrong
     case '>': ia64_shft(text, shr, eax, edx); break; // TODO src is wrong
   }
