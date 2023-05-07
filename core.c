@@ -255,13 +255,20 @@ void  stack(mode* self) {
   static const char* kind[] = { "base", "list", "data", "call" };
   printf("---\n");
   for(int i = 0; i < self->top; i++) {
-    printf("%02d element: %18p id:%-10.*s sz:%d %s\n", i,
-    self->pile[i].type,
-    (int)self->pile[i].name->size,
-    self->pile[i].name->name,
-    self->pile[i].size,
-    kind[self->pile[i].kind]
-    );
+    printf("%02d element: sz:%d id:%-10.*s %s", i,
+      self->pile[i].size,
+      (int)self->pile[i].name->size,
+      self->pile[i].name->name,
+      kind[self->pile[i].kind]);
+    if(self->pile[i].type) {
+      meta* t = self->pile[i].type;
+      printf(" %-10.*s\n",
+      (int)t->name->size,
+      t->name->name);
+    }
+    else {
+      printf("\n");
+    }
   }
 }
 
