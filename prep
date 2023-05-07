@@ -4,6 +4,15 @@ mkdir -p $out
 if [ ! -f $out/test.c ]; then
 echo -- creating source
 cat << EOF > $out/test.c
+int f1(int a) {
+}
+
+int f2(int b, int c) {
+}
+
+int f3(int d, int e, int f) {
+}
+
 int main() {
     if(3) return 4;
     else return 2;
@@ -27,5 +36,7 @@ do
   link="$link $dst"
 done
 
+echo "--- exec"
 gcc -o$out/tic $link && ./$out/tic -m exec $out/test.c
+echo "--- show"
 gcc -o$out/tic $link && ./$out/tic $out/test.c

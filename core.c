@@ -189,8 +189,7 @@ void  expr(mode* self) {
       case tokd('?'):      break;
       case tokd('^'): case tokd('|'): case tokd('&'):
       case tokd('+'): case tokd('-'): case tokd('*'):
-      case tokd('/'): case tokd('%'):
-        emit(self, calc, self->talk.kind); break;
+      case tokd('/'): case tokd('%'): emit(self, calc, self->talk.kind); break;
       case tokd('['):      break;
       case tokd('<'):      break;
       case tokd('>'):      break;
@@ -240,7 +239,6 @@ void  stmt(mode* self) {
     chop(self);
     skip(self, '('); expr(self); skip(self, ')');
     emit(self, when, 1);
-    emit(self, echo, puts, "foo");
     stmt(self);
   }
   else if(same(self, "return")) {
@@ -250,6 +248,20 @@ void  stmt(mode* self) {
   }
   else {
     expr(self); skip(self, ';');
+  }
+}
+
+void  stack(mode* self) {
+  static const char* kind[] = { "base", "list", "data", "call" };
+  printf("---\n");
+  for(int i = 0; i < self->top; i++) {
+    printf("%02d element: %18p id:%-10.*s sz:%d %s\n", i,
+    self->pile[i].type,
+    (int)self->pile[i].name->size,
+    self->pile[i].name->name,
+    self->pile[i].size,
+    kind[self->pile[i].kind]
+    );
   }
 }
 
@@ -278,7 +290,9 @@ void  decl(mode* self) {
 
   meta* type = self->talk.hash->data;
   if(!type || (type->kind != base && type->kind != list))
-    fail("expected type\n");
+    fail("expected type, got '%.*s'\n",
+      (int)self->talk.hash->size,
+      self->talk.hash->name);
   chop(self); // get the name
 
   seed(self, .name=self->talk.hash, .type=type);
@@ -286,19 +300,20 @@ void  decl(mode* self) {
 
   // type name "(" args ")" "{" stmt "}"     // callable decl
   if(twin(self, '(')) {
+    self->pile[self->top-1].kind = call;
     while(!twin(self, ')')) {
-      self->pile[self->top-1].kind = call;
-      chop(self);
-
       meta* type = self->talk.hash->data;
       if(!type || (type->kind != base && type->kind != list))
-        fail("expected type\n");
-
+        fail("expected param type, got %p %p '%.*s'\n",
+          self->talk.hash, type,
+          (int)self->talk.hash->size,
+          self->talk.hash->name);
       chop(self);
-      seed(self, .name=self->talk.hash, .type=type);
+      seed(self, .name=self->talk.hash, .type=type, .kind=data);
+      chop(self);
       twin(self, ',');
     }
-
+    stack(self);
     stmt(self);
   }
   else
@@ -321,16 +336,16 @@ void  make(mode* self) {
   self->text->body = self->text->head;
   self->text->tail = self->text->head + 1000;
 
-  crux(self, "void",  .size=0);
-  crux(self, "bool",  .size=1);
-  crux(self, "byte",  .size=1);
-  crux(self, "char",  .size=1);
-  crux(self, "short", .size=2);
-  crux(self, "int",   .size=4);
-  crux(self, "long",  .size=8);
+  crux(self, "void", .size=0);
+  crux(self, "bool", .size=1);
+  crux(self, "byte", .size=1);
+  crux(self, "char", .size=1);
+  crux(self, "nu16", .size=2);
+  crux(self, "int",  .size=4);
+  crux(self, "long", .size=8);
 
+  chop(self);
   do {
-    chop(self);
     decl(self);
   } while(self->talk.kind);
 

@@ -133,14 +133,11 @@ void ia64_ret(file* text) {
   ib(text, 0xc3);
 }
 
+void ia64_mend(file* text, byte* prev) { *prev = text->body - prev - 1; }
+
 void ia64_jump(file* text) {
   ib(text, 0xeb);
-  text->body++;
-}
-
-void ia64_mark(file* text) {  }
-void ia64_mend(file* text, byte* prev) {
-  *prev = text->body - prev - 1;
+  text->body++; // reserve space for distance
 }
 
 typedef enum { jo, jno, jb, jae, je, jne, jbe, ja, js, jns, jp, jnp, jl, jge, jle, jg } cond;
@@ -259,21 +256,12 @@ void ia64_body(file* text) {
   ia64_ret(text);
 }
 
-// TODO remove
-void ia64_echo2(file* text, u32i func, u32i addr) {
-  ib(text, 0xb8 + eax.reg.enc); id(text, func); // mov
-  ib(text, 0xb8 + edi.reg.enc); id(text, addr); // mov
-  ib(text, 0xff);
-  ib(text, modrm(.mod=3, .reg=2, .rm=eax.reg.enc));
-}
-
 const emit ia64 = {
   .move = (flow)ia64_move,
   .when = (flow)ia64_when,
   .jump = (flow)ia64_jump,
   .done = (flow)ia64_ret,
   .back = (flow)ia64_mend,
-  .echo = (flow)ia64_echo2,
   .calc = (flow)ia64_calc,
 };
 

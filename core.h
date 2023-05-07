@@ -78,8 +78,8 @@ typedef struct {
   emit  arch;
 
   file* text; // binary code
-  //file* data; // binary data
-  //u64i  zero; // zero initialized data
+  file* data; // binary data
+  u64i  zero; // zero initialized data
 
   poke  hold;
   poke  drop;

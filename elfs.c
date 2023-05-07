@@ -1,13 +1,11 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-static const u32i bits[] = {0, 32, 64};
-enum { bits_none, bits_32 = 1, bits_64 };
-static const char* elf_data[] = {"", "lsb", "msb"};
-enum { data_none, data_2lsb, data_2msb };
-enum { issue_current = 1 };
-enum { type_none, type_rel, type_exe, type_dyn, type_core };
-enum { arch_ia64 = 62, arch_arm8 = 183, };
+enum { eb_none, eb_cl32, eb_cl64 };
+enum { ed_none, ed_2lsb, ed_2msb };
+enum { ev_none, ev_curr };
+enum { et_none, et_relo, et_exec, et_dyno, et_core };
+enum { em_ia64 = 62, em_arm8 = 183 };
 
 typedef union {
   byte _[16];
@@ -59,8 +57,8 @@ typedef struct {
 
 //*(hdr*)(P+S) = (hdr) {
 //    .id.seal    = {0x7F, 'E', 'L', 'F'},
-//    .id.issue   = issue_current,
-//    .issue      = issue_current,
+//    .id.issue   = ev_curr,
+//    .issue      = ev_curr,
 //    .entry      = 0x400000+sizeof(hdr)+sizeof(ph##B),
 //    .phoff      = sizeof(hdr),
 //    .ehsize     = sizeof(hdr),
@@ -83,10 +81,13 @@ void elfs_sh64(mode* self) {
 }
 
 void elfs(mode* self) {
+  static const char* elf_data[] = {"", "lsb", "msb"};
+  static const u32i bits[] = {0, 32, 64};
+
   elfs_id* id = (elfs_id*)self->code->head;
   printf("bits    %d\n", bits[id->bits]);
   printf("data    %s\n", elf_data[id->data]);
 
-  if(id->bits == bits_64) elfs_sh64(self);
+  if(id->bits == eb_cl64) elfs_sh64(self);
 }
 
