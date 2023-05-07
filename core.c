@@ -328,8 +328,13 @@ void  decl(mode* self) {
     // array
     self->pile[self->top-1].kind = list;
     chop(self);
-    self->pile[self->top-1].size = self->talk.ival;
+    self->pile[self->top-1].size = self->talk.ival; // TODO error parsing size
     skip(self, ']');
+    skip(self, ';'); // XXX init?
+  }
+  else
+  while(!twin(self, ';')) {
+    chop(self);
   }
 }
 
