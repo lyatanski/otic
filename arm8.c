@@ -280,9 +280,41 @@ void arm8_pull(file* data) {
   arm8_put(data, 0xf84107e0);                                       // ldr x0, [sp], #16
 }
 
-void arm8_swap(file* data, uint32_t num) {
+void arm8_swap(file* data) {
   arm8_put(data, I3510_ORR | r0 << 16 | 31 << 5 | r1);              // mov w1, w0
-  arm8_imm(data, r0, num);
+}
+
+// ldur/stur wt, [x29, #slot]: reach 256 bytes below the frame pointer
+void arm8_slot(file* data, uint32_t inst, int rt, s32i slot) {
+  if(slot < -256) fail("frame too large: %d bytes\n", -slot);
+  arm8_put(data, 2u << 30 | inst | (slot & 0x1ff) << 12 | r29 << 5 | rt);
+}
+
+void arm8_load(file* data, s32i slot) { arm8_slot(data, I3312_LDRW, r0, slot); }
+void arm8_stor(file* data, s32i slot) { arm8_slot(data, I3312_STRW, r0, slot); }
+void arm8_peek(file* data, s32i slot) { arm8_slot(data, I3312_LDRW, r1, slot); }
+
+void arm8_parm(file* data, u32i i, s32i slot) {
+  arm8_slot(data, I3312_STRW, i, slot);                             // arguments in w0-w5
+}
+
+void arm8_args(file* data, u32i i) {
+  arm8_put(data, 0xf84107e0 | i);                                   // ldr xi, [sp], #16
+}
+
+void arm8_open(file* data) {
+  arm8_put(data, 0xa9bf7bfd);                                       // stp x29, x30, [sp, #-16]!
+  arm8_put(data, 0x910003fd);                                       // mov x29, sp
+  arm8_put(data, 0xd10003ff);                                       // sub sp, sp, #0, patched by size
+}
+
+void arm8_size(file*, byte* func, s32i size) {
+  if(size > 0xfff) fail("frame too large: %d bytes\n", size);
+  ((uint32_t*)func)[2] |= size << 10;
+}
+
+void arm8_dial(file* data) {
+  arm8_put(data, I3206_BL);                                         // bl, patched by link
 }
 
 // w0 = w0 op (cnst? num: w1), comparisons give 0 or 1
@@ -320,7 +352,13 @@ void arm8_jump(file* data) {
   arm8_put(data, I3206_B);                                          // b, patched by mend
 }
 
+void arm8_loop(file* data, byte* dest) {
+  arm8_put(data, I3206_B | (((dest - data->body) >> 2) & 0x3ffffff)); // b dest
+}
+
 void arm8_done(file* data) {
+  arm8_put(data, 0x910003bf);                                       // mov sp, x29
+  arm8_put(data, 0xa8c17bfd);                                       // ldp x29, x30, [sp], #16
   arm8_put(data, form(brur, ret, .rn=r30));                         // ret
 }
 // prev is the end of a cbz or b
@@ -366,14 +404,23 @@ void arm8_link(file*, byte* boot, byte* main) {
 
 const emit arm8 = {
   .move = (flow)arm8_move,
+  .load = (flow)arm8_load,
+  .stor = (flow)arm8_stor,
+  .peek = (flow)arm8_peek,
   .push = (flow)arm8_save,
   .pull = (flow)arm8_pull,
   .swap = (flow)arm8_swap,
   .calc = (flow)arm8_calc,
   .when = (flow)arm8_when,
   .jump = (flow)arm8_jump,
-  .done = (flow)arm8_done,
   .back = (flow)arm8_mend,
+  .loop = (flow)arm8_loop,
+  .open = (flow)arm8_open,
+  .size = (flow)arm8_size,
+  .parm = (flow)arm8_parm,
+  .args = (flow)arm8_args,
+  .dial = (flow)arm8_dial,
+  .done = (flow)arm8_done,
   .boot = (flow)arm8_boot,
   .link = (flow)arm8_link,
   .cpu  = cpu_arm8,

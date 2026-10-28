@@ -43,21 +43,28 @@ typedef struct {
 // arch
 typedef enum { cpu_ia64, cpu_arm8 } chip;
 typedef void (*flow)(file*, ...);
-// accumulator machine: acc is eax/w0, tmp is ecx/w1
+// accumulator machine: acc is eax/w0, tmp is ecx/w1, slots are frame offsets
 typedef struct {
   flow  move; // acc = n
+  flow  load; // acc = slot
+  flow  stor; // slot = acc
+  flow  peek; // tmp = slot
   flow  push; // push acc
   flow  pull; // tmp = acc, pop acc
-  flow  swap; // tmp = acc, acc = n
-  flow  calc;
-  flow  when; // branch, patched by back
-  flow  jump;
-  flow  args;
-  flow  echo;
-  flow  done;
-  flow  back;
+  flow  swap; // tmp = acc
+  flow  calc; // acc = acc op (n or tmp)
+  flow  when; // branch on acc, patched by back
+  flow  jump; // forward jump, patched by back
+  flow  back; // point a forward branch here
+  flow  loop; // jump back to an address
+  flow  open; // prologue, the frame size is patched by size
+  flow  size;
+  flow  parm; // slot = argument register i
+  flow  args; // pop argument register i
+  flow  dial; // call, patched by link
+  flow  done; // epilogue and return
   flow  boot; // entry stub: call main
-  flow  link; // point the entry stub at main
+  flow  link; // point a call at its function
   chip  cpu;  // target, each form maps it to its own machine id
 } emit;
 
@@ -84,18 +91,27 @@ typedef enum { base, list, data, call } what;
 typedef struct meta meta;
 struct meta {
   meta* type; // data link to its type
+  meta* hide; // what the name meant before, restored when the scope ends
   item* name;
   byte* addr;
-  u32i  size; // in case of list it is count of elements
+  u32i  size; // in case of list it is count of elements, of call parameters
+  s32i  slot; // frame offset of a local
   what  kind;
 };
+
+// call to a function not seen yet, patched when the run ends
+typedef struct {
+  item* name;
+  byte* at;   // NULL when the call was dropped as dead code
+  u32i  argc;
+  u64i  line;
+} fix;
 
 struct mode {
   char* name;
   char* outp; // output
   file* code; // source
   u64i  line;
-  bool  O0;   // -O0: no constant folding, every operator emits code
   word  talk; // last
   hash  pool;
   emit  arch;
@@ -110,8 +126,15 @@ struct mode {
   poke  drop;
   pack  show;
 
-  byte  top;
+  u32i  top;
   meta  pile[256];
+  s32i  slot; // frame bytes in use
+  s32i  deep; // frame bytes the function needs
+  byte* cont; // continue target, NULL outside loops
+  u32i  ends; // pending break jumps
+  byte* quit[64];
+  u32i  fixs;
+  fix   link[256];
 };
 
 void  make(mode*);

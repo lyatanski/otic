@@ -135,16 +135,21 @@ void ia64_ret(file* text) {
   ib(text, 0xc3);
 }
 
-// prev is the end of a rel8 branch
+// prev is the end of a rel32 branch
 void ia64_mend(file* text, byte* prev) {
-  s64i dist = text->body - prev;
-  if(dist > 127) fail("jump too far: %ld bytes\n", dist); // TODO rel32
-  prev[-1] = dist;
+  s32i dist = text->body - prev;
+  copy(prev - 4, &dist, sizeof(dist));
 }
 
 void ia64_jump(file* text) {
-  ib(text, 0xeb);
-  ib(text, 0); // reserve space for distance
+  ib(text, 0xe9);
+  id(text, 0); // reserve space for distance
+}
+
+void ia64_loop(file* text, byte* dest) {
+  s64i dist = dest - (text->body + 2);
+  if((int8_t)dist == dist) { ib(text, 0xeb); ib(text, dist); }
+  else                     { ib(text, 0xe9); id(text, dist - 3); }
 }
 
 typedef enum { jo, jno, jb, jae, je, jne, jbe, ja, js, jns, jp, jnp, jl, jge, jle, jg } cond;
@@ -257,28 +262,62 @@ void ia64_pull(file* text) {
   ia64_pop(text, rax);
 }
 
-void ia64_swap(file* text, s32i val) {
+void ia64_swap(file* text) {
   ia64_mov(text, ecx, eax);
-  ia64_mov(text, eax, (para){imm, .imm8 = val});
 }
 
-// TODO remove
 void ia64_when(file* text, bool nz) {
-  ia64_cmp(text, eax, (para){imm, .imm8 = 0});
-  ia64_jmpc(text, nz? jne: je, 0);
+  iw(text, 0xc085);                           // test eax, eax
+  iw(text, 0x840f + (nz << 8));               // je/jne rel32, patched by mend
+  id(text, 0);
 }
 
-// TODO remove
 void ia64_move(file* text, s32i val) {
   ia64_mov(text, eax, (para){imm, .imm8=val});
 }
 
-// TODO remove
-void ia64_body(file* text) {
+// SysV argument registers: rdi rsi rdx rcx r8 r9
+static const byte ia64_regs[] = { 7, 6, 2, 1, 8, 9 };
+
+// op r32, [rbp+slot] (8b: load) or op [rbp+slot], r32 (89: store)
+void ia64_slot(file* text, byte code, byte reg, s32i slot) {
+  bool d8 = (int8_t)slot == slot;
+  if(reg > 7) ib(text, rex(.r=1));
+  ib(text, code);
+  ib(text, modrm(.mod=d8? 1: 2, .reg=reg & 7, .rm=rbp.reg.enc));
+  if(d8) ib(text, slot);
+  else   id(text, slot);
+}
+
+void ia64_load(file* text, s32i slot) { ia64_slot(text, 0x8b, eax.reg.enc, slot); }
+void ia64_stor(file* text, s32i slot) { ia64_slot(text, 0x89, eax.reg.enc, slot); }
+void ia64_peek(file* text, s32i slot) { ia64_slot(text, 0x8b, ecx.reg.enc, slot); }
+
+void ia64_parm(file* text, u32i i, s32i slot) {
+  ia64_slot(text, 0x89, ia64_regs[i], slot);
+}
+
+void ia64_args(file* text, u32i i) {
+  if(ia64_regs[i] > 7) ib(text, rex(.b=1));
+  ib(text, 0x58 + (ia64_regs[i] & 7));        // pop reg
+}
+
+void ia64_open(file* text) {
   ia64_push(text, rbp);
-  ia64_mov(text, rbp, rsp);
-  // funtion body
-  ia64_pop(text, rbp);
+  ib(text, 0x48); iw(text, 0xe589);           // mov rbp, rsp
+  ib(text, 0x48); iw(text, 0xec81); id(text, 0); // sub rsp, imm32, patched by size
+}
+
+void ia64_size(file*, byte* func, s32i size) {
+  copy(func + 7, &size, sizeof(size));
+}
+
+void ia64_dial(file* text) {
+  ia64_call(text, (para){imm, .imm8 = 0});    // call rel32, patched by link
+}
+
+void ia64_done(file* text) {
+  ib(text, 0xc9);                             // leave
   ia64_ret(text);
 }
 
@@ -297,14 +336,23 @@ void ia64_link(file*, byte* boot, byte* main) {
 
 const emit ia64 = {
   .move = (flow)ia64_move,
+  .load = (flow)ia64_load,
+  .stor = (flow)ia64_stor,
+  .peek = (flow)ia64_peek,
   .push = (flow)ia64_save,
   .pull = (flow)ia64_pull,
   .swap = (flow)ia64_swap,
+  .calc = (flow)ia64_calc,
   .when = (flow)ia64_when,
   .jump = (flow)ia64_jump,
-  .done = (flow)ia64_ret,
   .back = (flow)ia64_mend,
-  .calc = (flow)ia64_calc,
+  .loop = (flow)ia64_loop,
+  .open = (flow)ia64_open,
+  .size = (flow)ia64_size,
+  .parm = (flow)ia64_parm,
+  .args = (flow)ia64_args,
+  .dial = (flow)ia64_dial,
+  .done = (flow)ia64_done,
   .boot = (flow)ia64_boot,
   .link = (flow)ia64_link,
   .cpu  = cpu_ia64,

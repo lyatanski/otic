@@ -140,10 +140,6 @@ static void wrap(mode* self, opts*, char* para) {
   else printf("format '%s' not supported\n", para);
 }
 
-static void slow(mode* self, opts*, char*) {
-  self->O0 = 1;
-}
-
 static void dest(mode* self, opts*, char* para) {
   self->outp = para;
   self->show = save;
@@ -183,7 +179,6 @@ int   main(int argc, char** argv) {
     {"-m", "--mode", .args = 1, .desc = "exec, ia64, arm8", .call = arch},
     {"-f", "--format", .args = 1, .desc = "elfs", .call = wrap},
     {"-o", "--output", .args = 1, .desc = "write static executable", .call = dest},
-    {"-O0", .desc = "no constant folding", .call = slow},
     {"-h", "--help", .desc = "display this help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);
