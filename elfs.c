@@ -106,7 +106,7 @@ file* elfs_pack(mode* self) {
   out->body = out->head;
   out->tail = out->head + all;
 #define put(src, size) \
-  { __builtin_memcpy(out->body, src, size); out->body += size; }
+  { out->body = copy(out->body, src, size); }
   put(&id, sizeof(id));
   put(&eh, sizeof(eh));
   put(&ph, sizeof(ph));

@@ -9,6 +9,11 @@ enum { tend, ttag, tnum };
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
 
+byte* copy(byte* dst, void* src, u64i size) {
+  for(byte* s = src; size--; *dst++ = *s++);
+  return dst;
+}
+
 item* match(item* x, char* name, u64i size) {
   if(!x->name) {
     x->name = name;

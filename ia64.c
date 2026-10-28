@@ -62,7 +62,7 @@ R(ir8, 0); R(ir9, 1); R(ir10, 2); R(ir11, 3); R(ir12, 4); R(ir13, 5); R(ir14, 6)
 
 #define BODY {                                                               \
   if(text->body + sizeof(val) > text->tail) fail("text section overflow\n"); \
-  *(typeof(val)*)text->body = val; text->body += sizeof(val); }
+  text->body = copy(text->body, &val, sizeof(val)); }
 void ib(file* text, byte val) BODY
 void iw(file* text, u16i val) BODY
 void id(file* text, u32i val) BODY
@@ -274,7 +274,8 @@ void ia64_boot(file* text) {
 }
 
 void ia64_link(file*, byte* boot, byte* main) {
-  *(s32i*)(boot + 1) = main - (boot + 5);     // call rel32 is relative to its end
+  s32i rel = main - (boot + 5);               // call rel32 is relative to its end
+  copy(boot + 1, &rel, sizeof(rel));
 }
 
 const emit ia64 = {

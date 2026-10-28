@@ -19,6 +19,8 @@ typedef  uint8_t byte;
 #define warn(...) (printf(__VA_ARGS__))
 #define fail(...) (printf(__VA_ARGS__), exit(1))
 
+byte* copy(byte* dst, void* src, u64i size); // returns dst + size
+
 // hash
 #define POOL (1 << 13)
 typedef struct {
