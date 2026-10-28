@@ -1,15 +1,6 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-#ifndef part
-#include "core.c"
-#include "ia64.c"
-#include "arm8.c"
-#include "elfs.c"
-#include "pe32.c"
-#include "mach.c"
-#endif
-
 #ifdef _WIN32
 #include <memoryapi.h>  /* for VirtualAlloc */
 #else
@@ -20,6 +11,16 @@
 #define JIT MAP_JIT     /* W^X: RWX pages must be MAP_JIT, toggled per thread */
 #else
 #define JIT 0
+#endif
+
+// after the system headers: macros of the parts (arm8.c X) clash with them
+#ifndef part
+#include "core.c"
+#include "ia64.c"
+#include "arm8.c"
+#include "elfs.c"
+#include "pe32.c"
+#include "mach.c"
 #endif
 
 extern const emit ia64;
