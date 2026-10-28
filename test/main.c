@@ -1,7 +1,7 @@
 // vim: ts=2:sw=2
 // tic's spec: each case is written to bins/ and compiled by the tic binary in
 // $TIC (default bins/one) in a child process (fail() exits, code may crash),
-// run through `-m exec` and as an executable written with `-o` (ELF, Mach-O
+// run in memory and as an executable written with `-o` (ELF, Mach-O
 // or PE). Constant operands are folded, so the cases that test generated code
 // take their operands from locals. It tests the target it is built for, which
 // must be tic's: ./check cross-builds both for arm8.
@@ -85,11 +85,11 @@ static char* tic(void) {
   return path? path: "bins/one";
 }
 
-// `tic -m exec`: the value main returned, as printed on the last line
+// `tic` alone: the value main returned, as printed on the last line
 static int  jit(void) {
   int fd[2];
   if(pipe(fd)) return odd;
-  int code = spawn(fd[1], (char*[]){tic(), "-m", "exec", src_at, NULL});
+  int code = spawn(fd[1], (char*[]){tic(), src_at, NULL});
   close(fd[1]);
   char out[256], *last = out;
   int n = read(fd[0], out, sizeof out - 1);

@@ -124,12 +124,6 @@ void  exec(mode* self) {
   printf("%d\n", return_code);
 }
 
-void  show(mode* self) {
-  for(byte* b = self->text->head; b < self->text->body; b++)
-    printf("%.2x", *b);
-  printf("\n");
-}
-
 void  save(mode* self) {
   file* out = self->form.pack(self);
   FILE* fp = fopen(self->outp, "wb");
@@ -169,8 +163,7 @@ int  scmp(char* x, char* y) {
 }
 
 static void arch(mode* self, opts*, char* para) {
-  if(!scmp(para, "exec")) self->show = exec;
-  else if(!scmp(para, "ia64")) self->arch = ia64;
+  if(!scmp(para, "ia64")) self->arch = ia64;
   else if(!scmp(para, "arm8")) self->arch = arm8;
   else printf("architecture '%s' not supported\n", para);
 }
@@ -179,7 +172,7 @@ static void wrap(mode* self, opts*, char* para) {
   if(!scmp(para, "elfs")) self->form = elfs;
   else if(!scmp(para, "mach")) self->form = mach;
   else if(!scmp(para, "pe32")) self->form = pe32;
-  else printf("format '%s' not supported\n", para);
+  else printf("form '%s' not supported\n", para);
 }
 
 static void dest(mode* self, opts*, char* para) {
@@ -212,19 +205,21 @@ int   main(int argc, char** argv) {
   mode self = {
     .hold = hold,
     .drop = drop,
-    .show = show,
+    .show = exec,
     .arch = base,
     .form = host,
   };
 
   opts args[] = {
-    {"-m", "--mode", .args = 1, .desc = "exec, ia64, arm8", .call = arch},
-    {"-f", "--format", .args = 1, .desc = "elfs, mach, pe32", .call = wrap},
-    {"-o", "--output", .args = 1, .desc = "write static executable", .call = dest},
-    {"-h", "--help", .desc = "display this help", .call = help}, {},
+    {"-a", "--arch", .args = 1, .desc = "ia64, arm8", .call = arch},
+    {"-f", "--form", .args = 1, .desc = "elfs, mach, pe32", .call = wrap},
+    {"-o", "--emit", .args = 1, .desc = "write file if set or run code if not", .call = dest},
+    {"-h", "--help", .desc = "display help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);
   if(!self.code) fail("no input file\n");
+  if(self.show == exec && self.arch.cpu != base.cpu)
+    fail("cannot run foreign code, write it with -o\n");
 
   make(&self);
   shed(self.code);

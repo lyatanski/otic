@@ -1,8 +1,8 @@
 // vim: ts=2:sw=2
 #pragma once
-#include <stdio.h>  /* FILE, printf */
-#include <stdlib.h> /* malloc, free, exit */
-#include <stdint.h> /* standard data types */
+#include <stdio.h>   /* FILE, printf */
+#include <stdlib.h>  /* malloc, free, exit */
+#include <stdint.h>  /* standard data types */
 #include <stdbool.h> /* bool before C23 */
 
 typedef uint64_t u64i;
@@ -127,7 +127,7 @@ typedef struct {
 } seat;
 
 struct mode {
-  char* name;
+  char* name; // input
   char* outp; // output
   file* code; // source
   u64i  line;
