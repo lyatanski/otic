@@ -60,7 +60,9 @@ R(ir8, 0); R(ir9, 1); R(ir10, 2); R(ir11, 3); R(ir12, 4); R(ir13, 5); R(ir14, 6)
 //byte mspe[] = {           rcx, rdx, ir8, ir9 };
 //byte elfs[] = { rdi, rsi, rdx, rcx, ir8, ir9 };
 
-#define BODY { *(typeof(val)*)text->body = val; text->body += sizeof(val); }
+#define BODY {                                                               \
+  if(text->body + sizeof(val) > text->tail) fail("text section overflow\n"); \
+  *(typeof(val)*)text->body = val; text->body += sizeof(val); }
 void ib(file* text, byte val) BODY
 void iw(file* text, u16i val) BODY
 void id(file* text, u32i val) BODY
@@ -133,11 +135,16 @@ void ia64_ret(file* text) {
   ib(text, 0xc3);
 }
 
-void ia64_mend(file* text, byte* prev) { *prev = text->body - prev - 1; }
+// prev is the end of a rel8 branch
+void ia64_mend(file* text, byte* prev) {
+  s64i dist = text->body - prev;
+  if(dist > 127) fail("jump too far: %ld bytes\n", dist); // TODO rel32
+  prev[-1] = dist;
+}
 
 void ia64_jump(file* text) {
   ib(text, 0xeb);
-  text->body++; // reserve space for distance
+  ib(text, 0); // reserve space for distance
 }
 
 typedef enum { jo, jno, jb, jae, je, jne, jbe, ja, js, jns, jp, jnp, jl, jge, jle, jg } cond;
@@ -256,6 +263,18 @@ void ia64_body(file* text) {
   ia64_ret(text);
 }
 
+// program entry: exit(main())
+void ia64_boot(file* text) {
+  ia64_call(text, (para){imm, .imm8 = 0});    // call main, patched by link
+  ib(text, 0x89); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=edi.reg.enc)); // mov edi, eax
+  ia64_mov(text, eax, (para){imm, .imm8 = 60}); // SYS_exit
+  iw(text, 0x050f);                           // syscall
+}
+
+void ia64_link(file*, byte* boot, byte* main) {
+  *(s32i*)(boot + 1) = main - (boot + 5);     // call rel32 is relative to its end
+}
+
 const emit ia64 = {
   .move = (flow)ia64_move,
   .when = (flow)ia64_when,
@@ -263,5 +282,8 @@ const emit ia64 = {
   .done = (flow)ia64_ret,
   .back = (flow)ia64_mend,
   .calc = (flow)ia64_calc,
+  .boot = (flow)ia64_boot,
+  .link = (flow)ia64_link,
+  .cpu  = cpu_ia64,
 };
 

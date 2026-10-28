@@ -2,6 +2,7 @@
 #include "core.h"
 
 enum { tend, ttag, tnum };
+#define TEXT (1 << 16)
 #define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
 #define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
@@ -36,6 +37,7 @@ item* hget(hash self, char* mark, u64i size) {
   for(u64i i = 1; !seek && i <= 10; i++)
     seek = match(self + ((i * clue) & (POOL - 1)), mark, size);
 
+  if(!seek) fail("hash pool full at '%.*s'\n", (int)size, mark);
   return seek;
 }
 
@@ -48,7 +50,7 @@ void chop(mode* self) {
   pass: switch(*(self->code->body = c)) {
     case '\n': self->line++;
     case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
-    case '#': case ',': case ';': case ':': case '?': case '~':
+    case '#': case ',': case ';': case ':': case '?': case '~': case '@':
     case '(': case ')': case '[': case ']': case '{': case '}':
       kind = tok1(c); break;
     case '=': case '!': case '*': case '%': case '^':
@@ -69,16 +71,21 @@ void chop(mode* self) {
              c[1] == '>' || c[1] == '='? tok2(c): tok1(c); break;
     case '/':
       switch(c[1]) {
-        case '/': while(*c++ != '\n'); goto pass;
-        case '*': while(c[-2] != '*' || c[-1] != '/') c++; goto pass;
+        case '/': while(*c && *c != '\n') c++; goto pass;
+        case '*':
+          for(c += 2; *c && (c[0] != '*' || c[1] != '/'); c++)
+            self->line += *c == '\n';
+          if(!*c) fail("line %ld: unterminated comment\n", self->line);
+          c += 2; goto pass;
         default: kind = (c[1] == '='? tok2(c): tok1(c));
       }
       break;
     //case '\'':
     //  kind = '"'; c+=2; break;
     case '"':
-      while(*c++ && *c != '"') {
-        //if(*c == '\n' || *c == '\0') fail("unterminated string %s\n", c);
+      for(c++; *c != '"'; c++) {
+        if(!*c || *c == '\n') fail("line %ld: unterminated string\n", self->line);
+        if(*c == '\\') c++;
         //if(*c == '\\') switch (*++c) {
         //  case 'a': '\a'; break;
         //  case 'b': '\b'; break;
@@ -89,14 +96,13 @@ void chop(mode* self) {
         //  case 'r': '\r'; break;
         //  default: break;
         //}
-        c++;
       }
       c++;
       kind = '"'; break;
     case '.':
       // '.', '...' or number
       if     (c[1] == '.' && c[2] == '.') { kind = tok3(c); break; }
-      else if(c[1] <= '0' || c[1] >= '9') { kind = tok1(c); break; }
+      else if(c[1] <  '0' || c[1] >  '9') { kind = tok1(c); break; }
       // else fall trough to number
     case '0' ... '9':
       while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
@@ -118,7 +124,8 @@ void chop(mode* self) {
       while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
          || (*c >= '0' && *c <= '9') || *c == '_') c++;
       kind = ttag; break;
-    default: break;
+    case '\0': break;
+    default: fail("line %ld: unexpected character '%c'\n", self->line, *c);
   }
 
   if(kind == '"' || kind == ttag) {
@@ -141,7 +148,7 @@ bool  twin(mode* self, int   kind) {
 
 bool  skip(mode* self, int   kind) {
   if(!twin(self, kind))
-    fail("line %ld expected %x, got %x\n", self->line+1, kind, self->talk.kind);
+    fail("line %ld expected %x, got %x\n", self->line, kind, self->talk.kind);
   return 1;
 }
 
@@ -224,13 +231,13 @@ void  stmt(mode* self) {
     chop(self);
     skip(self, '('); expr(self); skip(self, ')');
     emit(self, when, 0);
-    mark = self->text->body - 1;
+    mark = self->text->body; // end of the branch, the arch patches backwards
     stmt(self);
     if(same(self, "else")) {
       chop(self);
       emit(self, jump);
       emit(self, back, mark);
-      mark = self->text->body - 1;
+      mark = self->text->body;
       stmt(self);
     }
     emit(self, back, mark);
@@ -251,27 +258,6 @@ void  stmt(mode* self) {
   }
 }
 
-void  stack(mode* self) {
-  static const char* kind[] = { "base", "list", "data", "call" };
-  printf("---\n");
-  for(int i = 0; i < self->top; i++) {
-    printf("%02d element: sz:%d id:%-10.*s %s", i,
-      self->pile[i].size,
-      (int)self->pile[i].name->size,
-      self->pile[i].name->name,
-      kind[self->pile[i].kind]);
-    if(self->pile[i].type) {
-      meta* t = self->pile[i].type;
-      printf(" %-10.*s\n",
-      (int)t->name->size,
-      t->name->name);
-    }
-    else {
-      printf("\n");
-    }
-  }
-}
-
 #define seed(self, ...) {\
   meta x = { __VA_ARGS__ }; \
   x.name->data = self->pile+self->top; \
@@ -280,6 +266,20 @@ void  stack(mode* self) {
 #define crux(slef, str, ...) \
   seed((self), .kind = base, .name = sget((self), (str)), __VA_ARGS__)
 
+meta* sort(mode* self) {
+  meta* type = self->talk.kind == ttag? self->talk.hash->data: NULL;
+  if(!type || (type->kind != base && type->kind != list)) {
+    if(self->talk.kind == ttag)
+      fail("line %ld: expected type, got '%.*s'\n", self->line,
+        (int)self->talk.hash->size, self->talk.hash->name);
+    fail("line %ld: expected type, got %x\n", self->line, self->talk.kind);
+  }
+  chop(self);
+  if(self->talk.kind != ttag)
+    fail("line %ld: expected name, got %x\n", self->line, self->talk.kind);
+  return type;
+}
+
 void  decl(mode* self) {
   // declaration begins with type or struct or union or enum
   // "list"  name? "{" decl "}" ";"
@@ -287,41 +287,35 @@ void  decl(mode* self) {
   // "enum"  name? "{" list "}" ";"
 
   if(same(self, "list")) {
+    chop(self);
+    twin(self, ttag); // optional name
     skip(self, '{');
-    while(!twin(self, '}')) {
-      skip(self, ';');
+    while(!twin(self, '}')) { // TODO members
+      if(!self->talk.kind) fail("line %ld: unterminated list\n", self->line);
+      chop(self);
     }
-    skip(self, '}');
-  //  skip(self, ';');
+    skip(self, ';');
+    return;
   }
 
-  meta* type = self->talk.hash->data;
-  if(!type || (type->kind != base && type->kind != list))
-    fail("expected type, got '%.*s'\n",
-      (int)self->talk.hash->size,
-      self->talk.hash->name);
-  chop(self); // get the name
+  meta* type = sort(self); // get the name
 
   seed(self, .name=self->talk.hash, .type=type);
   chop(self); // get next token
 
   // type name "(" args ")" "{" stmt "}"     // callable decl
   if(twin(self, '(')) {
-    self->pile[self->top-1].kind = call;
+    meta* func = self->pile + self->top - 1;
+    func->kind = call;
     while(!twin(self, ')')) {
-      meta* type = self->talk.hash->data;
-      if(!type || (type->kind != base && type->kind != list))
-        fail("expected param type, got %p %p '%.*s'\n",
-          self->talk.hash, type,
-          (int)self->talk.hash->size,
-          self->talk.hash->name);
-      chop(self);
+      meta* type = sort(self);
       seed(self, .name=self->talk.hash, .type=type, .kind=data);
       chop(self);
       twin(self, ',');
     }
-    stack(self);
+    func->addr = self->text->body;
     stmt(self);
+    emit(self, move, 0); emit(self, done); // implicit return 0
   }
   else
   if(twin(self, '[')) {
@@ -344,9 +338,11 @@ void  make(mode* self) {
   //      | typedecl
 
   self->line = 1;
-  self->text = (file*)self->hold(0, 1024);
+  self->text = (file*)self->hold(0, TEXT);
   self->text->body = self->text->head;
-  self->text->tail = self->text->head + 1000;
+  self->text->tail = (byte*)self->text + TEXT;
+
+  emit(self, boot);
 
   crux(self, "void", .size=0);
   crux(self, "bool", .size=1);
@@ -361,7 +357,12 @@ void  make(mode* self) {
     decl(self);
   } while(self->talk.kind);
 
-  self->show(self->text);
-  self->drop(self->text, 1024);
+  meta* func = sget(self, "main")->data;
+  if(!func || func->kind != call) fail("no main function\n");
+  self->main = func->addr;
+  emit(self, link, self->text->head, self->main);
+
+  self->show(self);
+  self->drop(self->text, TEXT);
 }
 

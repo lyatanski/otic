@@ -18,6 +18,7 @@
 
 extern const emit ia64;
 extern const emit arm8;
+extern const form elfs;
 #ifdef __aarch64__
 #define base arm8
 #else // __x86_64__
@@ -26,6 +27,7 @@ extern const emit arm8;
 
 file* scan(char* name) {
   FILE* fp = fopen(name, "r");
+  if(!fp) fail("cannot open: %s\n", name);
   fseek(fp, 0, SEEK_END);
   size_t size = ftell(fp);
   rewind(fp);
@@ -34,7 +36,8 @@ file* scan(char* name) {
   if(!f) return NULL;
   f->body = f->head;
   f->tail = f->head + size;
-  fread(f->head, 1, size, fp);
+  f->head[size] = 0; // lexer stops at NUL
+  if(fread(f->head, 1, size, fp) != size) fail("read error: %s\n", name);
   fclose(fp);
   return f;
 }
@@ -74,16 +77,26 @@ void* drop(void* memory, size_t size) {
 }
 
 typedef int (*func)();
-void  exec(file* data) {
-  //prep(data->head, 0);
-  int return_code = ((func)data->head)();
+void  exec(mode* self) {
+  //prep(self->text->head, 0);
+  __builtin___clear_cache((char*)self->text->head, (char*)self->text->body);
+  int return_code = ((func)self->main)();
   printf("%d\n", return_code);
 }
 
-void  show(file* data) {
-  for(byte* b = data->head; b < data->body; b++)
+void  show(mode* self) {
+  for(byte* b = self->text->head; b < self->text->body; b++)
     printf("%.2x", *b);
   printf("\n");
+}
+
+void  save(mode* self) {
+  file* out = self->form.pack(self);
+  FILE* fp = fopen(self->outp, "wb");
+  if(!fp) fail("cannot write: %s\n", self->outp);
+  fwrite(out->head, 1, out->body - out->head, fp);
+  if(ferror(fp) | fclose(fp)) fail("write error: %s\n", self->outp);
+  shed(out);
 }
 
 typedef struct opts opts;
@@ -122,6 +135,16 @@ static void arch(mode* self, opts*, char* para) {
   else printf("architecture '%s' not supported\n", para);
 }
 
+static void wrap(mode* self, opts*, char* para) {
+  if(!scmp(para, "elfs")) self->form = elfs;
+  else printf("format '%s' not supported\n", para);
+}
+
+static void dest(mode* self, opts*, char* para) {
+  self->outp = para;
+  self->show = save;
+}
+
 static void apos(mode* self, opts*, char* para) {
   self->name = para;
   self->code = scan(self->name);
@@ -149,19 +172,20 @@ int   main(int argc, char** argv) {
     .drop = drop,
     .show = show,
     .arch = base,
+    .form = elfs,
   };
 
   opts args[] = {
     {"-m", "--mode", .args = 1, .desc = "exec, ia64, arm8", .call = arch},
+    {"-f", "--format", .args = 1, .desc = "elfs", .call = wrap},
+    {"-o", "--output", .args = 1, .desc = "write static executable", .call = dest},
     {"-h", "--help", .desc = "display this help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);
+  if(!self.code) fail("no input file\n");
 
   make(&self);
   shed(self.code);
-
-  //self.code = scan("bins/ia64.o");
-  //elfs(&self);
 
   return 0;
 }

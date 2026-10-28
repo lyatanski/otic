@@ -256,18 +256,40 @@ void arm8_emit() {
   printf("%x\n%x\n%s\n", r, e, r==e? "true": "false");
 }
 
+void arm8_put(file* data, uint32_t inst) {
+  if(data->body + 4 > data->tail) fail("text section overflow\n");
+  *(uint32_t*)data->body = inst; data->body += 4;
+}
+
 void arm8_move(file* data, uint32_t num) {
+  arm8_put(data, form(dati, movz, .imm=num & 0xffff, .rd=r0));       // movz w0, #lo
+  if(num >> 16)
+    arm8_put(data, 0x72a00000 | (num >> 16) << 5 | r0);             // movk w0, #hi, lsl 16
 }
 
 void arm8_when(file* data, uint32_t num) {
+  arm8_put(data, I3201_CBZ | r0);                                   // cbz w0, patched by mend
 }
 
-void arm8_jump(file* data, uint32_t num) {
+void arm8_jump(file* data) {
+  arm8_put(data, I3206_B);                                          // b, patched by mend
 }
 
 void arm8_done(file* data) {
+  arm8_put(data, form(brur, ret, .rn=r30));                         // ret
 }
-void arm8_mend(file* data) {
+// prev is the end of a cbz or b
+void arm8_mend(file* data, byte* prev) {
+  uint32_t* inst = (uint32_t*)prev - 1;
+  s64i dist = (data->body - (byte*)inst) >> 2;
+  if((*inst & 0xfc000000) == I3206_B) {
+    if(dist >= 1 << 25) fail("jump too far: %ld words\n", dist);
+    *inst |= dist & 0x3ffffff;
+  }
+  else {
+    if(dist >= 1 << 18) fail("jump too far: %ld words\n", dist);
+    *inst |= (dist & 0x7ffff) << 5;
+  }
 }
 
 void arm8_halt() {
@@ -286,11 +308,25 @@ void arm8_text(void* data) {
   exe[size++] = 0xd65f03c0;
 }
 
+// program entry: exit(main())
+void arm8_boot(file* data) {
+  arm8_put(data, I3206_BL);   // bl main, patched by link
+  arm8_put(data, 0xd2800ba8); // mov x8, #93 (SYS_exit)
+  arm8_put(data, 0xd4000001); // svc #0
+}
+
+void arm8_link(file*, byte* boot, byte* main) {
+  *(uint32_t*)boot = I3206_BL | (((main - boot) >> 2) & 0x3ffffff);
+}
+
 const emit arm8 = {
   .move = (flow)arm8_move,
   .when = (flow)arm8_when,
   .jump = (flow)arm8_jump,
   .done = (flow)arm8_done,
   .back = (flow)arm8_mend,
+  .boot = (flow)arm8_boot,
+  .link = (flow)arm8_link,
+  .cpu  = cpu_arm8,
 };
 
