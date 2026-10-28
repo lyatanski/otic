@@ -3,6 +3,7 @@
 #include <stdio.h>  /* FILE, printf */
 #include <stdlib.h> /* malloc, free, exit */
 #include <stdint.h> /* standard data types */
+#include <stdbool.h> /* bool before C23 */
 
 typedef uint64_t u64i;
 typedef  int64_t s64i;
