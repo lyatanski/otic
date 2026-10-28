@@ -147,6 +147,14 @@ static char* tried(char* src, int want) {
 #define expect(want, src) \
   if((error = tried(src, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
+// a module at bins/name.c, beside the cases, for link "name"
+static void module(char* name, char* src) {
+  char at[64];
+  snprintf(at, sizeof at, "bins/%s.c", name);
+  FILE* fp = fopen(at, "wb");
+  if(fp) { fputs(src, fp); fclose(fp); }
+}
+
 // 25-statement bodies: their branches are over 127 bytes on x86
 #define RET5 "return 1; return 1; return 1; return 1; return 1; "
 #define ADD5 "s += 1; s += 1; s += 1; s += 1; s += 1; "
@@ -440,6 +448,52 @@ spec(TAG) {
                  "int main() { out* p = &g; g.i[1].t[2] = 9; p->c = 3; return p->i[1].t[2] + g.c; }\n");
   }
 
+  context("link") {
+    it("calls a linked function") {
+      module("add", "int add(int a, int b) { return a + b; }\n");
+      expect(5, "link \"add\";\nint main() { return add(2, 3); }\n");
+    }
+    it("uses a linked global and struct") {
+      module("pt", "struct pt { int x; int y; };\npt org;\nint k = 4;\n");
+      expect(7, "link \"pt\";\nint main() { pt* p = &org; p->y = k; return p->y + 3; }\n");
+    }
+    it("links a module once") { // a second parse would define three() twice
+      module("one-c", "int three() { return 3; }\n");
+      module("one-a", "link \"one-c\";\nint a() { return three(); }\n");
+      module("one-b", "link \"one-c\";\nint b() { return three() * 2; }\n");
+      expect(9, "link \"one-a\";\nlink \"one-b\";\nint main() { return a() + b(); }\n");
+    }
+    it("links modules in a cycle") {
+      module("cyc-a", "link \"cyc-b\";\nint a(int n) { if(n) return b(n - 1) + 2; return 0; }\n");
+      module("cyc-b", "link \"cyc-a\";\nint b(int n) { if(n) return a(n - 1) + 1; return 0; }\n");
+      expect(6, "link \"cyc-a\";\nint main() { return a(4); }\n");
+    }
+    it("finds a module beside the one that links it") {
+      mkdir("bins/sub", 0755);
+      module("sub/out", "link \"in\";\nint out() { return in() + 1; }\n");
+      module("sub/in", "int in() { return 1; }\n");
+      expect(2, "link \"sub/out\";\nint main() { return out(); }\n");
+    }
+    it("keeps static names in their module") {
+      module("st-a", "static int n = 1;\nint a() { return get() + n; }\n"
+                     "static int get() { return 1; }\n");
+      module("st-b", "static int n = 2;\nstatic int get() { return 2; }\n"
+                     "int b() { return get() + n; }\n");
+      expect(34, "link \"st-a\";\nlink \"st-b\";\nint n = 4;\nint get() { return 8; }\n"
+                 "int main() { return a() + b() * 3 + get() * 2 + n; }\n");
+    }
+  }
+
+  context("load") { // imports are only recorded until the forms bind them
+    it("declares imports after a load")
+      expect(3, "load \"c\";\nint puts(char*);\nlong labs(long n);\n"
+                "int main() { return 3; }\n");
+    it("declares an import in two modules") {
+      module("imp", "load \"c\";\nint puts(char* s);\nint one() { return 1; }\n");
+      expect(1, "link \"imp\";\nload \"c\";\nint puts(char*);\nint main() { return one(); }\n");
+    }
+  }
+
   context("syscall") {
     linux_it("calls the kernel") // write(99, "x", 1) fails with EBADF
       expect(9, "int main() { return -syscall(" WRITE ", 99, \"x\", 1); }\n");
@@ -520,6 +574,41 @@ spec(TAG) {
       expect(bad, "struct pr { int a; int b; int c; };\nint main() { pr p; int x = 1 + p; return x; }\n");
     it("rejects a forward call to a function returning a pointer")
       expect(bad, "int g = 4;\nint main() { int* p = get(); return *p; }\nint* get() { return &g; }\n");
+    it("rejects a missing module")
+      expect(bad, "link \"none\";\nint main() { return 0; }\n");
+    it("rejects a module name that is not a string")
+      expect(bad, "link add;\nint main() { return 0; }\n");
+    it("rejects a function defined twice")
+      expect(bad, "int f() { return 1; }\nint f() { return 2; }\nint main() { return f(); }\n");
+    it("rejects a function defined in two modules") {
+      module("dup", "int add(int a, int b) { return a - b; }\n");
+      module("add", "int add(int a, int b) { return a + b; }\n");
+      expect(bad, "link \"add\";\nlink \"dup\";\nint main() { return add(2, 3); }\n");
+    }
+    it("rejects a static name from another module") {
+      module("hid", "static int hid() { return 1; }\n");
+      expect(bad, "link \"hid\";\nint main() { return hid(); }\n");
+    }
+    it("rejects a library name that is not a string")
+      expect(bad, "load c;\nint main() { return 0; }\n");
+    it("rejects a call to an import")
+      expect(bad, "load \"c\";\nint puts(char*);\nint main() { return puts(\"x\"); }\n");
+    it("rejects a dead call to an import")
+      expect(bad, "load \"c\";\nint puts(char*);\nint main() { return 0 && puts(\"x\"); }\n");
+    it("rejects a forward call to an import")
+      expect(bad, "int main() { return puts(\"x\"); }\nload \"c\";\nint puts(char*);\n");
+    it("rejects an import from two libraries")
+      expect(bad, "load \"c\";\nint f();\nload \"m\";\nint f();\nint main() { return 0; }\n");
+    it("rejects an import with another argument count")
+      expect(bad, "load \"c\";\nint f(int);\nint f(int, int);\nint main() { return 0; }\n");
+    it("rejects a body for an import")
+      expect(bad, "load \"c\";\nint f();\nint f() { return 1; }\nint main() { return f(); }\n");
+    it("rejects an import without a load in its module") {
+      module("ld", "load \"c\";\n");
+      expect(bad, "link \"ld\";\nint puts(char*);\nint main() { return 0; }\n");
+    }
+    it("rejects a parameter without a name in a definition")
+      expect(bad, "int f(int) { return 1; }\nint main() { return 0; }\n");
     it("rejects a function without a body")
       expect(bad, "int f(int a);\nint main() { return 0; }\n");
   }

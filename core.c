@@ -329,6 +329,9 @@ void  bind(mode* self, byte* at, item* name, u32i argc) {
     fail("line %ld: no function '%.*s'\n", self->line, nick(name));
   if(func->size != argc)
     fail("line %ld: '%.*s' takes %d arguments, got %d\n", self->line, nick(name), func->size, argc);
+  if(!func->addr) // until the forms bind imports (step 12)
+    fail("line %ld: cannot call '%.*s', imported from %.*s\n", self->line, nick(name),
+         nick(self->libs[func->slot - 1]));
   if(at) emit(self, link, at, func->addr);
 }
 
@@ -794,7 +797,49 @@ void  stmt(mode* self) {
   self->slot = slot;
 }
 
+bool  join(mode* self, char* path, u64i size);
+
+// the string after link or load, and the ;
+item* bond(mode* self) {
+  item* s = self->talk.hash;
+  if(self->talk.kind != '"') fail("line %ld: expected a string\n", self->line);
+  chop(self);
+  skip(self, ';');
+  return s;
+}
+
 void  decl(mode* self) {
+  // load "name" ";": a shared library, the bodyless functions after it in this
+  // source file are imported from it
+  if(same(self, "load")) {
+    chop(self);
+    item* s = bond(self);
+    for(self->from = 1; self->from <= self->libn && self->libs[self->from - 1] != s; self->from++);
+    if(self->from > self->libn) {
+      if(self->libn == sizeof self->libs / sizeof *self->libs)
+        fail("line %ld: too many libraries\n", self->line);
+      self->libs[self->libn++] = s;
+    }
+    return;
+  }
+  // link "name" ";": the source name.c beside this one, parsed here once
+  if(same(self, "link")) {
+    chop(self);
+    item* s = bond(self);
+    u32i  dir = 0, n = quote(s, NULL) - 1;
+    for(u32i i = 0; self->name[i]; i++) if(self->name[i] == '/') dir = i + 1;
+    char* path = malloc(dir + n + 3);
+    if(!path) fail("out of memory\n");
+    copy((byte*)path, self->name, dir);
+    quote(s, (byte*)path + dir);
+    copy((byte*)path + dir + n, ".c", 3);
+    if(!join(self, path, dir + n + 2)) free(path);
+    return;
+  }
+  // static: the names stay in their source file
+  bool own = same(self, "static");
+  if(own) chop(self);
+
   // declaration begins with a type, or defines a struct:
   // "struct" name? "{" decl "}" ";"
   if(same(self, "struct")) {
@@ -808,19 +853,33 @@ void  decl(mode* self) {
   meta* type = term(self, base, &name);
 
   // type name "(" args ")" "{" stmt "}"     // callable decl
+  // type name "(" args ")" ";"               // import, after a load
   if(twin(self, '(')) {
-    seed(self, .name=name, .type=type, .kind=call);
+    meta* prev = name->data;
+    if(prev && prev->kind != call) prev = NULL;
+    seed(self, .name=name, .type=type, .kind=call, .own=own);
     meta* func = self->func = self->pile + self->top - 1;
     u32i  top  = self->top;
+    bool  anon = 0;
     self->slot = self->deep = 0;
-    while(!twin(self, ')')) {
-      item* name;
-      meta* type = term(self, sort(self), &name);
-      seed(self, .name=name, .type=type, .kind=data, .slot=room(self, 8));
-      twin(self, ',');
+    for(; !twin(self, ')'); func->size++, twin(self, ',')) {
+      meta* type = sort(self);
+      while(twin(self, '*')) type = href(self, type);
+      if(self->talk.kind != ttag) { anon = 1; continue; } // an import may leave it out
+      seed(self, .name=self->talk.hash, .type=type, .kind=data, .slot=room(self, 8));
+      chop(self);
     }
-    func->size = self->top - top;
     if(func->size > 6) fail("line %ld: more than 6 parameters\n", self->line);
+    if(twin(self, ';')) {
+      if(!self->from) fail("line %ld: expected function body\n", self->line);
+      if(prev && (prev->addr || prev->slot != (s32i)self->from || prev->size != func->size))
+        fail("line %ld: '%.*s' is already defined\n", self->line, nick(name));
+      func->slot = self->from;
+      bury(self, top);
+      return;
+    }
+    if(prev) fail("line %ld: '%.*s' is already defined\n", self->line, nick(name));
+    if(anon) fail("line %ld: a parameter without a name\n", self->line);
     if(self->talk.kind != '{') fail("line %ld: expected function body\n", self->line);
     func->addr = self->text->body;
     emit(self, open);
@@ -836,10 +895,52 @@ void  decl(mode* self) {
   for(type = full(self, type, name);; type = noun(self, base, &name)) {
     u32i off = lay(self, type->size, self->talk.kind != '=');
     if(twin(self, '=')) seal(self, type, self->data->head + off, 0);
-    seed(self, .name=name, .type=type, .kind=glob, .slot=off);
+    seed(self, .name=name, .type=type, .kind=glob, .slot=off, .own=own);
     if(!twin(self, ',')) break;
   }
   skip(self, ';');
+}
+
+// bind the forward calls from fix `from` on whose function is known: the rest
+// stay pending, or fail when all sources are parsed (last)
+void  tie(mode* self, u32i from, bool last) {
+  u32i keep = from;
+  for(fix* f = self->link + from; f < self->link + self->fixs; f++) {
+    meta* func = f->name->data;
+    if(!last && (!func || func->kind != call)) { self->link[keep++] = *f; continue; }
+    self->line = f->line;
+    bind(self, f->at, f->name, f->argc);
+    if(wide(func->type)) // its result was taken as an int
+      fail("line %ld: '%.*s' does not return an int, define it before the call\n",
+           self->line, nick(f->name));
+  }
+  self->fixs = keep;
+}
+
+// parse the source file at path into the pass, unless it is already in: 1 when
+// it was. When it ends, its forward calls to functions now known are bound, its
+// static names hidden, and the last load is forgotten. The pool points into the source, so it is kept
+bool  join(mode* self, char* path, u64i size) {
+  if(hget(self->pool, path, size)->name != path) return 0;
+  char* name = self->name;
+  file* code = self->code;
+  u64i  line = self->line;
+  word  talk = self->talk;
+  u32i  top  = self->top, fixs = self->fixs, from = self->from;
+  self->from = 0;
+  self->name = path;
+  self->code = scan(path);
+  self->line = 1;
+  for(chop(self); self->talk.kind; ) decl(self);
+  tie(self, fixs, 0);
+  for(meta* x = self->pile + self->top; x-- > self->pile + top; )
+    if(x->own && x->name->data == x) x->name->data = x->hide;
+  self->name = name;
+  self->code = code;
+  self->line = line;
+  self->talk = talk;
+  self->from = from;
+  return 1;
 }
 
 void  make(mode* self) {
@@ -867,18 +968,10 @@ void  make(mode* self) {
   crux(self, "int",  .size=4);
   crux(self, "long", .size=8);
 
-  chop(self);
-  do {
-    decl(self);
-  } while(self->talk.kind);
-
-  for(fix* f = self->link; f < self->link + self->fixs; f++) {
-    self->line = f->line;
-    bind(self, f->at, f->name, f->argc);
-    if(wide(((meta*)f->name->data)->type)) // its result was taken as an int
-      fail("line %ld: '%.*s' does not return an int, define it before the call\n",
-           self->line, nick(f->name));
-  }
+  u64i size = 0;
+  while(self->name[size]) size++;
+  join(self, self->name, size);
+  tie(self, 0, 1);
 
   meta* func = sget(self, "main")->data;
   if(!func || func->kind != call) fail("no main function\n");

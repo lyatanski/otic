@@ -183,7 +183,6 @@ static void dest(mode* self, opts*, char* para) {
 
 static void apos(mode* self, opts*, char* para) {
   self->name = para;
-  self->code = scan(self->name);
 }
 
 static void parse(mode* self, opts* opt, int argc, char** argv, move call) {
@@ -218,12 +217,11 @@ int   main(int argc, char** argv) {
     {"-h", "--help", .desc = "display help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);
-  if(!self.code) fail("no input file\n");
+  if(!self.name) fail("no input file\n");
   if(self.show == exec && self.arch.cpu != base.cpu)
     fail("cannot run foreign code, write it with -o\n");
 
   make(&self);
-  shed(self.code);
 
   return 0;
 }

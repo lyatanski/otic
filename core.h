@@ -108,8 +108,10 @@ struct meta {
   byte* addr;
   u32i  size; // bytes of a type, parameters of a call
   s32i  slot; // frame offset of a local, data offset of a global, offset of a
-              // member, alignment of a list
+              // member, alignment of a list, 1 + the library of an import
+              // (a call without addr)
   what  kind;
+  bool  own;  // static: the name is hidden when its source file ends
 };
 
 // call to a function not seen yet, patched when the run ends
@@ -127,9 +129,9 @@ typedef struct {
 } seat;
 
 struct mode {
-  char* name; // input
+  char* name; // input, then the source file being parsed
   char* outp; // output
-  file* code; // source
+  file* code; // source being parsed
   u64i  line;
   word  talk; // last
   hash  pool;
@@ -160,8 +162,12 @@ struct mode {
   seat  aims[1024];
   u32i  defn;
   meta  defs[512]; // pointer, array and struct types, members
+  u32i  from; // 1 + the library of the last load in this source file, 0: none
+  u32i  libn;
+  item* libs[16]; // shared libraries named by load, as string literals
 };
 
+file* scan(char* name); // a source file, NUL terminated
 void  make(mode*);
 void  dock(mode*, u64i at); // lay data out at text + at, bss after it
 
