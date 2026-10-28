@@ -217,57 +217,67 @@ void ia64_shft(file* text, shft op, para dst, para src) {
   else {
     ib(text, (imm == src.type? 0xc0: 0xd2) | bits(.size=(size > 1))); // d3: by cl
     ib(text, modrm(.mod=3, .reg=op, .rm=dst.reg.enc));
-    if(imm == src.type) ib(text, src.imm8 & 31);
+    if(imm == src.type) ib(text, src.imm8); // the cpu takes it mod 32, or 64
   }
 }
 
-// eax = eax op (cnst? val: ecx), comparisons give 0 or 1
+// eax = eax op (cnst? val: ecx), comparisons give 0 or 1; rax, rcx when WIDE.
+// A constant keeps ecx unless op divides.
 void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
-  para src = ecx;
-  if(cnst) {
-    src = (para){imm, .imm8 = val};
-    if(op == '*' || op == '/' || op == '%') { ia64_mov(text, ecx, src); src = ecx; }
-  }
-  switch(op) {
-    case '+': ia64_add(text, eax, src); break;
-    case '-': ia64_sub(text, eax, src); break;
-    case '&': ia64_and(text, eax, src); break;
-    case '|': ia64_or (text, eax, src); break;
-    case '^': ia64_xor(text, eax, src); break;
-    case '*': // imul eax, ecx
-      iw(text, 0xaf0f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=ecx.reg.enc)); break;
-    case '/': case '%':
-      ib(text, 0x99);                // cdq
-      ia64_aext(text, sdiv, ecx);    // idiv ecx
-      if(op == '%') ia64_mov(text, eax, edx);
+  bool w = op & WIDE;
+  para src = cnst? (para){imm, .imm8 = val}: ecx;
+#define W if(w) ib(text, rex(.w=1))
+  switch(op & ~WIDE) {
+    case '+': W; ia64_add(text, eax, src); break;
+    case '-': W; ia64_sub(text, eax, src); break;
+    case '&': W; ia64_and(text, eax, src); break;
+    case '|': W; ia64_or (text, eax, src); break;
+    case '^': W; ia64_xor(text, eax, src); break;
+    case '*': W; // imul eax, eax, imm32 or imul eax, ecx
+      if(cnst) { ib(text, 0x69); ib(text, modrm(.mod=3)); id(text, val); }
+      else { iw(text, 0xaf0f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=ecx.reg.enc)); }
       break;
-    case tokd('<', '<'): ia64_shft(text, shl, eax, src); break;
-    case tokd('>', '>'): ia64_shft(text, sar, eax, src); break;
+    case '/': case '%':
+      if(cnst) { W; ib(text, 0xc7); ib(text, modrm(.mod=3, .rm=ecx.reg.enc)); id(text, val); }
+      W; ib(text, 0x99);             // cdq, cqo
+      W; ia64_aext(text, sdiv, ecx); // idiv ecx
+      if((op & ~WIDE) == '%') { W; ia64_mov(text, eax, edx); }
+      break;
+    case tokd('<', '<'): W; ia64_shft(text, shl, eax, src); break;
+    case tokd('>', '>'): W; ia64_shft(text, sar, eax, src); break;
     default: { // comparison: cmp; setcc al; movzx eax, al
+      op &= ~WIDE;
       cond cc = op == tokd('=', '=')? je: op == tokd('!', '=')? jne:
                 op == '<'? jl: op == tokd('<', '=')? jle: op == '>'? jg: jge;
-      ia64_cmp(text, eax, src);
+      W; ia64_cmp(text, eax, src);
       iw(text, 0x900f + (cc << 8)); ib(text, modrm(.mod=3, .rm=eax.reg.enc));
       iw(text, 0xb60f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=eax.reg.enc));
     }
   }
+#undef  W
+}
+
+void ia64_cast(file* text, bool wide) {
+  if(wide) ib(text, rex(.w=1)), ib(text, 0x63);    // movsxd rax, eax
+  else     ib(text, 0x89);                         // mov eax, eax
+  ib(text, modrm(.mod=3));
 }
 
 void ia64_save(file* text) {
   ia64_push(text, rax);
 }
 
+void ia64_swap(file* text) {
+  ib(text, rex(.w=1)); ia64_mov(text, ecx, eax); // mov rcx, rax
+}
+
 void ia64_pull(file* text) {
-  ia64_mov(text, ecx, eax);
+  ia64_swap(text);
   ia64_pop(text, rax);
 }
 
-void ia64_swap(file* text) {
-  ia64_mov(text, ecx, eax);
-}
-
 void ia64_when(file* text, bool nz) {
-  iw(text, 0xc085);                           // test eax, eax
+  ib(text, rex(.w=1)); iw(text, 0xc085);      // test rax, rax
   iw(text, 0x840f + (nz << 8));               // je/jne rel32, patched by mend
   id(text, 0);
 }
@@ -279,22 +289,52 @@ void ia64_move(file* text, s32i val) {
 // SysV argument registers: rdi rsi rdx rcx r8 r9
 static const byte ia64_regs[] = { 7, 6, 2, 1, 8, 9 };
 
-// op r32, [rbp+slot] (8b: load) or op [rbp+slot], r32 (89: store)
-void ia64_slot(file* text, byte code, byte reg, s32i slot) {
+// mov reg, [base+disp] (a narrow load zero extends) or mov [base+disp], reg,
+// of size bytes; base is rax or rbp
+void ia64_disp(file* text, bool store, u32i size, byte reg, byte base, s32i disp) {
+  bool d8 = (int8_t)disp == disp;
+  byte mod = base == rbp.reg.enc || disp? d8? 1: 2: 0;
+  if(store && size == 2) ib(text, 0x66);
+  if(size == 8 || reg > 7) ib(text, rex(.w=size == 8, .r=reg > 7));
+  if(!store && size < 4) iw(text, size == 1? 0xb60f: 0xb70f); // movzx
+  else ib(text, (size == 1? 0x88: 0x89) | !store << 1);
+  ib(text, modrm(.mod=mod, .reg=reg & 7, .rm=base));
+  if(mod == 1) ib(text, disp);
+  if(mod == 2) id(text, disp);
+}
+
+void ia64_load(file* text, s32i slot, u32i size) { ia64_disp(text, 0, size, 0, 5, slot); }
+void ia64_stor(file* text, s32i slot, u32i size) { ia64_disp(text, 1, size, 0, 5, slot); }
+void ia64_peek(file* text, s32i slot, u32i size) { ia64_disp(text, 0, size, 1, 5, slot); }
+void ia64_read(file* text, u32i size)            { ia64_disp(text, 0, size, 0, 0, 0); }
+
+void ia64_fill(file* text, u32i size) {
+  ia64_disp(text, 1, size, 1, 0, 0);
+  ib(text, rex(.w=1)); ia64_mov(text, eax, ecx); // mov rax, rcx
+}
+
+void ia64_addr(file* text, s32i slot) {
   bool d8 = (int8_t)slot == slot;
-  if(reg > 7) ib(text, rex(.r=1));
-  ib(text, code);
-  ib(text, modrm(.mod=d8? 1: 2, .reg=reg & 7, .rm=rbp.reg.enc));
+  ib(text, rex(.w=1)); ib(text, 0x8d);          // lea rax, [rbp+slot]
+  ib(text, modrm(.mod=d8? 1: 2, .rm=rbp.reg.enc));
   if(d8) ib(text, slot);
   else   id(text, slot);
 }
 
-void ia64_load(file* text, s32i slot) { ia64_slot(text, 0x8b, eax.reg.enc, slot); }
-void ia64_stor(file* text, s32i slot) { ia64_slot(text, 0x89, eax.reg.enc, slot); }
-void ia64_peek(file* text, s32i slot) { ia64_slot(text, 0x8b, ecx.reg.enc, slot); }
+void ia64_glob(file* text) {
+  ib(text, rex(.w=1)); ib(text, 0x8d);          // lea rax, [rip+rel32], patched by site
+  ib(text, modrm(.rm=rbp.reg.enc));
+  id(text, 0);
+}
+
+void ia64_site(file*, byte* glob, s64i dist) {
+  s32i rel = dist - 7;                          // relative to the end of the lea
+  if(rel != dist - 7) fail("data too far\n");
+  copy(glob + 3, &rel, sizeof(rel));
+}
 
 void ia64_parm(file* text, u32i i, s32i slot) {
-  ia64_slot(text, 0x89, ia64_regs[i], slot);
+  ia64_disp(text, 1, 8, ia64_regs[i], 5, slot);
 }
 
 void ia64_args(file* text, u32i i) {
@@ -310,6 +350,17 @@ void ia64_open(file* text) {
 
 void ia64_size(file*, byte* func, s32i size) {
   copy(func + 7, &size, sizeof(size));
+}
+
+// Linux syscall: number in rax, arguments in rdi rsi rdx r10 r8 r9
+void ia64_trap(file* text, u32i argc) {
+  static const byte regs[] = { 7, 6, 2, 10, 8, 9 };
+  for(u32i i = argc; --i; ) {
+    if(regs[i - 1] > 7) ib(text, rex(.b=1));
+    ib(text, 0x58 + (regs[i - 1] & 7));         // pop reg
+  }
+  ia64_pop(text, rax);
+  iw(text, 0x050f);                             // syscall
 }
 
 void ia64_dial(file* text) {
@@ -339,9 +390,15 @@ const emit ia64 = {
   .load = ia64_load,
   .stor = ia64_stor,
   .peek = ia64_peek,
+  .addr = ia64_addr,
+  .glob = ia64_glob,
+  .site = ia64_site,
+  .read = ia64_read,
+  .fill = ia64_fill,
   .push = ia64_save,
   .pull = ia64_pull,
   .swap = ia64_swap,
+  .cast = ia64_cast,
   .calc = ia64_calc,
   .when = ia64_when,
   .jump = ia64_jump,
@@ -352,6 +409,7 @@ const emit ia64 = {
   .parm = ia64_parm,
   .args = ia64_args,
   .dial = ia64_dial,
+  .trap = ia64_trap,
   .done = ia64_done,
   .boot = ia64_boot,
   .link = ia64_link,

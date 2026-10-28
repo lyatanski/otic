@@ -42,17 +42,24 @@ typedef struct {
 
 // arch
 typedef enum { cpu_ia64, cpu_arm8 } chip;
+#define WIDE (1 << 24) // calc op flag: on 64 bits, for pointers and long
 // typed slots: a variadic pointer would pass the arguments on the stack on
 // Apple arm64, where the encoders read them from registers
 typedef struct {
   void (*move)(file*, s32i n);                     // acc = n
-  void (*load)(file*, s32i slot);                  // acc = slot
-  void (*stor)(file*, s32i slot);                  // slot = acc
-  void (*peek)(file*, s32i slot);                  // tmp = slot
+  void (*load)(file*, s32i slot, u32i size);       // acc = slot, 1, 2, 4 or 8 bytes
+  void (*stor)(file*, s32i slot, u32i size);       // slot = acc
+  void (*peek)(file*, s32i slot, u32i size);       // tmp = slot
+  void (*addr)(file*, s32i slot);                  // acc = address of slot
+  void (*glob)(file*);                             // acc = address of data, patched by site
+  void (*site)(file*, byte* glob, s64i dist);      // point a glob dist bytes past itself
+  void (*read)(file*, u32i size);                  // acc = [acc]
+  void (*fill)(file*, u32i size);                  // [acc] = tmp, acc = tmp
   void (*push)(file*);                             // push acc
   void (*pull)(file*);                             // tmp = acc, pop acc
   void (*swap)(file*);                             // tmp = acc
-  void (*calc)(file*, u32i op, bool cnst, s32i n); // acc = acc op (n or tmp)
+  void (*cast)(file*, bool wide);                  // acc = acc sign extended, or its low 32 bits
+  void (*calc)(file*, u32i op, bool cnst, s32i n); // acc = acc op (n or tmp), op may be WIDE
   void (*when)(file*, bool nz);                    // branch on acc, patched by back
   void (*jump)(file*);                             // forward jump, patched by back
   void (*back)(file*, byte* prev);                 // point a forward branch here
@@ -62,6 +69,7 @@ typedef struct {
   void (*parm)(file*, u32i i, s32i slot);          // slot = argument register i
   void (*args)(file*, u32i i);                     // pop argument register i
   void (*dial)(file*);                             // call, patched by link
+  void (*trap)(file*, u32i argc);                  // pop the arguments and the number, syscall
   void (*done)(file*);                             // epilogue and return
   void (*boot)(file*);                             // entry stub: call main
   void (*link)(file*, byte* boot, byte* main);     // point a call at its function
@@ -87,15 +95,20 @@ typedef struct {
   };
 } word;
 
-typedef enum { base, list, data, call } what;
+// base and list (struct) are types, data a local, glob a global, call a function,
+// refs a pointer type, many an array type
+typedef enum { base, list, data, call, glob, refs, many } what;
 typedef struct meta meta;
 struct meta {
-  meta* type; // data link to its type
-  meta* hide; // what the name meant before, restored when the scope ends
+  meta* type; // data link to its type, what refs points to, what many holds,
+              // the first member of a list
+  meta* hide; // what the name meant before, restored when the scope ends; the
+              // next member of a list
   item* name;
   byte* addr;
-  u32i  size; // in case of list it is count of elements, of call parameters
-  s32i  slot; // frame offset of a local
+  u32i  size; // bytes of a type, parameters of a call
+  s32i  slot; // frame offset of a local, data offset of a global, offset of a
+              // member, alignment of a list
   what  kind;
 };
 
@@ -106,6 +119,12 @@ typedef struct {
   u32i  argc;
   u64i  line;
 } fix;
+
+// address of a global (data offset, or bss offset | ZERO), patched by dock
+typedef struct {
+  byte* at;
+  u32i  off;
+} seat;
 
 struct mode {
   char* name;
@@ -120,7 +139,8 @@ struct mode {
   file* text; // binary code
   byte* main; // entry of main in text
   file* data; // binary data
-  u64i  zero; // zero initialized data
+  u64i  zero; // zero initialized data (bss) bytes
+  meta* rune; // char: what a string literal points to
 
   poke  hold;
   poke  drop;
@@ -130,12 +150,18 @@ struct mode {
   meta  pile[256];
   s32i  slot; // frame bytes in use
   s32i  deep; // frame bytes the function needs
+  meta* func; // the function being compiled
   byte* cont; // continue target, NULL outside loops
   u32i  ends; // pending break jumps
   byte* quit[64];
   u32i  fixs;
   fix   link[256];
+  u32i  seats;
+  seat  aims[1024];
+  u32i  defn;
+  meta  defs[512]; // pointer, array and struct types, members
 };
 
 void  make(mode*);
+void  dock(mode*, u64i at); // lay data out at text + at, bss after it
 

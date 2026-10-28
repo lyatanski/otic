@@ -70,10 +70,17 @@ void elfs_sh64(mode* self) {
   }
 }
 
+// text, then data and bss in a second, writable segment: 64 KB apart in
+// memory so both segments start on their own page with any page size
 file* elfs_pack(mode* self) {
-  const u64i org = 0x400000;
-  const u64i top = sizeof(elfs_id) + sizeof(eh64) + sizeof(ph64);
-  const u64i all = top + (self->text->body - self->text->head);
+  const u64i org  = 0x400000;
+  const u64i code = self->text->body - self->text->head;
+  const u64i size = self->data->body - self->data->head;
+  const u64i data = (code + 15) & ~15; // data after text in the file
+  const u64i nph  = size || self->zero? 2: 1;
+  const u64i top  = sizeof(elfs_id) + sizeof(eh64) + nph * sizeof(ph64);
+  const u64i all  = top + (nph > 1? data + size: code);
+  dock(self, data + 0x10000);
 
   elfs_id id = {
     .seal   = {0x7f, 'E', 'L', 'F'},
@@ -89,29 +96,34 @@ file* elfs_pack(mode* self) {
     .phoff  = sizeof(id) + sizeof(eh),
     .ehsize = sizeof(id) + sizeof(eh),
     .phsize = sizeof(ph64),
-    .phnum  = 1,
+    .phnum  = nph,
   };
-  ph64 ph = {
+  ph64 ph[] = {{
     .type   = 1, // PT_LOAD
     .flags  = 5, // PF_R | PF_X
     .vaddr  = org,
     .paddr  = org,
-    .filesz = all,
-    .memsz  = all,
+    .filesz = top + code,
+    .memsz  = top + code,
     .align  = 0x1000,
-  };
+  }, {
+    .type   = 1,
+    .flags  = 6, // PF_R | PF_W
+    .offset = top + data,
+    .vaddr  = org + top + data + 0x10000,
+    .paddr  = org + top + data + 0x10000,
+    .filesz = size,
+    .memsz  = ((size + 15) & ~15) + self->zero,
+    .align  = 0x10000,
+  }};
 
-  file* out = malloc(sizeof(file) + all);
+  file* out = calloc(1, sizeof(file) + all);
   if(!out) fail("out of memory\n");
-  out->body = out->head;
+  out->body = out->head + all;
   out->tail = out->head + all;
-#define put(src, size) \
-  { out->body = copy(out->body, src, size); }
-  put(&id, sizeof(id));
-  put(&eh, sizeof(eh));
-  put(&ph, sizeof(ph));
-  put(self->text->head, all - top);
-#undef put
+  byte* at = copy(copy(out->head, &id, sizeof(id)), &eh, sizeof(eh));
+  copy(copy(at, ph, nph * sizeof(ph64)), self->text->head, code);
+  copy(out->head + top + data, self->data->head, size);
   return out;
 }
 

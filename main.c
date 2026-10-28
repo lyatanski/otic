@@ -101,13 +101,26 @@ typedef int (__attribute__((sysv_abi)) *func)(); // generated code clobbers rdi,
 #else
 typedef int (*func)();
 #endif
+// the image: text, then data and bss on pages of their own
 void  exec(mode* self) {
-  //prep(self->text->head, 0);
+  u64i  code = self->text->body - self->text->head;
+  u64i  at   = (code + 0x3fff) & ~0x3fff; // 16 KB: pages on any host
+  u64i  size = self->data->body - self->data->head;
+  u64i  all  = at + ((size + 15) & ~15) + self->zero;
+  byte* run  = self->hold(0, all);
+#if JIT // JIT pages turn read-only while they run: data takes plain ones
+  if(all > at && mmap(run + at, all - at, PROT_READ | PROT_WRITE,
+     MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED)
+    fail("cannot map %llu bytes\n", (unsigned long long)(all - at));
+#endif
+  dock(self, at);
+  copy(run, self->text->head, code);
+  copy(run + at, self->data->head, size);
 #if JIT
   pthread_jit_write_protect_np(1);
 #endif
-  __builtin___clear_cache((char*)self->text->head, (char*)self->text->body);
-  int return_code = ((func)self->main)();
+  __builtin___clear_cache((char*)run, (char*)run + code);
+  int return_code = ((func)(run + (self->main - self->text->head)))();
   printf("%d\n", return_code);
 }
 

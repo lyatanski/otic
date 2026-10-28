@@ -20,6 +20,7 @@ typedef union {
   uint32_t n;
 } arm8_form;
 
+#define X (1u << 31) // sf: the 64-bit form of an instruction
 #define form(FMT, OPC, ...) (FMT ## _ ## OPC | (arm8_form){.FMT={__VA_ARGS__}}.n)
 
 typedef enum {
@@ -275,27 +276,63 @@ void arm8_save(file* data) {
   arm8_put(data, 0xf81f0fe0);                                       // str x0, [sp, #-16]!
 }
 
+void arm8_swap(file* data) {
+  arm8_put(data, X | I3510_ORR | r0 << 16 | 31 << 5 | r1);          // mov x1, x0
+}
+
 void arm8_pull(file* data) {
-  arm8_put(data, I3510_ORR | r0 << 16 | 31 << 5 | r1);              // mov w1, w0
+  arm8_swap(data);
   arm8_put(data, 0xf84107e0);                                       // ldr x0, [sp], #16
 }
 
-void arm8_swap(file* data) {
-  arm8_put(data, I3510_ORR | r0 << 16 | 31 << 5 | r1);              // mov w1, w0
+void arm8_cast(file* data, bool wide) {
+  arm8_put(data, wide? 0x93407c00: I3510_ORR | r0 << 16 | 31 << 5); // sxtw x0, w0 or mov w0, w0
 }
 
-// ldur/stur wt, [x29, #slot]: reach 256 bytes below the frame pointer
-void arm8_slot(file* data, uint32_t inst, int rt, s32i slot) {
-  if(slot < -256) fail("frame too large: %d bytes\n", -slot);
-  arm8_put(data, 2u << 30 | inst | (slot & 0x1ff) << 12 | r29 << 5 | rt);
+// ldur/stur rt, [rn, #off] of size bytes, a narrow load zero extends
+void arm8_disp(file* data, uint32_t inst, u32i size, int rt, int rn, s32i off) {
+  arm8_put(data, (size == 8? 3u: size >> 1) << 30 | inst | (off & 0x1ff) << 12 | rn << 5 | rt);
 }
 
-void arm8_load(file* data, s32i slot) { arm8_slot(data, I3312_LDRW, r0, slot); }
-void arm8_stor(file* data, s32i slot) { arm8_slot(data, I3312_STRW, r0, slot); }
-void arm8_peek(file* data, s32i slot) { arm8_slot(data, I3312_LDRW, r1, slot); }
+// the slot reaches 256 bytes below the frame pointer, further through x16
+void arm8_slot(file* data, uint32_t inst, u32i size, int rt, s32i slot) {
+  if(slot < -0xfff) fail("frame too large: %d bytes\n", -slot);
+  if(slot >= -256) { arm8_disp(data, inst, size, rt, r29, slot); return; }
+  arm8_put(data, 0xd1000000 | -slot << 10 | r29 << 5 | r16);        // sub x16, x29, #-slot
+  arm8_disp(data, inst, size, rt, r16, 0);
+}
+
+void arm8_load(file* data, s32i slot, u32i size) { arm8_slot(data, I3312_LDRW, size, r0, slot); }
+void arm8_stor(file* data, s32i slot, u32i size) { arm8_slot(data, I3312_STRW, size, r0, slot); }
+void arm8_peek(file* data, s32i slot, u32i size) { arm8_slot(data, I3312_LDRW, size, r1, slot); }
+void arm8_read(file* data, u32i size)            { arm8_disp(data, I3312_LDRW, size, r0, r0, 0); }
+
+void arm8_fill(file* data, u32i size) {
+  arm8_disp(data, I3312_STRW, size, r1, r0, 0);
+  arm8_put(data, X | I3510_ORR | r1 << 16 | 31 << 5 | r0);          // mov x0, x1
+}
+
+void arm8_addr(file* data, s32i slot) {
+  if(slot < -0xfff) fail("frame too large: %d bytes\n", -slot);
+  arm8_put(data, 0xd1000000 | -slot << 10 | r29 << 5 | r0);         // sub x0, x29, #-slot
+}
+
+// x0 = pc + a 32-bit distance, patched by site
+void arm8_glob(file* data) {
+  arm8_put(data, I3406_ADR | r0);                                   // adr x0, .
+  arm8_put(data, X | dati_movz | r16);                              // movz x16, #lo
+  arm8_put(data, X | dati_movk | 1 << 21 | r16);                    // movk x16, #hi, lsl 16
+  arm8_put(data, X | I3502_ADD | r16 << 16);                        // add x0, x0, x16
+}
+
+void arm8_site(file*, byte* glob, s64i dist) {
+  if(dist >> 32) fail("data too far\n");
+  ((uint32_t*)glob)[1] |= (dist & 0xffff) << 5;
+  ((uint32_t*)glob)[2] |= (dist >> 16 & 0xffff) << 5;
+}
 
 void arm8_parm(file* data, u32i i, s32i slot) {
-  arm8_slot(data, I3312_STRW, i, slot);                             // arguments in w0-w5
+  arm8_slot(data, I3312_STRW, 8, i, slot);                          // arguments in x0-x5
 }
 
 void arm8_args(file* data, u32i i) {
@@ -313,15 +350,25 @@ void arm8_size(file*, byte* func, s32i size) {
   ((uint32_t*)func)[2] |= size << 10;
 }
 
+// Linux syscall: number in x8, arguments in x0-x5
+void arm8_trap(file* data, u32i argc) {
+  for(u32i i = argc; --i; ) arm8_put(data, 0xf84107e0 | (i - 1));  // ldr xi, [sp], #16
+  arm8_put(data, 0xf84107e0 | r8);                                  // ldr x8, [sp], #16
+  arm8_put(data, 0xd4000001);                                       // svc #0
+}
+
 void arm8_dial(file* data) {
   arm8_put(data, I3206_BL);                                         // bl, patched by link
 }
 
-// w0 = w0 op (cnst? num: w1), comparisons give 0 or 1
+// w0 = w0 op (cnst? num: w1), comparisons give 0 or 1; x0, x1 when WIDE.
+// A constant goes through x16 and keeps x1.
 void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
-  if(cnst) arm8_imm(data, r1, num);
-  uint32_t w1 = r1 << 16;                                           // rd = rn = w0
-  switch(op) {
+  int rm = cnst? r16: r1;
+  uint32_t w1 = (op & WIDE? X: 0) | rm << 16;                      // rd = rn = w0
+  if(cnst) arm8_imm(data, rm, num);
+  if(cnst && (op & WIDE)) arm8_put(data, 0x93407c00 | rm << 5 | rm); // sxtw x16, w16
+  switch(op & ~WIDE) {
     case '+': arm8_put(data, I3502_ADD  | w1); break;
     case '-': arm8_put(data, I3502_SUB  | w1); break;
     case '&': arm8_put(data, I3510_AND  | w1); break;
@@ -336,6 +383,7 @@ void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
     case tokd('<', '<'): arm8_put(data, I3508_LSLV | w1); break;
     case tokd('>', '>'): arm8_put(data, I3508_ASRV | w1); break;
     default: { // comparison: cmp w0, w1; cset w0, cc
+      op &= ~WIDE;
       arm8_cond cc = op == tokd('=', '=')? COND_EQ: op == tokd('!', '=')? COND_NE:
                      op == '<'? COND_LT: op == tokd('<', '=')? COND_LE: op == '>'? COND_GT: COND_GE;
       arm8_put(data, I3502_SUBS | w1 | 31);
@@ -345,7 +393,7 @@ void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
 }
 
 void arm8_when(file* data, bool nz) {
-  arm8_put(data, (nz? I3201_CBNZ: I3201_CBZ) | r0);                 // cb(n)z w0, patched by mend
+  arm8_put(data, X | (nz? I3201_CBNZ: I3201_CBZ) | r0);             // cb(n)z x0, patched by mend
 }
 
 void arm8_jump(file* data) {
@@ -407,9 +455,15 @@ const emit arm8 = {
   .load = arm8_load,
   .stor = arm8_stor,
   .peek = arm8_peek,
+  .addr = arm8_addr,
+  .glob = arm8_glob,
+  .site = arm8_site,
+  .read = arm8_read,
+  .fill = arm8_fill,
   .push = arm8_save,
   .pull = arm8_pull,
   .swap = arm8_swap,
+  .cast = arm8_cast,
   .calc = arm8_calc,
   .when = arm8_when,
   .jump = arm8_jump,
@@ -420,6 +474,7 @@ const emit arm8 = {
   .parm = arm8_parm,
   .args = arm8_args,
   .dial = arm8_dial,
+  .trap = arm8_trap,
   .done = arm8_done,
   .boot = arm8_boot,
   .link = arm8_link,

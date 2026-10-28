@@ -4,6 +4,7 @@
 // Windows executable (PE32+): Windows has no stable syscalls, so a stub after
 // the code exits through kernel32's ExitProcess, the only import:
 // exit(main()). The image has no absolute addresses and needs no relocations.
+// The writable section holds the import table, then data and bss.
 
 static const struct { u16i arch, os; } pe32_cpu[] = {
   [cpu_ia64] = {0x8664, 6}, [cpu_arm8] = {0xaa64, 10}, // Vista, Windows 10
@@ -79,7 +80,11 @@ file* pe32_pack(mode* self) {
   const u32i trva = salign, drva = trva + up(text, salign); // section addresses
   const u32i toff = head, doff = toff + up(text, falign);   // and file offsets
   const u32i iat = drva + offs(pe32_idata, bind);
-  const u32i all = doff + up(sizeof(pe32_idata), falign);
+  const u32i idat = up(sizeof(pe32_idata), 16);             // data after the imports
+  const u32i size = self->data->body - self->data->head;
+  const u32i fsz = up(idat + size, falign), vmsz = idat + up(size, 16) + self->zero;
+  const u32i all = doff + fsz;
+  dock(self, drva + idat - trva);
 
   pe32_head h = {
     .dos  = {.magic = 0x5a4d, .next = offs(pe32_head, seal)}, // "MZ"
@@ -89,7 +94,7 @@ file* pe32_pack(mode* self) {
     .opt  = {
       .magic  = 0x20b, // PE32+
       .code   = up(text, falign),
-      .data   = up(sizeof(pe32_idata), falign),
+      .data   = fsz,
       .entry  = trva + boot,
       .base   = trva,
       .org    = org,
@@ -97,7 +102,7 @@ file* pe32_pack(mode* self) {
       .falign = falign,
       .os     = {pe32_cpu[cpu].os},
       .sub    = {pe32_cpu[cpu].os},
-      .size   = drva + up(sizeof(pe32_idata), salign),
+      .size   = drva + up(vmsz, salign),
       .head   = head,
       .system = 3,      // console
       .dll    = 0x8160, // terminal server aware, NX, dynamic base, high entropy VA
@@ -108,7 +113,7 @@ file* pe32_pack(mode* self) {
     },
     .text = {".text", text, trva, up(text, falign), toff,
              .flags = 0x60000020}, // code, r-x
-    .data = {".idata", sizeof(pe32_idata), drva, up(sizeof(pe32_idata), falign), doff,
+    .data = {".data", vmsz, drva, fsz, doff,
              .flags = 0xc0000040}, // initialized data, rw-
   };
   const u32i name = drva + offs(pe32_idata, hint);
@@ -128,6 +133,7 @@ file* pe32_pack(mode* self) {
   copy(out->head + toff, self->text->head, code);
   pe32_boot(out->head + toff + boot, cpu, trva + boot, trva + (self->main - self->text->head), iat);
   copy(out->head + doff, &d, sizeof(d));
+  copy(out->head + doff + idat, self->data->head, size);
   return out;
 }
 

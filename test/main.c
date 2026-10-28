@@ -30,9 +30,16 @@
 #ifdef __aarch64__
 #define TAG "arm8"
 #define pick(x86, arm) (arm)
+#define WRITE "64"
 #else
 #define TAG "x86"
 #define pick(x86, arm) (x86)
+#define WRITE "1"
+#endif
+#ifdef __linux__ // syscall() is the Linux ABI
+#define linux_it it
+#else
+#define linux_it xit
 #endif
 
 enum { bad = INT_MIN, odd }; // compile error, no result (crash, timeout, ...)
@@ -143,6 +150,9 @@ static char* tried(char* src, int want) {
 // 25-statement bodies: their branches are over 127 bytes on x86
 #define RET5 "return 1; return 1; return 1; return 1; return 1; "
 #define ADD5 "s += 1; s += 1; s += 1; s += 1; s += 1; "
+#define ARR8 "{ int a[2]; } { int a[2]; } { int a[2]; } { int a[2]; } "\
+             "{ int a[2]; } { int a[2]; } { int a[2]; } { int a[2]; } "
+#define ARR64 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8
 
 spec(TAG) {
   context("declarations") {
@@ -157,8 +167,8 @@ spec(TAG) {
                 "int main() {\n  return 3;\n}\n");
     it("skips arrays")
       expect(6, "int arr[8];\nint main() { return 6; }\n");
-    it("skips lists")
-      expect(1, "list point { int x; int y; };\nlist { int z; };\n"
+    it("skips structs")
+      expect(1, "struct point { int x; int y; };\nstruct { int z; };\n"
                 "int main() { return 1; }\n");
   }
 
@@ -295,6 +305,14 @@ spec(TAG) {
       expect(3, "void f() { return; }\nint main() { f(); ; return 3; }\n");
     it("drops a dead call without breaking the code after it")
       expect(5, "int main() { int a = 0 && g(); return a + 5; }\nint g() { return 1; }\n");
+    it("sign extends int arguments to long parameters")
+      expect(3, "long f(long a) { return a < 0; }\n"
+                "int main() { int n = -1; return f(n) + f(-1) * 2; }\n");
+    it("sign extends int arguments in a forward call")
+      expect(1, "int main() { int n = -1; return f(n); }\nint f(long a) { return a < 0; }\n");
+    it("converts the returned value to the return type")
+      expect(3, "long f() { int n = -1; return n; }\nint g() { long v = 0x100000000; return v; }\n"
+                "int main() { long x = f(); return (x < 0) + !g() * 2; }\n");
   }
 
   context("loops") {
@@ -323,6 +341,118 @@ spec(TAG) {
     it("loops back over 127 bytes")
       expect(50, "int main() {\n  int s = 0;\n  int i = 0;\n"
                  "  while(i < 2) { " ADD5 ADD5 ADD5 ADD5 ADD5 "i += 1; }\n  return s;\n}\n");
+  }
+
+  context("globals") {
+    it("reads and writes a global")
+      expect(6, "int g;\nint main() { g = 5; return g + 1; }\n");
+    it("initializes globals")
+      expect(201, "int a = 3;\nlong b = -2;\nchar c = 200;\nint main() { return a + b + c; }\n");
+    it("shares globals between functions")
+      expect(3, "int n;\nvoid inc() { n += 1; }\nint main() { inc(); inc(); inc(); return n; }\n");
+    it("initializes global arrays, the rest is zero")
+      expect(81, "int t[4] = {1, 2, 3};\n"
+                 "int main() { return t[0] + t[1] * 10 + t[2] * 20 + t[3]; }\n");
+    it("zeroes bss")
+      expect(4, "int z[100];\nint main() {\n  int s = 0;\n"
+                "  int i = 0;\n  while(i < 100) { s += z[i]; i += 1; }\n  return s + 4;\n}\n");
+    it("keeps a large bss")
+      expect(7, "char big[1000000];\nint main() { big[999999] = 7; return big[999999] + big[0]; }\n");
+    it("declares several in one statement")
+      expect(9, "int a = 2, *p, b[2] = {3, 4};\nint main() { p = &a; return *p + b[0] + b[1]; }\n");
+  }
+
+  context("pointers") {
+    it("takes addresses and dereferences")
+      expect(7, "int main() { int a = 3; int* p = &a; *p = *p + 4; return a; }\n");
+    it("passes pointers to functions")
+      expect(9, "void set(int* p, int v) { *p = v; }\nint main() { int a; set(&a, 9); return a; }\n");
+    it("points to pointers")
+      expect(5, "int main() { int a = 1; int* p = &a; int** q = &p; **q = 5; return a; }\n");
+    it("assigns through pointers with op=")
+      expect(14, "int g = 3;\nint main() { int* p = &g; *p += 4; g *= 2; return *p; }\n");
+    it("scales pointer arithmetic")
+      expect(17, "int main() {\n  long t[3];\n  long* p = t;\n  *(p + 2) = 7;\n  p = p + 1;\n"
+                 "  return t[2] + (p - t) * 10;\n}\n");
+    it("indexes with a variable through a pointer")
+      expect(41, "int main() {\n  long t[4];\n  long* p = t;\n  int i = 3;\n  p[i] = 40;\n"
+                 "  p += 1; i -= 1;\n  return p[i] + (&t[3] - p) - 1;\n}\n");
+    it("compares pointers")
+      expect(5, "int main() {\n  int a[2];\n  int* p = a;\n  int* q = &a[1];\n"
+                "  return (p < q) + (p == q) * 2 + (q != 0) * 4 + !p * 8;\n}\n");
+    it("loads and stores 1, 2, 4 and 8 bytes")
+      expect(41, "int main() {\n  long v = 0;\n  int* i = &v; i[1] = 1;\n  char* c = &v; c[0] = 3;\n"
+                 "  nu16* h = &v; h[1] = 2;\n"
+                 "  return (v >> 32) + (v >> 16 & 0xff) * 2 + c[0] * 4 + h[0] * 8;\n}\n");
+    it("steps a void pointer by bytes")
+      expect(9, "int g;\nint main() { void* p = &g; void* q = p + 4; q -= 1; return (q - p) * 3; }\n");
+    it("truncates the value of an assignment to the target")
+      expect(44, "int main() { char c = 0; int n = 300; int x = (c = n); return x; }\n");
+    it("sign extends an int to a long")
+      expect(3, "int main() { long a = -1; int b = -2; long c = a + b; return (c == -3) + (a < 0) * 2; }\n");
+  }
+
+  context("arrays") {
+    it("indexes local arrays")
+      expect(20, "int main() {\n  int a[5];\n  int i = 0;\n  while(i < 5) { a[i] = i * i; i += 1; }\n"
+                 "  return a[2] + a[4];\n}\n");
+    it("initializes local arrays, the rest is zero")
+      expect(11, "int main() { int a[4] = {5, 6}; return a[0] + a[1] + a[2] + a[3]; }\n");
+    it("zeroes the rest of nested arrays")
+      expect(0, "void f() { int a[2][3]; a[1][2] = 77; a[0][1] = 55; }\n"
+                "int g() { int a[2][3] = {}; return a[1][2] + a[0][1]; }\n"
+                "int main() { f(); return g(); }\n");
+    it("initializes nested local arrays")
+      expect(13, "int main() { int a[3][2] = {{1, 2}, {3}}; int i = 0; int s = 0;\n"
+                 "  while(i < 3) { s += a[i][0] * 2 + a[i][1]; i += 1; }\n  return s + a[2][1] + 3; }\n");
+    it("reuses array types")
+      expect(0, "int main() { " ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 "return 0; }\n");
+    it("nests arrays")
+      expect(13, "int g[2][3];\nint main() {\n  int a[2][3];\n  a[1][2] = 4;\n  g[1][0] = 5;\n"
+                 "  int* p = a;\n  return a[1][2] + g[1][0] + p[5];\n}\n");
+    it("passes arrays to functions")
+      expect(6, "int sum(int* a, int n) {\n  int s = 0;\n"
+                "  int i = 0;\n  while(i < n) { s += a[i]; i += 1; }\n  return s;\n}\n"
+                "int main() { int a[3] = {1, 2, 3}; return sum(a, 3); }\n");
+    it("reaches locals past a large array")
+      expect(7, "int main() { int a[100]; int b = 3; a[99] = 4; return a[99] + b; }\n");
+  }
+
+  context("strings") {
+    it("puts strings in data")
+      expect(5, "int len(char* s) { int n = 0; while(s[n]) n += 1; return n; }\n"
+                "int main() { return len(\"hello\") + len(\"\"); }\n");
+    it("decodes escapes")
+      expect(243, "int main() {\n  char* s = \"a\\n\\t\\\\\\\"\\0b\";\n"
+                  "  return s[1] + s[2] + s[3] + s[4] + s[5] + s[6];\n}\n");
+    it("initializes char arrays")
+      expect(97, "char s[8] = \"abc\";\nint main() { return s[0] + s[3] + s[7]; }\n");
+    it("initializes local char arrays, the rest is zero")
+      expect(199, "void f() { char s[12]; int i = 0; while(i < 12) { s[i] = 9; i += 1; } }\n"
+                  "int main() { f(); char s[12] = \"abcdefg\"; return s[0] + s[6] + s[7] + s[11] - 1; }\n");
+  }
+
+  context("structs") {
+    it("aligns members")
+      expect(6, "struct point { char c; int x; long y; };\npoint p;\n"
+                "int main() { p.c = 1; p.x = 2; p.y = 3; return p.c + p.x + p.y; }\n");
+    it("uses struct locals and pointers")
+      expect(7, "struct pair { int a; int b; };\nint sum(pair* p) { return p->a + p->b; }\n"
+                "int main() { struct pair q; q.a = 3; q.b = 4; return sum(&q); }\n");
+    it("links nodes")
+      expect(3, "struct node { int v; node* next; };\nint main() {\n  node a; node b;\n"
+                "  a.v = 1; b.v = 2; a.next = &b; b.next = 0;\n  int s = 0;\n"
+                "  node* n = &a;\n  while(n) { s += n->v; n = n->next; }\n  return s;\n}\n");
+    it("nests structs and arrays")
+      expect(12, "struct in { int t[3]; };\nstruct out { char c; in i[2]; };\nout g;\n"
+                 "int main() { out* p = &g; g.i[1].t[2] = 9; p->c = 3; return p->i[1].t[2] + g.c; }\n");
+  }
+
+  context("syscall") {
+    linux_it("calls the kernel") // write(99, "x", 1) fails with EBADF
+      expect(9, "int main() { return -syscall(" WRITE ", 99, \"x\", 1); }\n");
+    linux_it("passes a string to the kernel")
+      expect(3, "int main() { return syscall(" WRITE ", 1, \"\", 0) + 3; }\n");
   }
 
   context("errors") {
@@ -368,6 +498,36 @@ spec(TAG) {
       expect(bad, "int main() { break; }\n");
     it("rejects continue outside a loop")
       expect(bad, "int main() { if(1) continue; }\n");
+    it("rejects dereferencing a non-pointer")
+      expect(bad, "int main() { int a; return *a; }\n");
+    it("rejects taking the address of a value")
+      expect(bad, "int main() { return &1; }\n");
+    it("rejects adding pointers")
+      expect(bad, "int main() { int* p; int* q; return p + q; }\n");
+    it("rejects assigning to an array")
+      expect(bad, "int main() { int a[2]; int b[2]; a = b; return 0; }\n");
+    it("rejects an unknown member")
+      expect(bad, "struct p { int x; };\nint main() { p v; return v.y; }\n");
+    it("rejects a struct containing itself")
+      expect(bad, "struct p { int x; p q; };\nint main() { return 0; }\n");
+    it("rejects a non-constant global initializer")
+      expect(bad, "int a = 1;\nint b = a;\nint main() { return b; }\n");
+    it("rejects a non-constant array size")
+      expect(bad, "int main() { int n = 2; int a[n]; return 0; }\n");
+    it("rejects too many initializers")
+      expect(bad, "int a[2] = {1, 2, 3};\nint main() { return 0; }\n");
+    it("rejects a string too long for its array")
+      expect(bad, "char s[3] = \"abc\";\nint main() { return 0; }\n");
+    it("rejects a local string too long for its array")
+      expect(bad, "int main() { char s[3] = \"abc\"; return 0; }\n");
+    it("rejects too many nested local initializers")
+      expect(bad, "int main() { int a[2][2] = {{1, 2, 3}}; return 0; }\n");
+    it("rejects a void variable")
+      expect(bad, "int main() { void v; return 0; }\n");
+    it("rejects a struct operand")
+      expect(bad, "struct pr { int a; int b; int c; };\nint main() { pr p; int x = 1 + p; return x; }\n");
+    it("rejects a forward call to a function returning a pointer")
+      expect(bad, "int g = 4;\nint main() { int* p = get(); return *p; }\nint* get() { return &g; }\n");
     it("rejects a function without a body")
       expect(bad, "int f(int a);\nint main() { return 0; }\n");
   }

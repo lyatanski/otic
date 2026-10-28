@@ -2,9 +2,10 @@
 #include "core.h"
 
 // macOS executable: dyld calls main through LC_MAIN and exits with its result
-// through libSystem, so the boot stub (a Linux syscall) is never run. arm64
-// macOS only runs signed code: an ad-hoc signature, a SHA-256 of each 4 KB
-// page before it, ends the file.
+// through libSystem, so the boot stub (a Linux syscall) is never run. Data and
+// bss follow text in __DATA, on a page of their own. arm64 macOS only runs
+// signed code: an ad-hoc signature, a SHA-256 of each 4 KB page before it,
+// ends the file.
 
 enum { mh_magic = 0xfeedfacf, mh_exec = 2 };
 enum { mh_noundefs = 0x1, mh_dyldlink = 0x4, mh_twolevel = 0x80, mh_pie = 0x200000 };
@@ -28,7 +29,7 @@ typedef struct {
 // every load command, in file order: none needs padding
 typedef struct {
   struct { u32i magic, cpu, sub, type, ncmds, size, flags, rsvd; } mh;
-  seg64 zero, text; sec64 code; seg64 link;
+  seg64 zero, text; sec64 code; seg64 data, link;
   struct { u32i cmd, size, symoff, nsyms, stroff, strsize; } syms;
   struct { u32i cmd, size, rest[18]; } dsym;
   struct { u32i cmd, size, name; char path[20]; } dyld;
@@ -89,28 +90,33 @@ file* mach_pack(mode* self) {
   const u64i org = 0x100000000, page = 0x4000; // arm64 pages are 16 KB
   const u64i top = sizeof(mach_head);
   const u64i code = self->text->body - self->text->head;
-  const u64i text = (top + code + page - 1) & ~(page - 1); // __TEXT, then the signature
-  const u32i slots = text >> 12;
+  const u64i text = (top + code + page - 1) & ~(page - 1); // __TEXT, __DATA, the signature
+  const u64i size = self->data->body - self->data->head;
+  const u64i vmsz = (((size + 15) & ~15) + self->zero) / page * page + page;
+  const u64i link = text + ((size + page - 1) & ~(page - 1));
+  const u32i slots = link >> 12;
   const u32i cdsz = 88 + sizeof(mach_name) + 32 * slots;
   const u32i sign = (20 + cdsz + 15) & ~15;
-  const u64i all = text + sign;
+  const u64i all = link + sign;
+  dock(self, text - top);
 
   mach_head h = {
     .mh   = {mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_exec,
-             10, sizeof(h) - sizeof(h.mh), mh_noundefs | mh_dyldlink | mh_twolevel | mh_pie},
+             11, sizeof(h) - sizeof(h.mh), mh_noundefs | mh_dyldlink | mh_twolevel | mh_pie},
     .zero = {lc_segment, sizeof(seg64), "__PAGEZERO", .vmsz = org},
     .text = {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", org, text, 0, text,
              5, 5, 1}, // r-x
     .code = {"__text", "__TEXT", org + top, code, top, 2, .flags = 0x80000400}, // instructions
-    .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text, (sign + page - 1) & ~(page - 1),
-             text, sign, 1, 1}, // r--
-    .syms = {lc_symtab, sizeof(h.syms), text, 0, text, 0},
+    .data = {lc_segment, sizeof(seg64), "__DATA", org + text, vmsz, text, size, 3, 3}, // rw-
+    .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text + vmsz, (sign + page - 1) & ~(page - 1),
+             link, sign, 1, 1}, // r--
+    .syms = {lc_symtab, sizeof(h.syms), link, 0, link, 0},
     .dsym = {lc_dysymtab, sizeof(h.dsym)},
     .dyld = {lc_dylinker, sizeof(h.dyld), 12, "/usr/lib/dyld"},
     .main = {lc_main, sizeof(h.main), top + (self->main - self->text->head)},
     .build = {lc_build, sizeof(h.build), 1, 0xb0000, 0xb0000}, // macOS 11.0
     .libs = {lc_dylib, sizeof(h.libs), 24, 2, 0x10000, 0x10000, "/usr/lib/libSystem.B.dylib"},
-    .sign = {lc_signature, sizeof(h.sign), text, sign},
+    .sign = {lc_signature, sizeof(h.sign), link, sign},
   };
 
   file* out = calloc(1, sizeof(file) + all);
@@ -118,16 +124,17 @@ file* mach_pack(mode* self) {
   out->body = out->head + all;
   out->tail = out->head + all;
   copy(copy(out->head, &h, top), self->text->head, code);
+  copy(out->head + text, self->data->head, size);
 
   // super blob holding one code directory (version 0x20400), big-endian
   u32i blob[] = {
     0xfade0cc0, sign, 1, 0, 20,
     0xfade0c02, cdsz, 0x20400, 0x20002, // adhoc, linker signed
-    88 + sizeof(mach_name), 88, 0, slots, text, // hashes, identifier, code limit
+    88 + sizeof(mach_name), 88, 0, slots, link, // hashes, identifier, code limit
     0x2002000c, 0, 0, 0, 0, // SHA-256, 4 KB pages
     0, 0, 0, 0, 0, text, 0, 1, // code limit 64, exec segment base, limit, main binary
   };
-  byte* at = out->head + text;
+  byte* at = out->head + link;
   for(u32i i = 0; i < sizeof(blob) / sizeof(*blob); i++) at = be32(at, blob[i]);
   at = copy(at, (void*)mach_name, sizeof(mach_name));
   for(u32i i = 0; i < slots; i++, at += 32) sha256(out->head + ((u64i)i << 12), 1 << 12, at);
