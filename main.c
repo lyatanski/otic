@@ -15,6 +15,12 @@
 #else
 #include <sys/mman.h>   /* for mmap         */
 #endif
+#if defined(__APPLE__) && defined(__aarch64__)
+#include <pthread.h>    /* for pthread_jit_write_protect_np */
+#define JIT MAP_JIT     /* W^X: RWX pages must be MAP_JIT, toggled per thread */
+#else
+#define JIT 0
+#endif
 
 extern const emit ia64;
 extern const emit arm8;
@@ -52,9 +58,14 @@ void* hold(void* memory, size_t size) {
     MEM_COMMIT | MEM_RESERVE,
     PAGE_READWRITE);
 #else
-  return mmap(memory, size,
+  memory = mmap(memory, size,
     PROT_READ | PROT_WRITE | PROT_EXEC,
-    MAP_ANONYMOUS | MAP_PRIVATE, /*fd=*/-1, /*offset=*/0);
+    MAP_ANONYMOUS | MAP_PRIVATE | JIT, /*fd=*/-1, /*offset=*/0);
+  if(memory == MAP_FAILED) fail("cannot map %zu bytes\n", size);
+#if JIT
+  pthread_jit_write_protect_np(0); // writable until exec
+#endif
+  return memory;
 #endif
   return NULL;
 }
@@ -79,6 +90,9 @@ void* drop(void* memory, size_t size) {
 typedef int (*func)();
 void  exec(mode* self) {
   //prep(self->text->head, 0);
+#if JIT
+  pthread_jit_write_protect_np(1);
+#endif
   __builtin___clear_cache((char*)self->text->head, (char*)self->text->body);
   int return_code = ((func)self->main)();
   printf("%d\n", return_code);

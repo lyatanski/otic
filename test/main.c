@@ -66,6 +66,7 @@ static int  jit(void) {
   return sscanf(last, "%d", &value) == 1? value: odd;
 }
 
+#ifdef __linux__ // -o writes ELF only: no Mach-O or PE yet
 // `tic -o`: the written executable's exit code
 static int  elf(void) {
   int null = open("/dev/null", O_WRONLY);
@@ -77,6 +78,7 @@ static int  elf(void) {
   code = spawn(1, (char*[]){exe_at, NULL}, 1);
   return code < 0? odd: code;
 }
+#endif
 
 static char* shown(int value, char* buf) {
   if(value == bad) return "error";
@@ -99,7 +101,9 @@ static char* tried(char* src, int want) {
   char w[16], g[16];
   int got = jit();
   char* how = "exec";
+#ifdef __linux__
   if(got == want) { got = elf(); how = "elf"; }
+#endif
   if(got == want) return NULL;
   snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s"),
            how, shown(want, w), shown(got, g));
