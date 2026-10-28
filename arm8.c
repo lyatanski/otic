@@ -261,15 +261,59 @@ void arm8_put(file* data, uint32_t inst) {
   *(uint32_t*)data->body = inst; data->body += 4;
 }
 
-void arm8_move(file* data, uint32_t num) {
-  arm8_put(data, form(dati, movz, .imm=num & 0xffff, .rd=r0));       // movz w0, #lo
+void arm8_imm(file* data, int rd, uint32_t num) {
+  arm8_put(data, form(dati, movz, .imm=num & 0xffff, .rd=rd));      // movz wd, #lo
   if(num >> 16)
-    arm8_put(data, 0x72a00000 | (num >> 16) << 5 | r0);             // movk w0, #hi, lsl 16
+    arm8_put(data, 0x72a00000 | (num >> 16) << 5 | rd);             // movk wd, #hi, lsl 16
 }
 
-void arm8_when(file* data, uint32_t num) {
-  (void)num;
-  arm8_put(data, I3201_CBZ | r0);                                   // cbz w0, patched by mend
+void arm8_move(file* data, uint32_t num) {
+  arm8_imm(data, r0, num);
+}
+
+void arm8_save(file* data) {
+  arm8_put(data, 0xf81f0fe0);                                       // str x0, [sp, #-16]!
+}
+
+void arm8_pull(file* data) {
+  arm8_put(data, I3510_ORR | r0 << 16 | 31 << 5 | r1);              // mov w1, w0
+  arm8_put(data, 0xf84107e0);                                       // ldr x0, [sp], #16
+}
+
+void arm8_swap(file* data, uint32_t num) {
+  arm8_put(data, I3510_ORR | r0 << 16 | 31 << 5 | r1);              // mov w1, w0
+  arm8_imm(data, r0, num);
+}
+
+// w0 = w0 op (cnst? num: w1), comparisons give 0 or 1
+void arm8_calc(file* data, uint32_t op, bool cnst, uint32_t num) {
+  if(cnst) arm8_imm(data, r1, num);
+  uint32_t w1 = r1 << 16;                                           // rd = rn = w0
+  switch(op) {
+    case '+': arm8_put(data, I3502_ADD  | w1); break;
+    case '-': arm8_put(data, I3502_SUB  | w1); break;
+    case '&': arm8_put(data, I3510_AND  | w1); break;
+    case '|': arm8_put(data, I3510_ORR  | w1); break;
+    case '^': arm8_put(data, I3510_EOR  | w1); break;
+    case '*': arm8_put(data, I3509_MADD | w1 | 31 << 10); break;   // mul w0, w0, w1
+    case '/': arm8_put(data, I3508_SDIV | w1); break;
+    case '%':
+      arm8_put(data, I3508_SDIV | w1 | r2);                         // sdiv w2, w0, w1
+      arm8_put(data, I3509_MSUB | w1 | r2 << 5);                    // msub w0, w2, w1, w0
+      break;
+    case tokd('<', '<'): arm8_put(data, I3508_LSLV | w1); break;
+    case tokd('>', '>'): arm8_put(data, I3508_ASRV | w1); break;
+    default: { // comparison: cmp w0, w1; cset w0, cc
+      arm8_cond cc = op == tokd('=', '=')? COND_EQ: op == tokd('!', '=')? COND_NE:
+                     op == '<'? COND_LT: op == tokd('<', '=')? COND_LE: op == '>'? COND_GT: COND_GE;
+      arm8_put(data, I3502_SUBS | w1 | 31);
+      arm8_put(data, I3506_CSINC | 31 << 16 | (cc ^ 1) << 12 | 31 << 5 | r0);
+    }
+  }
+}
+
+void arm8_when(file* data, bool nz) {
+  arm8_put(data, (nz? I3201_CBNZ: I3201_CBZ) | r0);                 // cb(n)z w0, patched by mend
 }
 
 void arm8_jump(file* data) {
@@ -322,6 +366,10 @@ void arm8_link(file*, byte* boot, byte* main) {
 
 const emit arm8 = {
   .move = (flow)arm8_move,
+  .push = (flow)arm8_save,
+  .pull = (flow)arm8_pull,
+  .swap = (flow)arm8_swap,
+  .calc = (flow)arm8_calc,
   .when = (flow)arm8_when,
   .jump = (flow)arm8_jump,
   .done = (flow)arm8_done,

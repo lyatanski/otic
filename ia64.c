@@ -80,7 +80,7 @@ void ia64_pop(file* text, para dst) {
 }
 
 void ia64_mov(file* text, para dst, para src) {
-  int size = 1;
+  int size = 4;
   if(size > 4) ib(text, rex(.w=1));
 
   bool swap = 0;
@@ -171,10 +171,11 @@ void ia64_aext(file* text, aext op, para src) {
 
 typedef enum { add, or, adc, sbb, and, sub, xor, cmp } calc;
 void ia64_ical(file* text, calc op, para dst, para src) {
-  int size = 4;
-  ib(text, 0x80 | bits(.rm=1, .size=(size > 1)));
+  bool imm1 = (int8_t)src.imm4 == src.imm4;
+  ib(text, imm1? 0x83: 0x81); // sign-extended imm8 or imm32
   ib(text, modrm(.mod=3, .reg=op, .rm=dst.reg.enc));
-  ib(text, src.imm8);
+  if(imm1) ib(text, src.imm4);
+  else     id(text, src.imm4);
 }
 
 #define calc(op, code)                                                        \
@@ -185,7 +186,7 @@ void ia64_##op(file* text, para dst, para src) {                              \
     ia64_ical(text, op, dst, src);                                            \
   }                                                                           \
   else {                                                                      \
-    ib(text, code | bits(.rm=1, .size=(size > 1)));                           \
+    ib(text, code | bits(.rm=0, .size=(size > 1)));   /* dst op= src */     \
     ib(text, modrm(.mod=3, .reg=src.reg.enc, .rm=dst.reg.enc));               \
   }                                                                           \
 }
@@ -209,50 +210,66 @@ void ia64_shft(file* text, shft op, para dst, para src) {
     ib(text, modrm(.mod=3, .reg=op, .rm=dst.reg.enc));
   }
   else {
-    ib(text, 0xc0 | bits(.size=(size > 1)));
+    ib(text, (imm == src.type? 0xc0: 0xd2) | bits(.size=(size > 1))); // d3: by cl
     ib(text, modrm(.mod=3, .reg=op, .rm=dst.reg.enc));
-    if(imm == src.type) ib(text, src.imm8);
-  }
-  // d3 for cl?
-}
-
-void ia64_calc(file* text, u32i oper) {
-  switch(oper) {
-    case '+': ia64_add (text, eax, edx);  break;
-    case '-': ia64_sub (text, eax, edx);  break;
-    case '*': ia64_aext(text, smul, edx); break;
-    case '/': ia64_aext(text, sdiv, edx); break;
-    case '%': ia64_aext(text, sdiv, edx); ia64_mov(text, eax, edx); break;
-    case '&': ia64_and (text, eax, edx);  break;
-    case '|': ia64_or  (text, eax, edx);  break;
-    case '^': ia64_xor (text, eax, edx);  break;
-    case '~': ia64_aext(text, not, eax);  break;
-    case '<': ia64_shft(text, shl, eax, edx); break; // TODO src is wrong
-    case '>': ia64_shft(text, shr, eax, edx); break; // TODO src is wrong
+    if(imm == src.type) ib(text, src.imm8 & 31);
   }
 }
 
-void ia64_diff(file* text, char oper, para dst, para src) {
-  (void)text; (void)dst; (void)src;
-  switch(oper) {
-    case '=': break;
-    case '!': break;
-    case '<': break;
-    case '>': break;
-    case 'g': break;
-    case 'l': break;
+// eax = eax op (cnst? val: ecx), comparisons give 0 or 1
+void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
+  para src = ecx;
+  if(cnst) {
+    src = (para){imm, .imm8 = val};
+    if(op == '*' || op == '/' || op == '%') { ia64_mov(text, ecx, src); src = ecx; }
   }
+  switch(op) {
+    case '+': ia64_add(text, eax, src); break;
+    case '-': ia64_sub(text, eax, src); break;
+    case '&': ia64_and(text, eax, src); break;
+    case '|': ia64_or (text, eax, src); break;
+    case '^': ia64_xor(text, eax, src); break;
+    case '*': // imul eax, ecx
+      iw(text, 0xaf0f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=ecx.reg.enc)); break;
+    case '/': case '%':
+      ib(text, 0x99);                // cdq
+      ia64_aext(text, sdiv, ecx);    // idiv ecx
+      if(op == '%') ia64_mov(text, eax, edx);
+      break;
+    case tokd('<', '<'): ia64_shft(text, shl, eax, src); break;
+    case tokd('>', '>'): ia64_shft(text, sar, eax, src); break;
+    default: { // comparison: cmp; setcc al; movzx eax, al
+      cond cc = op == tokd('=', '=')? je: op == tokd('!', '=')? jne:
+                op == '<'? jl: op == tokd('<', '=')? jle: op == '>'? jg: jge;
+      ia64_cmp(text, eax, src);
+      iw(text, 0x900f + (cc << 8)); ib(text, modrm(.mod=3, .rm=eax.reg.enc));
+      iw(text, 0xb60f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=eax.reg.enc));
+    }
+  }
+}
+
+void ia64_save(file* text) {
+  ia64_push(text, rax);
+}
+
+void ia64_pull(file* text) {
+  ia64_mov(text, ecx, eax);
+  ia64_pop(text, rax);
+}
+
+void ia64_swap(file* text, s32i val) {
+  ia64_mov(text, ecx, eax);
+  ia64_mov(text, eax, (para){imm, .imm8 = val});
 }
 
 // TODO remove
-void ia64_when(file* text, u32i cond) {
-  (void)cond;
+void ia64_when(file* text, bool nz) {
   ia64_cmp(text, eax, (para){imm, .imm8 = 0});
-  ia64_jmpc(text, je, 0);
+  ia64_jmpc(text, nz? jne: je, 0);
 }
 
 // TODO remove
-void ia64_move(file* text, u32i val) {
+void ia64_move(file* text, s32i val) {
   ia64_mov(text, eax, (para){imm, .imm8=val});
 }
 
@@ -280,6 +297,9 @@ void ia64_link(file*, byte* boot, byte* main) {
 
 const emit ia64 = {
   .move = (flow)ia64_move,
+  .push = (flow)ia64_save,
+  .pull = (flow)ia64_pull,
+  .swap = (flow)ia64_swap,
   .when = (flow)ia64_when,
   .jump = (flow)ia64_jump,
   .done = (flow)ia64_ret,

@@ -3,8 +3,6 @@
 
 enum { tend, ttag, tnum };
 #define TEXT (1 << 16)
-#define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
-#define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
@@ -160,71 +158,132 @@ bool  skip(mode* self, int   kind) {
 int rank(int op) {
   switch (op) {
     default:                                                      return  0;
-    case '?':                                                     return  3;
-    case tokd('|', '|'):                                          return  4;
-    case tokd('&', '&'):                                          return  5;
-    case '|':                                                     return  6;
-    case '^':                                                     return  7;
-    case '&':                                                     return  8;
-    case tokd('=', '='): case tokd('!', '='):                     return  9;
-    case '<': case tokd('<', '='): case '>': case tokd('>', '='): return 10;
-    case '+': case '-':                                           return 11;
-    case '*': case '/': case '%':                                 return 12;
+    case tokd('|', '|'):                                          return  1;
+    case tokd('&', '&'):                                          return  2;
+    case '|':                                                     return  3;
+    case '^':                                                     return  4;
+    case '&':                                                     return  5;
+    case tokd('=', '='): case tokd('!', '='):                     return  6;
+    case '<': case tokd('<', '='): case '>': case tokd('>', '='): return  7;
+    case tokd('<', '<'): case tokd('>', '>'):                     return  8;
+    case '+': case '-':                                           return  9;
+    case '*': case '/': case '%':                                 return 10;
   }
 }
 
 #define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
-void  expr(mode* self) {
-  u32i rank = 0xffff;
 
-  switch(self->talk.kind) {
-    case tnum:
-      emit(self, move, self->talk.ival);
+// deferred operand: code is emitted only when the value must be in acc
+typedef enum { vacc, vnum } vkind; // TODO local, global
+typedef struct { vkind kind; s32i ival; } oper;
+#define cnst(n) ((oper){vnum, (n)})
+#define acc     ((oper){vacc, 0})
+
+oper  load(mode* self, oper x) {
+  if(x.kind == vnum) emit(self, move, x.ival);
+  return acc;
+}
+
+// int arithmetic as the targets do it: 32-bit wrap, shift count mod 32
+s32i  fold(u32i op, s32i a, s32i b) {
+  u32i x = a, y = b;
+  switch(op) {
+    case '+':            return x + y;
+    case '-':            return x - y;
+    case '*':            return x * y;
+    case '/':            return (s64i)a / b; // 64-bit: INT_MIN / -1 must not trap
+    case '%':            return (s64i)a % b;
+    case '&':            return a & b;
+    case '|':            return a | b;
+    case '^':            return a ^ b;
+    case tokd('<', '<'): return x << (y & 31);
+    case tokd('>', '>'): return a >> (y & 31);
+    case '<':            return a <  b;
+    case tokd('<', '='): return a <= b;
+    case '>':            return a >  b;
+    case tokd('>', '='): return a >= b;
+    case tokd('=', '='): return a == b;
+    default:             return a != b;
+  }
+}
+
+oper  expr(mode* self, int least);
+
+oper  unit(mode* self) {
+  u32i op = self->talk.kind;
+  oper x;
+  switch(op) {
+    case tnum: x = cnst(self->talk.ival); chop(self); return x;
+    case '(':  chop(self); x = expr(self, 1); skip(self, ')'); return x;
+    case '-': case '!': case '~':
       chop(self);
-    break;
-    case '"':
-    break;
-    case ttag:
-    case tokd('('): /* type cast     */ skip(self, ')'); break;
-    //case tokd('*'): /* pointer deref */ break;
-    case tokd('@'): /* pointer deref */ break;
-    case tokd('&'): /* address of    */ break;
-    break;
-    //case tokd('['):      break;
+      x = unit(self);
+      if(x.kind == vnum && !self->O0)
+        return cnst(op == '-'? (s32i)-(u32i)x.ival: op == '!'? !x.ival: ~x.ival);
+      load(self, x);
+      if(op == '-') { emit(self, swap, 0); emit(self, calc, '-', 0, 0); }
+      else emit(self, calc, op == '!'? tokd('=', '='): '^', 1, op == '!'? 0: -1);
+      return acc;
     default:
-      fail("expr unexpected %x\n", self->talk.kind);
+      fail("line %ld: expected expression, got %x\n", self->line, op);
   }
+}
 
-  while(self->talk.kind >= rank) {
-    switch(self->talk.kind) {
-      case tokd('='):      break;
-      case tokd('?'):      break;
-      case tokd('^'): case tokd('|'): case tokd('&'):
-      case tokd('+'): case tokd('-'): case tokd('*'):
-      case tokd('/'): case tokd('%'): emit(self, calc, self->talk.kind); break;
-      case tokd('['):      break;
-      case tokd('<'):      break;
-      case tokd('>'):      break;
-      case tokd('<', '='): break;
-      case tokd('>', '='): break;
-      case tokd('!', '='): break;
-      case tokd('=', '='): break;
-      case tokd('<', '<'): emit(self, calc, '<'); break;
-      case tokd('>', '>'): emit(self, calc, '>'); break;
-      case tokd('+', '+'): break;
-      case tokd('-', '-'): break;
-      case tokd('|', '|'): break;
-      case tokd('&', '&'): break;
+// x && y, x || y: y runs only when x does not decide, the result is 0 or 1
+oper  both(mode* self, u32i op, oper x, int r) {
+  bool  any  = op == tokd('|', '|'); // the value of x that decides
+  byte* mark = self->text->body;
+  oper  y;
+  if(x.kind == vnum && !self->O0) {
+    y = expr(self, r + 1);
+    if(!x.ival != any) { self->text->body = mark; return cnst(any); } // y is dead
+    if(y.kind == vnum) return cnst(!!y.ival);
+    emit(self, calc, tokd('!', '='), 1, 0);
+    return acc;
+  }
+  load(self, x);
+  emit(self, when, any);
+  mark = self->text->body;
+  load(self, expr(self, r + 1));
+  emit(self, calc, tokd('!', '='), 1, 0);
+  emit(self, jump);
+  emit(self, back, mark);
+  mark = self->text->body;
+  emit(self, move, any);
+  emit(self, back, mark);
+  return acc;
+}
 
-      case tokd('('):
-        // function call
-        while(!twin(self, ')')) {
-          //expr(Assign);
-        }
-        break;
-      default: fail("error %x", self->talk.kind); break;
+// precedence climbing over binary operators of rank >= least
+oper  expr(mode* self, int least) {
+  oper x = unit(self);
+  for(u32i op, r; (r = rank(op = self->talk.kind)) >= (u32i)least; ) {
+    chop(self);
+    if(op == tokd('&', '&') || op == tokd('|', '|')) { x = both(self, op, x, r); continue; }
+
+    byte* mark = self->text->body;
+    if(x.kind == vacc) emit(self, push); // y may need acc
+    oper y = expr(self, r + 1);
+    if(y.kind == vnum) {
+      bool trap = (op == '/' || op == '%') && !y.ival; // left to run time
+      if(x.kind == vnum && !self->O0 && !trap) { x.ival = fold(op, x.ival, y.ival); continue; }
+      self->text->body = mark; // y emitted nothing: drop the push
+      load(self, x);
+      emit(self, calc, op, 1, y.ival);
     }
+    else {
+      if(x.kind == vnum) emit(self, swap, x.ival);
+      else               emit(self, pull);
+      emit(self, calc, op, 0, 0);
+    }
+    x = acc;
   }
+  return x;
+}
+
+// value of a full expression in acc
+void  eval(mode* self) {
+  load(self, expr(self, 1));
 }
 
 void  stmt(mode* self) {
@@ -234,7 +293,7 @@ void  stmt(mode* self) {
   else if(same(self, "if")) {
     byte* mark = NULL;
     chop(self);
-    skip(self, '('); expr(self); skip(self, ')');
+    skip(self, '('); eval(self); skip(self, ')');
     emit(self, when, 0);
     mark = self->text->body; // end of the branch, the arch patches backwards
     stmt(self);
@@ -249,17 +308,17 @@ void  stmt(mode* self) {
   }
   else if(same(self, "while")) {
     chop(self);
-    skip(self, '('); expr(self); skip(self, ')');
-    emit(self, when, 1);
+    skip(self, '('); eval(self); skip(self, ')');
+    emit(self, when, 0); // TODO loop back, patch the exit
     stmt(self);
   }
   else if(same(self, "return")) {
     chop(self);
-    expr(self); skip(self, ';');
-    emit(self, done, 1);
+    eval(self); skip(self, ';');
+    emit(self, done);
   }
   else {
-    expr(self); skip(self, ';');
+    expr(self, 1); skip(self, ';');
   }
 }
 

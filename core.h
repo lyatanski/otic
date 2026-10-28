@@ -19,6 +19,10 @@ typedef  uint8_t byte;
 #define warn(...) (printf(__VA_ARGS__))
 #define fail(...) (printf(__VA_ARGS__), exit(1))
 
+// token kinds: up to three characters packed, e.g. tokd('<', '=')
+#define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
+#define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
+
 byte* copy(byte* dst, void* src, u64i size); // returns dst + size
 
 // hash
@@ -39,15 +43,19 @@ typedef struct {
 // arch
 typedef enum { cpu_ia64, cpu_arm8 } chip;
 typedef void (*flow)(file*, ...);
+// accumulator machine: acc is eax/w0, tmp is ecx/w1
 typedef struct {
-  flow  move;
-  flow  when;
+  flow  move; // acc = n
+  flow  push; // push acc
+  flow  pull; // tmp = acc, pop acc
+  flow  swap; // tmp = acc, acc = n
+  flow  calc;
+  flow  when; // branch, patched by back
   flow  jump;
   flow  args;
   flow  echo;
   flow  done;
   flow  back;
-  flow  calc;
   flow  boot; // entry stub: call main
   flow  link; // point the entry stub at main
   chip  cpu;  // target, each form maps it to its own machine id
@@ -87,6 +95,7 @@ struct mode {
   char* outp; // output
   file* code; // source
   u64i  line;
+  bool  O0;   // -O0: no constant folding, every operator emits code
   word  talk; // last
   hash  pool;
   emit  arch;
