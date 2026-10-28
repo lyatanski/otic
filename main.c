@@ -214,7 +214,7 @@ int   main(int argc, char** argv) {
   opts args[] = {
     {"-a", "--arch", .args = 1, .desc = "ia64, arm8", .call = arch},
     {"-f", "--form", .args = 1, .desc = "elfs, mach, pe32", .call = wrap},
-    {"-o", "--emit", .args = 1, .desc = "write file if set or run code if not", .call = dest},
+    {"-o", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
     {"-h", "--help", .desc = "display help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);

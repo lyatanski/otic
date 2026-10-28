@@ -129,7 +129,6 @@ void chop(mode* self) {
 
   if(kind == '"' || kind == ttag) {
     self->talk.hash = hget(self->pool, (char*)self->code->body, c - self->code->body);
-    //printf("hash %p %.*s\n", self->talk.hash, c - self->code->body, self->code->body);
   }
   else
     self->talk.ival = kind == tnum? ival: 0;

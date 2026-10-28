@@ -56,20 +56,6 @@ typedef struct {
   u32i type, flags; u64i offset, vaddr, paddr, filesz, memsz, align;
 } ph64;
 
-void elfs_sh64(mode* self) {
-  eh64* ehdr = (eh64*)(self->code->head + sizeof(elfs_id));
-  sh64* sect = (sh64*)(self->code->head + ehdr->shoff);
-  for(u16i i = 0; i < ehdr->shnum; i++) {
-    printf("[%2d] %4ld %s\n", i, sect[i].size, self->code->head + sect[ehdr->shstr].offset + sect[i].name);
-    if(sect[i].type == SHT_SYMTAB) {
-      sym64* sym = (sym64*)(self->code->head + sect[i].offset);
-      for(u64i j = 0, all = sect[i].size / sect[i].entsize; j < all; j++) {
-        printf("  [%2ld] %4ld %s\n", j, sym[j].size, self->code->head + sect[sect[i].link].offset + sym[j].name);
-      }
-    }
-  }
-}
-
 // text, then data and bss in a second, writable segment: 64 KB apart in
 // memory so both segments start on their own page with any page size
 file* elfs_pack(mode* self) {

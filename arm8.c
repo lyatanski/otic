@@ -248,15 +248,6 @@ typedef enum {
   DMB_ST          = 0x00000200,
 } arm8_inst;
 
-void arm8_emit() {
-  printf("armv8\n");
-  printf("%x\n", form(dati, movz, .imm=42, .rd=0));
-  printf("%x\n", form(brur, ret, .rn=r30));
-  uint32_t r = form(brur, ret, .rn=r30);
-  uint32_t e = 0xd65f03c0;
-  printf("%x\n%x\n%s\n", r, e, r==e? "true": "false");
-}
-
 void arm8_put(file* data, uint32_t inst) {
   if(data->body + 4 > data->tail) fail("text section overflow\n");
   *(uint32_t*)data->body = inst; data->body += 4;
@@ -421,22 +412,6 @@ void arm8_mend(file* data, byte* prev) {
     if(dist >= 1 << 18) fail("jump too far: %ld words\n", dist);
     *inst |= (dist & 0x7ffff) << 5;
   }
-}
-
-void arm8_halt() {
-  printf("%x\n", 0xd65f03c0);
-}
-
-void arm8_text(void* data) {
-  uint32_t* exe = data;
-  int size = 0;
-
-  //mov  w0, #42
-  exe[size++] = form(dati, movz, .imm=42, .rd=0);
-
-  //ret
-  //exe[size++] = form(brur, ret, .rn=r30);
-  exe[size++] = 0xd65f03c0;
 }
 
 // program entry: exit(main())
