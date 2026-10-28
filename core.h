@@ -42,29 +42,29 @@ typedef struct {
 
 // arch
 typedef enum { cpu_ia64, cpu_arm8 } chip;
-typedef void (*flow)(file*, ...);
-// accumulator machine: acc is eax/w0, tmp is ecx/w1, slots are frame offsets
+// typed slots: a variadic pointer would pass the arguments on the stack on
+// Apple arm64, where the encoders read them from registers
 typedef struct {
-  flow  move; // acc = n
-  flow  load; // acc = slot
-  flow  stor; // slot = acc
-  flow  peek; // tmp = slot
-  flow  push; // push acc
-  flow  pull; // tmp = acc, pop acc
-  flow  swap; // tmp = acc
-  flow  calc; // acc = acc op (n or tmp)
-  flow  when; // branch on acc, patched by back
-  flow  jump; // forward jump, patched by back
-  flow  back; // point a forward branch here
-  flow  loop; // jump back to an address
-  flow  open; // prologue, the frame size is patched by size
-  flow  size;
-  flow  parm; // slot = argument register i
-  flow  args; // pop argument register i
-  flow  dial; // call, patched by link
-  flow  done; // epilogue and return
-  flow  boot; // entry stub: call main
-  flow  link; // point a call at its function
+  void (*move)(file*, s32i n);                     // acc = n
+  void (*load)(file*, s32i slot);                  // acc = slot
+  void (*stor)(file*, s32i slot);                  // slot = acc
+  void (*peek)(file*, s32i slot);                  // tmp = slot
+  void (*push)(file*);                             // push acc
+  void (*pull)(file*);                             // tmp = acc, pop acc
+  void (*swap)(file*);                             // tmp = acc
+  void (*calc)(file*, u32i op, bool cnst, s32i n); // acc = acc op (n or tmp)
+  void (*when)(file*, bool nz);                    // branch on acc, patched by back
+  void (*jump)(file*);                             // forward jump, patched by back
+  void (*back)(file*, byte* prev);                 // point a forward branch here
+  void (*loop)(file*, byte* dest);                 // jump back to an address
+  void (*open)(file*);                             // prologue, the frame size is patched by size
+  void (*size)(file*, byte* func, s32i size);
+  void (*parm)(file*, u32i i, s32i slot);          // slot = argument register i
+  void (*args)(file*, u32i i);                     // pop argument register i
+  void (*dial)(file*);                             // call, patched by link
+  void (*done)(file*);                             // epilogue and return
+  void (*boot)(file*);                             // entry stub: call main
+  void (*link)(file*, byte* boot, byte* main);     // point a call at its function
   chip  cpu;  // target, each form maps it to its own machine id
 } emit;
 

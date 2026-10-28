@@ -267,7 +267,7 @@ void arm8_imm(file* data, int rd, uint32_t num) {
     arm8_put(data, 0x72a00000 | (num >> 16) << 5 | rd);             // movk wd, #hi, lsl 16
 }
 
-void arm8_move(file* data, uint32_t num) {
+void arm8_move(file* data, s32i num) {
   arm8_imm(data, r0, num);
 }
 
@@ -318,7 +318,7 @@ void arm8_dial(file* data) {
 }
 
 // w0 = w0 op (cnst? num: w1), comparisons give 0 or 1
-void arm8_calc(file* data, uint32_t op, bool cnst, uint32_t num) {
+void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
   if(cnst) arm8_imm(data, r1, num);
   uint32_t w1 = r1 << 16;                                           // rd = rn = w0
   switch(op) {
@@ -403,26 +403,26 @@ void arm8_link(file*, byte* boot, byte* main) {
 }
 
 const emit arm8 = {
-  .move = (flow)arm8_move,
-  .load = (flow)arm8_load,
-  .stor = (flow)arm8_stor,
-  .peek = (flow)arm8_peek,
-  .push = (flow)arm8_save,
-  .pull = (flow)arm8_pull,
-  .swap = (flow)arm8_swap,
-  .calc = (flow)arm8_calc,
-  .when = (flow)arm8_when,
-  .jump = (flow)arm8_jump,
-  .back = (flow)arm8_mend,
-  .loop = (flow)arm8_loop,
-  .open = (flow)arm8_open,
-  .size = (flow)arm8_size,
-  .parm = (flow)arm8_parm,
-  .args = (flow)arm8_args,
-  .dial = (flow)arm8_dial,
-  .done = (flow)arm8_done,
-  .boot = (flow)arm8_boot,
-  .link = (flow)arm8_link,
+  .move = arm8_move,
+  .load = arm8_load,
+  .stor = arm8_stor,
+  .peek = arm8_peek,
+  .push = arm8_save,
+  .pull = arm8_pull,
+  .swap = arm8_swap,
+  .calc = arm8_calc,
+  .when = arm8_when,
+  .jump = arm8_jump,
+  .back = arm8_mend,
+  .loop = arm8_loop,
+  .open = arm8_open,
+  .size = arm8_size,
+  .parm = arm8_parm,
+  .args = arm8_args,
+  .dial = arm8_dial,
+  .done = arm8_done,
+  .boot = arm8_boot,
+  .link = arm8_link,
   .cpu  = cpu_arm8,
 };
 
