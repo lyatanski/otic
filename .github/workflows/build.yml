@@ -12,7 +12,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - run: gcc -Wall -Wextra -Os -o tic main.c
-      - if: runner.os != 'Windows'
-        run: gcc -Wall -Wextra -o spec test/main.c && ./spec
+      - name: Check out
+        uses: actions/checkout@v7
+      - name: Build
+        run:  gcc -Wall -Wextra -Os -o tic main.c
+      - name: Test
+        run:  gcc -Wall -Wextra -o spec test/main.c && TIC=./tic ./spec

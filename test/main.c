@@ -1,19 +1,31 @@
 // vim: ts=2:sw=2
-// tic's spec: each case is written to bins/, compiled by tic's own main in a
-// forked child (fail() exits, code may crash) and run through `-m exec` and
-// as a static executable written with `-o`. Constant operands are folded, so
-// the cases that test generated code take their operands from locals.
-// It tests the target it is built for: ./check cross-builds it for arm8.
-#define main tic
-#include "../main.c"
-#undef main
+// tic's spec: each case is written to bins/ and compiled by the tic binary in
+// $TIC (default bins/one) in a child process (fail() exits, code may crash),
+// run through `-m exec` and as an executable written with `-o` (ELF, Mach-O
+// or PE). Constant operands are folded, so the cases that test generated code
+// take their operands from locals. It tests the target it is built for, which
+// must be tic's: ./check cross-builds both for arm8.
 #include "test.h"
 
-#include <fcntl.h>    /* open */
+#include <fcntl.h>    /* open, O_BINARY */
 #include <limits.h>   /* INT_MIN */
+#include <stdlib.h>   /* getenv */
 #include <sys/stat.h> /* chmod, mkdir */
+#include <unistd.h>   /* read, close, dup2, access, unlink */
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>  /* WaitForSingleObject, TerminateProcess */
+#include <process.h>  /* _spawnv */
+#include <direct.h>   /* _mkdir */
+#define mkdir(path, mode) _mkdir(path)
+#define pipe(fd) _pipe(fd, 256, O_BINARY)
+#define NULL_DEV "NUL"
+#define EXE ".exe"
+#else
 #include <sys/wait.h> /* waitpid */
-#include <unistd.h>   /* fork, pipe, execv, alarm */
+#define NULL_DEV "/dev/null"
+#define EXE ""
+#endif
 
 #ifdef __aarch64__
 #define TAG "arm8"
@@ -27,35 +39,53 @@ enum { bad = INT_MIN, odd }; // compile error, no result (crash, timeout, ...)
 
 static char src_at[64], exe_at[64];
 
-// run tic with args, or exec args[0], in a child with stdout on fd for at
-// most 5s: the child's exit status, or -1 when it was killed
-static int  spawn(int fd, char** args, bool ext) {
+// run args[0] with stdout on fd for at most 5s: its exit status, or -1 when
+// it was killed
+#ifdef _WIN32
+static int  spawn(int fd, char** args) {
+  fflush(NULL);
+  int out = dup(1);
+  dup2(fd, 1);
+  HANDLE child = (HANDLE)_spawnv(_P_NOWAIT, args[0], (const char* const*)args);
+  dup2(out, 1);
+  close(out);
+  if(child == INVALID_HANDLE_VALUE) return -1;
+  if(WaitForSingleObject(child, 5000) != WAIT_OBJECT_0) TerminateProcess(child, ~0u);
+  WaitForSingleObject(child, INFINITE);
+  DWORD code = ~0u;
+  GetExitCodeProcess(child, &code);
+  CloseHandle(child);
+  return code > 255? -1: (int)code; // a crash exits with its NTSTATUS
+}
+#else
+static int  spawn(int fd, char** args) {
   fflush(NULL);
   pid_t pid = fork();
   if(!pid) {
-    alarm(5);
+    alarm(5); // survives execv
     dup2(fd, 1);
-    if(ext) execv(args[0], args);
-    else {
-      int argc = 0;
-      while(args[argc]) argc++;
-      exit(tic(argc, args));
-    }
+    execv(args[0], args);
     _exit(127);
   }
   int status;
   if(pid < 0 || waitpid(pid, &status, 0) < 0) return -1;
   return WIFEXITED(status)? WEXITSTATUS(status): -1;
 }
+#endif
+
+static char* tic(void) {
+  char* path = getenv("TIC");
+  return path? path: "bins/one";
+}
 
 // `tic -m exec`: the value main returned, as printed on the last line
 static int  jit(void) {
   int fd[2];
   if(pipe(fd)) return odd;
-  int code = spawn(fd[1], (char*[]){"tic", "-m", "exec", src_at, NULL}, 0);
+  int code = spawn(fd[1], (char*[]){tic(), "-m", "exec", src_at, NULL});
   close(fd[1]);
   char out[256], *last = out;
-  ssize_t n = read(fd[0], out, sizeof out - 1);
+  int n = read(fd[0], out, sizeof out - 1);
   close(fd[0]);
   if(code == 1) return bad;
   if(code || n <= 0) return odd;
@@ -66,19 +96,17 @@ static int  jit(void) {
   return sscanf(last, "%d", &value) == 1? value: odd;
 }
 
-#ifdef __linux__ // -o writes ELF only: no Mach-O or PE yet
 // `tic -o`: the written executable's exit code
-static int  elf(void) {
-  int null = open("/dev/null", O_WRONLY);
+static int  exe(void) {
+  int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
-  int code = spawn(null, (char*[]){"tic", "-o", exe_at, src_at, NULL}, 0);
+  int code = spawn(null, (char*[]){tic(), "-o", exe_at, src_at, NULL});
   close(null);
   if(code == 1) return access(exe_at, F_OK)? bad: odd; // and no executable
   if(code || chmod(exe_at, 0755)) return odd;
-  code = spawn(1, (char*[]){exe_at, NULL}, 1);
+  code = spawn(1, (char*[]){exe_at, NULL});
   return code < 0? odd: code;
 }
-#endif
 
 static char* shown(int value, char* buf) {
   if(value == bad) return "error";
@@ -91,8 +119,8 @@ static char* shown(int value, char* buf) {
 static char* tried(char* src, int want) {
   mkdir("bins", 0755);
   sprintf(src_at, "bins/" TAG "-%03zu.c", test_count);
-  sprintf(exe_at, "bins/" TAG "-%03zu", test_count);
-  FILE* fp = fopen(src_at, "w");
+  sprintf(exe_at, "bins/" TAG "-%03zu" EXE, test_count);
+  FILE* fp = fopen(src_at, "wb");
   if(!fp) return "cannot write the case to bins/";
   fputs(src, fp);
   fclose(fp);
@@ -101,9 +129,7 @@ static char* tried(char* src, int want) {
   char w[16], g[16];
   int got = jit();
   char* how = "exec";
-#ifdef __linux__
-  if(got == want) { got = elf(); how = "elf"; }
-#endif
+  if(got == want) { got = exe(); how = "exe"; }
   if(got == want) return NULL;
   snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s"),
            how, shown(want, w), shown(got, g));

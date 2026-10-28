@@ -6,8 +6,8 @@
 #include "ia64.c"
 #include "arm8.c"
 #include "elfs.c"
-//#include "pe32.c"
-//#include "mach.c"
+#include "pe32.c"
+#include "mach.c"
 #endif
 
 #ifdef _WIN32
@@ -25,14 +25,23 @@
 extern const emit ia64;
 extern const emit arm8;
 extern const form elfs;
+extern const form mach;
+extern const form pe32;
 #ifdef __aarch64__
 #define base arm8
 #else // __x86_64__
 #define base ia64
 #endif
+#ifdef __APPLE__
+#define host mach
+#elif defined(_WIN32)
+#define host pe32
+#else
+#define host elfs
+#endif
 
 file* scan(char* name) {
-  FILE* fp = fopen(name, "r");
+  FILE* fp = fopen(name, "rb");
   if(!fp) fail("cannot open: %s\n", name);
   fseek(fp, 0, SEEK_END);
   size_t size = ftell(fp);
@@ -56,7 +65,7 @@ void* hold(void* memory, size_t size) {
 #ifdef _WIN32
   return VirtualAlloc(memory, size,
     MEM_COMMIT | MEM_RESERVE,
-    PAGE_READWRITE);
+    PAGE_EXECUTE_READWRITE);
 #else
   memory = mmap(memory, size,
     PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -87,7 +96,11 @@ void* drop(void* memory, size_t size) {
   return NULL;
 }
 
+#if defined(_WIN32) && defined(__x86_64__)
+typedef int (__attribute__((sysv_abi)) *func)(); // generated code clobbers rdi, rsi
+#else
 typedef int (*func)();
+#endif
 void  exec(mode* self) {
   //prep(self->text->head, 0);
 #if JIT
@@ -151,6 +164,8 @@ static void arch(mode* self, opts*, char* para) {
 
 static void wrap(mode* self, opts*, char* para) {
   if(!scmp(para, "elfs")) self->form = elfs;
+  else if(!scmp(para, "mach")) self->form = mach;
+  else if(!scmp(para, "pe32")) self->form = pe32;
   else printf("format '%s' not supported\n", para);
 }
 
@@ -186,12 +201,12 @@ int   main(int argc, char** argv) {
     .drop = drop,
     .show = show,
     .arch = base,
-    .form = elfs,
+    .form = host,
   };
 
   opts args[] = {
     {"-m", "--mode", .args = 1, .desc = "exec, ia64, arm8", .call = arch},
-    {"-f", "--format", .args = 1, .desc = "elfs", .call = wrap},
+    {"-f", "--format", .args = 1, .desc = "elfs, mach, pe32", .call = wrap},
     {"-o", "--output", .args = 1, .desc = "write static executable", .call = dest},
     {"-h", "--help", .desc = "display this help", .call = help}, {},
   };
