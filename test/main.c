@@ -319,16 +319,8 @@ spec(TAG) {
     it("runs while")
       expect(55, "int main() {\n  int s = 0;\n  int i = 1;\n"
                  "  while(i <= 10) { s += i; i += 1; }\n  return s;\n}\n");
-    it("runs for")
-      expect(10, "int main() { int s = 0; for(int i = 0; i < 5; i += 1) s += i; return s; }\n");
-    it("scopes the for variable")
-      expect(7, "int main() { int i = 7; for(int i = 0; i < 3; i += 1) {} return i; }\n");
-    it("runs for without parts")
-      expect(9, "int main() { int i = 0; for(;;) { i += 1; if(i == 9) break; } return i; }\n");
-    it("breaks and continues for")
-      expect(30, "int main() {\n  int s = 0;\n  for(int i = 0; i < 100; i += 1) {\n"
-                 "    if(i % 2) continue;\n    if(i > 10) break;\n    s += i;\n  }\n"
-                 "  return s;\n}\n");
+    it("has no for")
+      expect(bad, "int main() { int i = 0; for(;;) { i += 1; if(i == 9) break; } return i; }\n");
     it("continues while at its condition")
       expect(18, "int main() {\n  int i = 0; int s = 0;\n"
                  "  while(i < 10) { i += 1; if(i % 3) continue; s += i; }\n  return s;\n}\n");

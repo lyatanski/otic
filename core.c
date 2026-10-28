@@ -765,32 +765,6 @@ void  stmt(mode* self) {
     iter(self, cond);
     emit(self, back, out);
   }
-  else if(same(self, "for")) {
-    // init; cond: jz end; jmp body; step: jmp cond; body: jmp step; end:
-    byte* out = NULL;
-    chop(self);
-    skip(self, '(');
-    if(type(self)) vars(self);
-    else if(!twin(self, ';')) { expr(self, 1); skip(self, ';'); }
-    byte* cond = self->text->body;
-    if(self->talk.kind != ';') {
-      eval(self);
-      emit(self, when, 0);
-      out = self->text->body;
-    }
-    skip(self, ';');
-    byte* step = cond;
-    if(self->talk.kind != ')') {
-      emit(self, jump);
-      step = self->text->body;
-      expr(self, 1);
-      emit(self, loop, cond);
-      emit(self, back, step);
-    }
-    skip(self, ')');
-    iter(self, step);
-    if(out) emit(self, back, out);
-  }
   else if(same(self, "break")) {
     chop(self); skip(self, ';');
     if(!self->cont) fail("line %ld: break outside a loop\n", self->line);
