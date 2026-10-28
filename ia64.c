@@ -233,6 +233,7 @@ void ia64_calc(file* text, u32i oper) {
 }
 
 void ia64_diff(file* text, char oper, para dst, para src) {
+  (void)text; (void)dst; (void)src;
   switch(oper) {
     case '=': break;
     case '!': break;
@@ -245,6 +246,7 @@ void ia64_diff(file* text, char oper, para dst, para src) {
 
 // TODO remove
 void ia64_when(file* text, u32i cond) {
+  (void)cond;
   ia64_cmp(text, eax, (para){imm, .imm8 = 0});
   ia64_jmpc(text, je, 0);
 }

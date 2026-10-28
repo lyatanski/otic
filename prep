@@ -22,7 +22,7 @@ EOF
 fi
 
 echo -- compile all-in
-gcc -Wall -ggdb -Os -o$out/one main.c
+gcc -Wall -Wextra -ggdb -Os -o$out/one main.c
 strip -s $out/one
 
 for file in main core ia64 arm8 elfs mach
@@ -31,12 +31,10 @@ do
   dst=$out/$file.o
   #if [ $src -nt $dst ]; then
     echo -- compile $src
-    gcc -Dpart -Wall -c -ggdb -O0 -o$dst $src || exit $?
+    gcc -Dpart -Wall -Wextra -c -ggdb -O0 -o$dst $src || exit $?
   #fi
   link="$link $dst"
 done
 
 echo "--- exec"
 gcc -o$out/tic $link && ./$out/tic -m exec $out/test.c
-echo "--- show"
-gcc -o$out/tic $link && ./$out/tic $out/test.c

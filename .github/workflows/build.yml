@@ -13,4 +13,4 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - run: gcc -Wall -Os -o tic main.c
+      - run: gcc -Wall -Wextra -Os -o tic main.c

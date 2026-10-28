@@ -268,6 +268,7 @@ void arm8_move(file* data, uint32_t num) {
 }
 
 void arm8_when(file* data, uint32_t num) {
+  (void)num;
   arm8_put(data, I3201_CBZ | r0);                                   // cbz w0, patched by mend
 }
 

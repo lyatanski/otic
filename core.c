@@ -48,7 +48,7 @@ void chop(mode* self) {
   byte* c = self->code->body;
 
   pass: switch(*(self->code->body = c)) {
-    case '\n': self->line++;
+    case '\n': self->line++; // fallthrough
     case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
     case '#': case ',': case ';': case ':': case '?': case '~': case '@':
     case '(': case ')': case '[': case ']': case '{': case '}':
@@ -142,7 +142,7 @@ void chop(mode* self) {
   (self)->talk.kind == ttag &&\
   (self)->talk.hash == sget((self), (name)))
 
-bool  twin(mode* self, int   kind) {
+bool  twin(mode* self, u32i  kind) {
   return (self->talk.kind == kind)? chop(self), 1 : 0;
 }
 
@@ -170,7 +170,7 @@ int rank(int op) {
 
 #define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
 void  expr(mode* self) {
-  int rank = 0xffff;
+  u32i rank = 0xffff;
 
   switch(self->talk.kind) {
     case tnum:

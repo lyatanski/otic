@@ -48,11 +48,11 @@ void shed(file* data) {
 
 void* hold(void* memory, size_t size) {
 #ifdef _WIN32
-  return VirtualAlloc(0, size,
+  return VirtualAlloc(memory, size,
     MEM_COMMIT | MEM_RESERVE,
     PAGE_READWRITE);
 #else
-  return mmap(/*addr=*/0, size,
+  return mmap(memory, size,
     PROT_READ | PROT_WRITE | PROT_EXEC,
     MAP_ANONYMOUS | MAP_PRIVATE, /*fd=*/-1, /*offset=*/0);
 #endif
