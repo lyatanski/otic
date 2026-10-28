@@ -14,3 +14,5 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: gcc -Wall -Wextra -Os -o tic main.c
+      - if: runner.os == 'Linux'
+        run: gcc -Wall -Wextra -o spec test/main.c && ./spec
