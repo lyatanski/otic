@@ -111,7 +111,8 @@ struct meta {
               // member, alignment of a list, 1 + the library of an import
               // (a call without addr)
   what  kind;
-  bool  own;  // static: the name is hidden when its source file ends
+  bool  own;  // static: the name is hidden outside its source file
+  char* path; // the source file of a global or function
 };
 
 // call to a function not seen yet, patched when the run ends
@@ -120,6 +121,7 @@ typedef struct {
   byte* at;   // NULL when the call was dropped as dead code
   u32i  argc;
   u64i  line;
+  char* path; // the source file of the call
 } fix;
 
 // address of a global (data offset, or bss offset | ZERO), patched by dock

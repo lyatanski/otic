@@ -482,6 +482,20 @@ spec(TAG) {
       expect(34, "link \"st-a\";\nlink \"st-b\";\nint n = 4;\nint get() { return 8; }\n"
                  "int main() { return a() + b() * 3 + get() * 2 + n; }\n");
     }
+    it("shows static names again after a link") {
+      module("add", "int add(int a, int b) { return a + b; }\n");
+      expect(3, "static int s = 2;\nlink \"add\";\nint main() { return add(s, 1); }\n");
+    }
+    it("allows a static name beside a public one in another module") {
+      module("pub", "int v = 5;\nint pv() { return v; }\n");
+      expect(6, "link \"pub\";\nstatic int v = 1;\nint main() { return pv() + v; }\n");
+    }
+    it("folds . and .. in module paths") { // a cycle through .. would grow the path
+      mkdir("bins/sub", 0755);
+      module("dot-a", "link \"sub/dot-b\";\nint a() { return b() + 1; }\n");
+      module("sub/dot-b", "link \"../dot-a\";\nint b() { return 2; }\n");
+      expect(3, "link \"dot-a\";\nlink \"./dot-a\";\nint main() { return a(); }\n");
+    }
   }
 
   context("load") { // imports are only recorded until the forms bind them
@@ -588,6 +602,25 @@ spec(TAG) {
     it("rejects a static name from another module") {
       module("hid", "static int hid() { return 1; }\n");
       expect(bad, "link \"hid\";\nint main() { return hid(); }\n");
+    }
+    it("rejects a static function called from another module") {
+      module("ma", "int ma() { return get(); }\n");
+      expect(bad, "link \"ma\";\nstatic int get() { return 7; }\nint main() { return ma(); }\n");
+    }
+    it("hides static names from a linked module") {
+      module("lk", "int lk() { return sv(); }\n");
+      expect(bad, "static int sv() { return 9; }\nlink \"lk\";\nint main() { return lk(); }\n");
+    }
+    it("rejects a global defined twice")
+      expect(bad, "int g = 1;\nint g = 2;\nint main() { return g; }\n");
+    it("rejects a global and a function of the same name")
+      expect(bad, "int g;\nint g() { return 1; }\nint main() { return 0; }\n");
+    it("rejects a function and a global of the same name")
+      expect(bad, "int g() { return 1; }\nint g;\nint main() { return 0; }\n");
+    it("rejects a global defined in two modules") {
+      module("k1", "int k = 1;\n");
+      module("k2", "int k = 2;\n");
+      expect(bad, "link \"k1\";\nlink \"k2\";\nint main() { return k; }\n");
     }
     it("rejects a library name that is not a string")
       expect(bad, "load c;\nint main() { return 0; }\n");
