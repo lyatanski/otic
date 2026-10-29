@@ -41,10 +41,16 @@
 #else
 #define linux_it xit
 #endif
+#if defined(__linux__) && defined(__x86_64__) // objects: x86-64 ELF only so far
+#define elfs_it it
+#else
+#define elfs_it xit
+#endif
 
 enum { bad = INT_MIN, odd }; // compile error, no result (crash, timeout, ...)
 
 static char src_at[64], exe_at[64];
+static char* lib; // an object or a static library tic gets after the case
 
 // run args[0] with stdout on fd for at most 5s: its exit status, or -1 when
 // it was killed
@@ -89,7 +95,7 @@ static char* tic(void) {
 static int  jit(void) {
   int fd[2];
   if(pipe(fd)) return odd;
-  int code = spawn(fd[1], (char*[]){tic(), src_at, NULL});
+  int code = spawn(fd[1], (char*[]){tic(), src_at, lib, NULL});
   close(fd[1]);
   char out[256], *last = out;
   int n = read(fd[0], out, sizeof out - 1);
@@ -107,7 +113,7 @@ static int  jit(void) {
 static int  exe(void) {
   int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
-  int code = spawn(null, (char*[]){tic(), "-o", exe_at, src_at, NULL});
+  int code = spawn(null, (char*[]){tic(), "-o", exe_at, src_at, lib, NULL});
   close(null);
   if(code == 1) return access(exe_at, F_OK)? bad: odd; // and no executable
   if(code || chmod(exe_at, 0755)) return odd;
@@ -122,8 +128,9 @@ static char* shown(int value, char* buf) {
   return buf;
 }
 
-// compile src both ways: NULL when each gives want, else why not
-static char* tried(char* src, int want) {
+// compile src both ways: NULL when exec gives run and -o gives want, else why
+// not
+static char* tried(char* src, int run, int want) {
   mkdir("bins", 0755);
   sprintf(src_at, "bins/" TAG "-%03zu.c", test_count);
   sprintf(exe_at, "bins/" TAG "-%03zu" EXE, test_count);
@@ -136,7 +143,8 @@ static char* tried(char* src, int want) {
   char w[16], g[16];
   int got = jit();
   char* how = "exec";
-  if(got == want) { got = exe(); how = "exe"; }
+  if(got == run) { got = exe(); how = "exe"; }
+  else want = run;
   if(got == want) return NULL;
   snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s"),
            how, shown(want, w), shown(got, g));
@@ -144,8 +152,11 @@ static char* tried(char* src, int want) {
 }
 
 // expect(want, src): main returns want, or tic exits 1 when want is bad
-#define expect(want, src) \
-  if((error = tried(src, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
+#define expect(want, src) saw(want, want, src)
+// only(want, src): exec rejects it, the executable from -o returns want
+#define only(want, src) saw(bad, want, src)
+#define saw(run, want, src) \
+  if((error = tried(src, run, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
 // a module at bins/name.c, beside the cases, for link "name"
 static void module(char* name, char* src) {
@@ -153,6 +164,29 @@ static void module(char* name, char* src) {
   snprintf(at, sizeof at, "bins/%s.c", name);
   FILE* fp = fopen(at, "wb");
   if(fp) { fputs(src, fp); fclose(fp); }
+}
+
+// bins/name.a, a member per source in src (NULL ended), each compiled by the
+// host's cc without a stack protector (it calls libc) into bins/name-i.o: its
+// path, or NULL when it could not be built. The sources are not .c files, so
+// link "name-i" finds the object
+static char* archive(char* name, char** src) {
+  static char at[64];
+  char cmd[512], run[640];
+  int  n = snprintf(cmd, sizeof cmd, "ar rcs bins/%s.a", name);
+  snprintf(at, sizeof at, "bins/%s.a", name);
+  unlink(at);
+  for(int i = 0; src[i]; i++) {
+    snprintf(run, sizeof run, "bins/%s-%d.cin", name, i);
+    FILE* fp = fopen(run, "wb");
+    if(!fp) return NULL;
+    fputs(src[i], fp);
+    fclose(fp);
+    snprintf(run, sizeof run, "cc -O2 -fPIC -fno-stack-protector -c -o bins/%s-%d.o -x c bins/%s-%d.cin", name, i, name, i);
+    if(system(run)) return NULL;
+    n += snprintf(cmd + n, sizeof cmd - n, " bins/%s-%d.o", name, i);
+  }
+  return system(cmd)? NULL: at;
 }
 
 // 25-statement bodies: their branches are over 127 bytes on x86
@@ -506,6 +540,120 @@ spec(TAG) {
       module("imp", "load \"c\";\nint puts(char* s);\nint one() { return 1; }\n");
       expect(1, "link \"imp\";\nload \"c\";\nint puts(char*);\nint main() { return one(); }\n");
     }
+    it("imports from c without a load") {
+      module("ld", "load \"m\";\n");
+      expect(2, "link \"ld\";\nint puts(char*);\nload \"c\";\nint puts(char*);\n"
+                "int main() { return 2; }\n");
+    }
+    it("declares variadic, (void) and extern imports")
+      expect(4, "int printf(char* f, ...);\nint getpid(void);\nextern char** environ;\n"
+                "extern int a, b[2];\nint main() { return 4; }\n");
+  }
+
+  context("objects") { // built by cc: an object, or the members of an archive
+    elfs_it("calls a function from an object") {
+      archive("ar-obj", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
+      lib = "bins/ar-obj-0.o";
+      expect(5, "int main() { return add(2, 3); }\n");
+    }
+    elfs_it("calls a function from an archive") {
+      lib = archive("ar-add", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
+      expect(5, "int main() { return add(2, 3); }\n");
+    }
+    elfs_it("calls between members") {
+      lib = archive("ar-pull", (char*[]){
+        "int twice(int);\nint quad(int x) { return twice(twice(x)); }\n",
+        "int twice(int x) { return x * 2; }\n", NULL});
+      expect(12, "int main() { return quad(3); }\n");
+    }
+    elfs_it("reaches data, bss and the globals of other members") {
+      lib = archive("ar-data", (char*[]){
+        "static const int tab[] = {10, 20, 30, 40};\nint counter;\nextern int base;\n"
+        "int get(int i) { counter += i; return tab[i] + counter + base; }\n",
+        "int base = 100;\n", NULL});
+      expect(54, "int main() { return get(1) + get(2) - 200; }\n");
+    }
+    elfs_it("calls back into the program") {
+      lib = archive("ar-back", (char*[]){
+        "int tic_cb(int);\nint call_back(int x) { return tic_cb(x) + 1; }\n", NULL});
+      expect(13, "int tic_cb(int x) { return x * 3; }\nint main() { return call_back(4); }\n");
+    }
+    elfs_it("lets a strong definition replace a weak one") {
+      lib = archive("ar-weak", (char*[]){
+        "__attribute__((weak)) int pick(void) { return 1; }\nint use(void) { return pick(); }\n",
+        "int pick(void) { return 2; }\nint other(void) { return 5; }\n", NULL});
+      expect(25, "int main() { return use() * 10 + other(); }\n");
+    }
+    elfs_it("aligns the stack for C code") { // pushed operands: 0, 2, then 1
+      lib = archive("ar-align", (char*[]){
+        "int aligned(void) { return ((long)__builtin_frame_address(0) & 15) == 0; }\n", NULL});
+      expect(111, "int main() { int a = 1; return aligned() * 100 + (a + 9) * aligned() + aligned(); }\n");
+    }
+    elfs_it("passes variadic arguments to C code") {
+      lib = archive("ar-vary", (char*[]){"#include <stdarg.h>\n"
+        "int sum(int n, ...) { va_list ap; va_start(ap, n); int a = va_arg(ap, int);\n"
+        "  int b = va_arg(ap, int); int c = va_arg(ap, int); va_end(ap); return n + a + b * 2 + c * 4; }\n",
+        NULL}); // no loop: cc would align its text to 32
+      expect(24, "int sum(int n, ...);\nint main() { return sum(3, 1, 2, 4); }\n");
+    }
+    elfs_it("cuts C results to their type") { // the asm leaves the upper bytes set
+      lib = archive("ar-cut", (char*[]){
+        "int cut(long x) { int r; __asm__(\"mov %1, %q0\" : \"=r\"(r) : \"r\"(x)); return r; }\n"
+        "char low(long x) { char r; __asm__(\"mov %1, %q0\" : \"=r\"(r) : \"r\"(x)); return r; }\n",
+        NULL});
+      expect(2, "int cut(long x);\nchar low(long x);\nint main() { long b = 65536; b = b * 65536; int r = 0;\n"
+                "  if(cut(b)) r = 1;\n  return r + (low(511) == 255) * 2;\n}\n");
+    }
+    elfs_it("takes the result type of C code from a prototype") {
+      lib = archive("ar-long", (char*[]){"long big(void) { return 1L << 40; }\n", NULL});
+      expect(1, "long big(void);\nlong big(void);\nint main() { return big() >> 40; }\n");
+    }
+    elfs_it("rejects an undefined symbol") {
+      lib = archive("ar-undef", (char*[]){
+        "int nowhere(void);\nint broken(void) { return nowhere(); }\n", NULL});
+      expect(bad, "int main() { return broken(); }\n");
+    }
+    elfs_it("rejects a function defined twice") {
+      lib = archive("ar-twice", (char*[]){
+        "int add(int a, int b) { return a + b; }\nint sub(int a, int b) { return a - b; }\n", NULL});
+      expect(bad, "int add(int a, int b) { return 0; }\nint main() { return sub(3, 1); }\n");
+    }
+    lib = NULL;
+    elfs_it("links an object beside the source") {
+      archive("lk-obj", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
+      expect(5, "link \"lk-obj-0\";\nint main() { return add(2, 3); }\n");
+    }
+    elfs_it("links an archive as libname.a, once") {
+      archive("liblka", (char*[]){"int add(int a, int b) { return a + b; }\n",
+                                 "long big(void) { return 1L << 40; }\n", NULL});
+      expect(6, "link \"lka\";\nlink \"./lka\";\nlong big(void);\n"
+                "int main() { return add(2, 3) + (big() >> 40); }\n");
+    }
+    elfs_it("keeps the static names of the source that links an object") {
+      archive("libpk", (char*[]){"int pick(void) { return 1; }\nint use(void) { return pick(); }\n", NULL});
+      expect(8, "static int pick() { return 7; }\nlink \"pk\";\nint main() { return pick() + use(); }\n");
+    }
+    elfs_it("starts a C library linked in") { // it exits with main's result + 1
+      archive("libst", (char*[]){"static int up;\n"
+        "int __libc_start_main(int (*m)(int, char**, char**), int argc, char** argv,\n"
+        "                      long a, long b, long c) {\n"
+        "  up = argc == 1 && !argv[1] && !a && !b && !c\n"
+        "       && !((long)__builtin_frame_address(0) & 15);\n"
+        "  int r = m(argc, argv, argv + argc + 1) + 1;\n"
+        "  __asm__ volatile(\"syscall\" :: \"a\"(60), \"D\"(r));\n"
+        "  __builtin_unreachable();\n}\n"
+        "int started(void) { return up; }\n", NULL});
+      only(12, "link \"st\";\nint started(void);\n"
+               "int main(int argc, char** argv) { return started() * 10 + argc; }\n");
+    }
+    elfs_it("rejects a forward call to an object") {
+      archive("lk-fwd", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
+      expect(bad, "int main() { return add(2, 3); }\nlink \"lk-fwd-0\";\n");
+    }
+    elfs_it("rejects an import declared before the object") {
+      archive("lk-dec", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
+      expect(bad, "int add(int a, int b);\nlink \"lk-dec-0\";\nint main() { return add(2, 3); }\n");
+    }
   }
 
   context("syscall") {
@@ -624,6 +772,14 @@ spec(TAG) {
     }
     it("rejects a library name that is not a string")
       expect(bad, "load c;\nint main() { return 0; }\n");
+    it("rejects a use of an extern global")
+      expect(bad, "extern int g;\nint main() { return g; }\n");
+    it("rejects an extern global from two libraries")
+      expect(bad, "load \"c\";\nextern int g;\nload \"m\";\nextern int g;\nint main() { return 0; }\n");
+    it("rejects an initialized extern global")
+      expect(bad, "extern int g = 1;\nint main() { return 0; }\n");
+    it("rejects a variadic function with a body")
+      expect(bad, "int f(int n, ...) { return n; }\nint main() { return f(1); }\n");
     it("rejects a call to an import")
       expect(bad, "load \"c\";\nint puts(char*);\nint main() { return puts(\"x\"); }\n");
     it("rejects a dead call to an import")
@@ -636,13 +792,13 @@ spec(TAG) {
       expect(bad, "load \"c\";\nint f(int);\nint f(int, int);\nint main() { return 0; }\n");
     it("rejects a body for an import")
       expect(bad, "load \"c\";\nint f();\nint f() { return 1; }\nint main() { return f(); }\n");
-    it("rejects an import without a load in its module") {
-      module("ld", "load \"c\";\n");
+    it("rejects an import of c and of another library") {
+      module("ld", "load \"m\";\nint puts(char*);\n");
       expect(bad, "link \"ld\";\nint puts(char*);\nint main() { return 0; }\n");
     }
     it("rejects a parameter without a name in a definition")
       expect(bad, "int f(int) { return 1; }\nint main() { return 0; }\n");
-    it("rejects a function without a body")
-      expect(bad, "int f(int a);\nint main() { return 0; }\n");
+    it("rejects a call to a function without a body")
+      expect(bad, "int f(int a);\nint main() { return f(1); }\n");
   }
 }

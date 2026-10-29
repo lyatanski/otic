@@ -139,4 +139,5 @@ file* pe32_pack(mode* self) {
 
 const form pe32 = {
   .pack = pe32_pack,
+  .os   = os_win,
 };

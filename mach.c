@@ -143,4 +143,5 @@ file* mach_pack(mode* self) {
 
 const form mach = {
   .pack = mach_pack,
+  .os   = os_mac,
 };

@@ -337,9 +337,14 @@ void ia64_parm(file* text, u32i i, s32i slot) {
   ia64_disp(text, 1, 8, ia64_regs[i], 5, slot);
 }
 
+// pop reg, r8-r15 too
+void ia64_drop(file* text, byte reg) {
+  if(reg > 7) ib(text, rex(.b=1));
+  ib(text, 0x58 + (reg & 7));
+}
+
 void ia64_args(file* text, u32i i) {
-  if(ia64_regs[i] > 7) ib(text, rex(.b=1));
-  ib(text, 0x58 + (ia64_regs[i] & 7));        // pop reg
+  ia64_drop(text, ia64_regs[i]);
 }
 
 void ia64_open(file* text) {
@@ -355,10 +360,7 @@ void ia64_size(file*, byte* func, s32i size) {
 // Linux syscall: number in rax, arguments in rdi rsi rdx r10 r8 r9
 void ia64_trap(file* text, u32i argc) {
   static const byte regs[] = { 7, 6, 2, 10, 8, 9 };
-  for(u32i i = argc; --i; ) {
-    if(regs[i - 1] > 7) ib(text, rex(.b=1));
-    ib(text, 0x58 + (regs[i - 1] & 7));         // pop reg
-  }
+  for(u32i i = argc; --i; ) ia64_drop(text, regs[i - 1]);
   ia64_pop(text, rax);
   iw(text, 0x050f);                             // syscall
 }
@@ -383,6 +385,44 @@ void ia64_boot(file* text) {
 void ia64_link(file*, byte* boot, byte* main) {
   s32i rel = main - (boot + 5);               // call rel32 is relative to its end
   copy(boot + 1, &rel, sizeof(rel));
+}
+
+// called by boot: [rsp+8] is argc, argv follows it
+void ia64_crt(file* text, byte* main, byte* start) {
+  id(text, 0x0824748b);                           // mov esi, [rsp+8]
+  id(text, 0x24548d48); ib(text, 0x10);           // lea rdx, [rsp+16]
+  ib(text, 0x48); iw(text, 0x3d8d);               // lea rdi, [rip+main]
+  id(text, main - (text->body + 4));
+  iw(text, 0xc931);                               // xor ecx, ecx
+  ib(text, 0x45); iw(text, 0xc031);               // xor r8d, r8d
+  ib(text, 0x45); iw(text, 0xc931);               // xor r9d, r9d
+  id(text, 0xf0e48348);                           // and rsp, -16
+  byte* at = text->body;
+  ia64_dial(text);
+  ia64_link(text, at, start);
+  ib(text, 0xf4);                                 // hlt: start never returns
+}
+
+// SysV (Linux, macOS): arguments in rdi rsi rdx rcx r8 r9, al = 0 vector
+// registers for a variadic callee. Win64: in rcx rdx r8 r9 and on the stack
+// past 32 bytes of shadow space. Both want rsp 16-byte aligned, which pushed
+// operands may break: the old rsp is pushed twice, then rsp rounded down, so
+// one copy is at [rsp+8] either way
+void ia64_ffi(file* text, byte* func, u32i argc, u32i, osys os) {
+  static const byte win[] = { 1, 2, 8, 9, 10, 0 }; // r10 and rax go on the stack
+  byte room = os == os_win? argc > 4? 48: 32: 0;
+  if(!func) { ib(text, 0x4c); iw(text, 0x188b); } // mov r11, [rax]
+  for(u32i i = argc; i--; ) ia64_drop(text, os == os_win? win[i]: ia64_regs[i]);
+  ib(text, 0x54);                                 // push rsp
+  ib(text, 0xff); iw(text, 0x2434);               // push [rsp]
+  id(text, 0xf0e48348);                           // and rsp, -16
+  if(room) { id(text, 0xec8348 | room << 24); }   // sub rsp, room
+  else iw(text, 0xc031);                          // xor eax, eax
+  if(argc > 4 && room) { id(text, 0x2454894c); ib(text, 32); } // mov [rsp+32], r10
+  if(argc > 5 && room) { id(text, 0x24448948); ib(text, 40); } // mov [rsp+40], rax
+  if(func) { byte* at = text->body; ia64_dial(text); ia64_link(text, at, func); }
+  else { ib(text, 0x41); iw(text, 0xd3ff); }      // call r11
+  id(text, 0x24648b48); ib(text, room + 8);       // mov rsp, [rsp+room+8]
 }
 
 const emit ia64 = {
@@ -413,6 +453,8 @@ const emit ia64 = {
   .done = ia64_done,
   .boot = ia64_boot,
   .link = ia64_link,
+  .ffi  = ia64_ffi,
+  .crt  = ia64_crt,
   .cpu  = cpu_ia64,
 };
 

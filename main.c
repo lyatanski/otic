@@ -6,19 +6,15 @@
 #else
 #include <sys/mman.h>   /* for mmap         */
 #endif
-#if defined(__APPLE__) && defined(__aarch64__)
-#include <pthread.h>    /* for pthread_jit_write_protect_np */
-#define JIT MAP_JIT     /* W^X: RWX pages must be MAP_JIT, toggled per thread */
-#else
-#define JIT 0
-#endif
 
 // after the system headers: macros of the parts (arm8.c X) clash with them
 #ifndef part
 #include "core.c"
+#include "link.c"
 #include "ia64.c"
 #include "arm8.c"
 #include "elfs.c"
+#include "ario.c"
 #include "pe32.c"
 #include "mach.c"
 #endif
@@ -41,20 +37,26 @@ extern const form pe32;
 #define host elfs
 #endif
 
-file* scan(char* name) {
+file* look(char* name) {
   FILE* fp = fopen(name, "rb");
-  if(!fp) fail("cannot open: %s\n", name);
+  if(!fp) return NULL;
   fseek(fp, 0, SEEK_END);
   size_t size = ftell(fp);
   rewind(fp);
 
   file* f = malloc(sizeof(file)+size);
-  if(!f) return NULL;
+  if(!f) fail("out of memory\n");
   f->body = f->head;
   f->tail = f->head + size;
   f->head[size] = 0; // lexer stops at NUL
   if(fread(f->head, 1, size, fp) != size) fail("read error: %s\n", name);
   fclose(fp);
+  return f;
+}
+
+file* scan(char* name) {
+  file* f = look(name);
+  if(!f) fail("cannot open: %s\n", name);
   return f;
 }
 
@@ -66,26 +68,27 @@ void* hold(void* memory, size_t size) {
 #ifdef _WIN32
   return VirtualAlloc(memory, size,
     MEM_COMMIT | MEM_RESERVE,
-    PAGE_EXECUTE_READWRITE);
+    PAGE_READWRITE);
 #else
   memory = mmap(memory, size,
-    PROT_READ | PROT_WRITE | PROT_EXEC,
-    MAP_ANONYMOUS | MAP_PRIVATE | JIT, /*fd=*/-1, /*offset=*/0);
+    PROT_READ | PROT_WRITE,
+    MAP_ANONYMOUS | MAP_PRIVATE, /*fd=*/-1, /*offset=*/0);
   if(memory == MAP_FAILED) fail("cannot map %zu bytes\n", size);
-#if JIT
-  pthread_jit_write_protect_np(0); // writable until exec
-#endif
   return memory;
 #endif
   return NULL;
 }
 
+// W^X: the pages held writable turn executable, and no longer writable
 void prep(void* memory, size_t size) {
 #ifdef _WIN32
-  VirtualProtect(memory, size, PAGE_EXECUTE_READ, 0);
+  DWORD old;
+  if(!VirtualProtect(memory, size, PAGE_EXECUTE_READ, &old))
 #else
-  mprotect(memory, size, PROT_EXEC);
+  if(mprotect(memory, size, PROT_READ | PROT_EXEC))
 #endif
+    fail("cannot protect %zu bytes\n", size);
+  __builtin___clear_cache((char*)memory, (char*)memory + size);
 }
 
 void* drop(void* memory, size_t size) {
@@ -104,28 +107,23 @@ typedef int (*func)();
 #endif
 // the image: text, then data and bss on pages of their own
 void  exec(mode* self) {
+  if(self->impn) fail("cannot run a program that calls a library, write it with -o\n");
+  if(self->boot != self->main) fail("cannot run a program with a C library, write it with -o\n");
   u64i  code = self->text->body - self->text->head;
   u64i  at   = (code + 0x3fff) & ~0x3fff; // 16 KB: pages on any host
   u64i  size = self->data->body - self->data->head;
   u64i  all  = at + ((size + 15) & ~15) + self->zero;
   byte* run  = self->hold(0, all);
-#if JIT // JIT pages turn read-only while they run: data takes plain ones
-  if(all > at && mmap(run + at, all - at, PROT_READ | PROT_WRITE,
-     MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED)
-    fail("cannot map %llu bytes\n", (unsigned long long)(all - at));
-#endif
   dock(self, at);
   copy(run, self->text->head, code);
   copy(run + at, self->data->head, size);
-#if JIT
-  pthread_jit_write_protect_np(1);
-#endif
-  __builtin___clear_cache((char*)run, (char*)run + code);
+  if(at) prep(run, at); // text only: data and bss stay writable
   int return_code = ((func)(run + (self->main - self->text->head)))();
   printf("%d\n", return_code);
 }
 
 void  save(mode* self) {
+  if(self->impn) fail("cannot call a library from this form yet\n"); // steps 12b-12d
   file* out = self->form.pack(self);
   FILE* fp = fopen(self->outp, "wb");
   if(!fp) fail("cannot write: %s\n", self->outp);
@@ -146,7 +144,7 @@ struct opts {
 };
 
 static void help(mode*, opts* self, char*) {
-  printf("usage: %s [options] file [file...]\n", "tic");
+  printf("usage: %s [options] file [obj.o...] [lib.a...]\n", "tic");
   printf("options:\n");
   while(self->name) {
     printf("  %s", self->name);
@@ -181,8 +179,19 @@ static void dest(mode* self, opts*, char* para) {
   self->show = save;
 }
 
+static void seek(mode* self, opts*, char* para) {
+  if(self->dirn == sizeof self->dirs / sizeof *self->dirs) fail("too many -L directories\n");
+  self->dirs[self->dirn++] = para;
+}
+
+// the source, an object file (name.o), or a static library (name.a), whose
+// members are object files
 static void apos(mode* self, opts*, char* para) {
-  self->name = para;
+  u64i n = 0;
+  while(para[n]) n++;
+  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, scan(para));
+  else if(n > 2 && !scmp(para + n - 2, ".a")) ario_load(self, para, scan(para));
+  else self->name = para;
 }
 
 static void parse(mode* self, opts* opt, int argc, char** argv, move call) {
@@ -214,6 +223,7 @@ int   main(int argc, char** argv) {
     {"-a", "--arch", .args = 1, .desc = "ia64, arm8", .call = arch},
     {"-f", "--form", .args = 1, .desc = "elfs, mach, pe32", .call = wrap},
     {"-o", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
+    {"-L", "--libs", .args = 1, .desc = "look for libname.a in this directory too", .call = seek},
     {"-h", "--help", .desc = "display help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);

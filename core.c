@@ -7,9 +7,6 @@ enum { tend, ttag, tnum };
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
-// fail at the line being parsed, in the source file being parsed
-#define flaw(self, fmt, ...) \
-  fail("%s:%ld: " fmt, (self)->name, (self)->line __VA_OPT__(,) __VA_ARGS__)
 
 byte* copy(byte* dst, void* src, u64i size) {
   for(byte* s = src; size--; *dst++ = *s++);
@@ -27,7 +24,6 @@ item* match(item* x, char* name, u64i size) {
   return !size? x: NULL;
 }
 
-#define sget(self, k) hget(self->pool, k, sizeof(k)-1)
 item* hget(hash self, char* mark, u64i size) {
   u64i  clue = 0x01;
   item* seek = NULL;
@@ -169,10 +165,6 @@ int rank(int op) {
   }
 }
 
-
-#define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
-#define nick(x) (int)(x)->size, (x)->name
-
 // types: NULL is an int value
 meta* mint(mode* self, meta x) {
   if(self->defn == sizeof self->defs / sizeof *self->defs)
@@ -203,7 +195,6 @@ typedef enum { vacc, vnum, vloc, vglo, vmem } vkind;
 typedef struct { vkind kind; s32i ival; meta* type; } oper;
 #define cnst(n) ((oper){vnum, (n), NULL})
 #define acc(t)  ((oper){vacc, 0, (t)})
-#define ZERO    (1u << 31) // a data offset in bss
 
 // size bytes of data, or of bss when zero: their offset
 u32i  lay(mode* self, u32i size, bool zero) {
@@ -224,13 +215,6 @@ void  spot(mode* self, u32i off) {
     flaw(self, "too many global references\n");
   self->aims[self->seats++] = (seat){self->text->body, off};
   emit(self, glob);
-}
-
-void  dock(mode* self, u64i at) {
-  u64i bss = at + ((self->data->body - self->data->head + 15) & -16);
-  for(seat* s = self->aims; s < self->aims + self->seats; s++)
-    emit(self, site, s->at, (s->off & ZERO? bss + (s->off & ~ZERO): at + s->off)
-                            - (s->at - self->text->head));
 }
 
 // the bytes of string literal s and a NUL, into out when given: their count
@@ -329,19 +313,33 @@ void  eval(mode* self);
 void  bind(mode* self, byte* at, item* name, meta* func, u32i argc) {
   if(!func || func->kind != call)
     flaw(self, "no function '%.*s'\n", nick(name));
-  if(func->size != argc)
+  if(func->size != argc && func->size != VARY)
     flaw(self, "'%.*s' takes %d arguments, got %d\n", nick(name), func->size, argc);
-  if(!func->addr) // until the forms bind imports (step 12)
-    flaw(self, "cannot call '%.*s', imported from %.*s\n", nick(name),
-         nick(self->libs[func->slot - 1]));
+  if(!func->addr) flaw(self, "'%.*s' is called before its declaration\n", nick(name));
+  if(func->ext) flaw(self, "'%.*s' is C code, link it before the call\n", nick(name));
   if(at) emit(self, link, at, func->addr);
+}
+
+// a call to C code, its argc arguments pushed: straight to a function of an
+// object, or through the slot of an import. C leaves the bytes of a result
+// past its size undefined: an int is cut to 32 bits, a char or short masked
+oper  cabi(mode* self, item* name, meta* func, u32i argc) {
+  if(func->size != VARY && (argc < func->size || (argc > func->size && !func->more)))
+    flaw(self, "'%.*s' takes %d arguments, got %d\n", nick(name), func->size, argc);
+  if(!func->addr) spot(self, port(self, func));
+  emit(self, ffi, func->addr, argc, func->more? func->size: argc, self->form.os);
+  u32i n = span(func->type);
+  if(n && n < 4) emit(self, calc, '&', 1, (1 << n * 8) - 1);
+  if(n == 4) emit(self, cast, 0);
+  return acc(func->type);
 }
 
 // name(args): each argument is pushed on 64 bits, then popped into its
 // register; syscall(number, args) goes to the kernel
 oper  dial(mode* self, item* name) {
-  bool trap = name == sget(self, "syscall");
-  u32i argc = 0;
+  bool  trap = name == sget(self, "syscall");
+  meta* func = name->data;
+  u32i  argc = 0;
   for(; !twin(self, ')'); argc++) {
     if(argc) skip(self, ',');
     if(argc == 6u + trap) flaw(self, "more than 6 arguments\n");
@@ -353,6 +351,7 @@ oper  dial(mode* self, item* name) {
     emit(self, trap, argc);
     return acc(NULL);
   }
+  if(func && func->kind == call && func->ext) return cabi(self, name, func, argc);
   for(u32i i = argc; i--; ) emit(self, args, i);
   byte* at = self->text->body;
   emit(self, dial);
@@ -394,6 +393,7 @@ oper  unit(mode* self) {
       if(!var || (var->kind != data && var->kind != glob))
         flaw(self, "no variable '%.*s'\n", nick(name));
       x = (oper){var->kind == data? vloc: vglo, var->slot, var->type};
+      if(var->ext) { spot(self, port(self, var)); emit(self, read, 8); x = (oper){vmem, 0, var->type}; }
       break;
     }
     case '(':  chop(self); x = expr(self, 1); skip(self, ')'); break;
@@ -808,15 +808,27 @@ void  stmt(mode* self) {
   self->slot = slot;
 }
 
-u64i  tidy(char* path, u64i size);
-bool  join(mode* self, char* path, u64i size);
+// x, declared without a body or as extern, is an import from the library of
+// the last load, or of "c". prev, what the name meant before, may be the same
+// import, which keeps its slot, or a function of an object, which x types
+void  hire(mode* self, meta* x, meta* prev) {
+  x->ext = 1;
+  if(x->kind == call && prev && prev->kind == call && prev->ext && prev->addr) {
+    x->addr = prev->addr;
+    return;
+  }
+  x->lib = self->from? self->from: rack(self, sget(self, "\"c\""));
+  if(!prev || !prev->ext || prev->addr || prev->kind != x->kind || prev->lib != x->lib
+     || prev->type != x->type || prev->size != x->size || prev->more != x->more)
+    once(self, prev, x->name, x->own);
+  else x->slot = prev->slot;
+}
 
-// the string after link or load, and the ;
+// the string after link or load
 item* bond(mode* self) {
   item* s = self->talk.hash;
   if(self->talk.kind != '"') flaw(self, "expected a string\n");
   chop(self);
-  skip(self, ';');
   return s;
 }
 
@@ -825,32 +837,22 @@ void  decl(mode* self) {
   // source file are imported from it
   if(same(self, "load")) {
     chop(self);
-    item* s = bond(self);
-    for(self->from = 1; self->from <= self->libn && self->libs[self->from - 1] != s; self->from++);
-    if(self->from > self->libn) {
-      if(self->libn == sizeof self->libs / sizeof *self->libs)
-        flaw(self, "too many libraries\n");
-      self->libs[self->libn++] = s;
-    }
+    self->from = rack(self, bond(self));
+    skip(self, ';');
     return;
   }
-  // link "name" ";": the source name.c beside this one, parsed here once
+  // link "name" ";": a source, an object or an archive, linked here once
   if(same(self, "link")) {
     chop(self);
-    item* s = bond(self);
-    u32i  dir = 0, n = quote(s, NULL) - 1;
-    for(u32i i = 0; self->name[i]; i++) if(self->name[i] == '/') dir = i + 1;
-    char* path = malloc(dir + n + 3);
-    if(!path) fail("out of memory\n");
-    copy((byte*)path, self->name, dir);
-    quote(s, (byte*)path + dir);
-    copy((byte*)path + dir + n, ".c", 3);
-    if(!join(self, path, tidy(path, dir + n + 2))) free(path);
+    haul(self, bond(self));
+    skip(self, ';');
     return;
   }
-  // static: the names stay in their source file
+  // static: the names stay in their source file; extern: a global of a library
   bool own = same(self, "static");
   if(own) chop(self);
+  bool ext = same(self, "extern");
+  if(ext) chop(self);
 
   // declaration begins with a type, or defines a struct:
   // "struct" name? "{" decl "}" ";"
@@ -865,7 +867,7 @@ void  decl(mode* self) {
   meta* type = term(self, base, &name);
 
   // type name "(" args ")" "{" stmt "}"     // callable decl
-  // type name "(" args ")" ";"               // import, after a load
+  // type name "(" args ")" ";"               // import
   if(twin(self, '(')) {
     meta* prev = name->data;
     seed(self, .name=name, .type=type, .kind=call, .own=own, .path=self->name);
@@ -874,24 +876,23 @@ void  decl(mode* self) {
     bool  anon = 0;
     self->slot = self->deep = 0;
     for(; !twin(self, ')'); func->size++, twin(self, ',')) {
+      if(twin(self, tokd('.', '.', '.'))) { func->more = 1; skip(self, ')'); break; }
       meta* type = sort(self);
       while(twin(self, '*')) type = href(self, type);
+      if(!type->size && !func->size && twin(self, ')')) break; // (void)
       if(self->talk.kind != ttag) { anon = 1; continue; } // an import may leave it out
       seed(self, .name=self->talk.hash, .type=type, .kind=data, .slot=room(self, 8));
       chop(self);
     }
     if(func->size > 6) flaw(self, "more than 6 parameters\n");
     if(twin(self, ';')) {
-      if(!self->from) flaw(self, "expected function body\n");
-      if(!prev || prev->kind != call || prev->addr || prev->slot != (s32i)self->from
-         || prev->size != func->size) // not the same import again
-        once(self, prev, name, own);
-      func->slot = self->from;
+      hire(self, func, prev);
       bury(self, top);
       return;
     }
     once(self, prev, name, own);
     if(anon) flaw(self, "a parameter without a name\n");
+    if(func->more) flaw(self, "only an import can be variadic\n");
     if(self->talk.kind != '{') flaw(self, "expected function body\n");
     func->addr = self->text->body;
     emit(self, open);
@@ -905,6 +906,13 @@ void  decl(mode* self) {
 
   // globals: type name ([n])* (= init)? (, declarator)* ;
   for(type = full(self, type, name);; type = noun(self, base, &name)) {
+    if(ext) {
+      meta* prev = name->data;
+      seed(self, .name=name, .type=type, .kind=glob, .own=own, .path=self->name);
+      hire(self, self->pile + self->top - 1, prev);
+      if(!twin(self, ',')) break;
+      continue;
+    }
     once(self, name->data, name, own);
     u32i off = lay(self, type->size, self->talk.kind != '=');
     if(twin(self, '=')) seal(self, type, self->data->head + off, 0);
@@ -914,61 +922,14 @@ void  decl(mode* self) {
   skip(self, ';');
 }
 
-// bind the forward calls from fix `from` on whose function is known: the rest
-// stay pending, or fail when all sources are parsed (last)
-void  tie(mode* self, u32i from, bool last) {
-  u32i keep = from;
-  for(fix* f = self->link + from; f < self->link + self->fixs; f++) {
-    meta* func = f->name->data;
-    while(func && func->own && func->path != f->path) func = func->hide; // static elsewhere
-    if(!last && (!func || func->kind != call)) { self->link[keep++] = *f; continue; }
-    self->name = f->path;
-    self->line = f->line;
-    bind(self, f->at, f->name, func, f->argc);
-    if(wide(func->type)) // its result was taken as an int
-      flaw(self, "'%.*s' does not return an int, define it before the call\n", nick(f->name));
-  }
-  self->fixs = keep;
-}
-
-// path without empty and . segments, and with dir/.. folded, so that a source
-// file has one name: its size
-u64i  tidy(char* path, u64i size) {
-  u64i n = 0, keep = 0; // bytes kept, the first keep of them a root / or ../s
-  if(size && path[0] == '/') n = keep = 1;
-  for(u64i i = n, j; i < size; i = j + 1) {
-    for(j = i; j < size && path[j] != '/'; j++);
-    if(j == i || (j - i == 1 && path[i] == '.')) continue;
-    if(j - i == 2 && path[i] == '.' && path[i + 1] == '.') {
-      if(n > keep) { for(n--; n > keep && path[n - 1] != '/'; n--); continue; }
-      if(keep == 1) continue; // /.. is /
-      keep = n + 3;
-    }
-    copy((byte*)path + n, path + i, j - i);
-    n += j - i;
-    path[n++] = '/';
-  }
-  if(n > 1) n--; // the last /
-  path[n] = 0;
-  return n;
-}
-
-// hide the static names of source file path, or show them again
-void  veil(mode* self, char* path, bool show) {
-  for(meta* x = self->pile; x < self->pile + self->top; x++) {
-    if(!x->own || x->path != path) continue;
-    if(show) { x->hide = x->name->data; x->name->data = x; }
-    else if(x->name->data == x) x->name->data = x->hide;
-  }
-}
-
-// parse the source file at path into the pass, unless it is already in: 1 when
-// it was. The static names of the file that links it are hidden meanwhile.
-// When it ends, its forward calls to functions now known are bound, its static
-// names hidden, and the last load is forgotten. The pool points into the
-// source, so it is kept
-bool  join(mode* self, char* path, u64i size) {
-  if(hget(self->pool, path, size)->name != path) return 0;
+// the file at path, read in code, into the pass unless it is already in: 1
+// when it was. An object (.o) or the members of an archive (.a) are taken, a
+// source is parsed. The static names of the file that links it are hidden
+// meanwhile. When a source ends, its forward calls to functions now known are
+// bound, its static names hidden, and the last load is forgotten. The pool
+// points into the source, so it is kept
+bool  join(mode* self, char* path, u64i size, file* src) {
+  if(hget(self->pool, path, size)->name != path) { free(src); return 0; }
   char* name = self->name;
   file* code = self->code;
   u64i  line = self->line;
@@ -977,11 +938,19 @@ bool  join(mode* self, char* path, u64i size) {
   veil(self, name, 0);
   self->from = 0;
   self->name = path;
-  self->code = scan(path);
-  self->line = 1;
-  for(chop(self); self->talk.kind; ) decl(self);
-  tie(self, fixs, 0);
-  veil(self, path, 0);
+  char  kind = size > 2 && path[size - 2] == '.'? path[size - 1]: 0;
+  if(kind == 'o' || kind == 'a') {
+    u32i n = self->objn;
+    if(kind == 'o') bolt(self, path, src);
+    else { ario_load(self, path, src); free(src); } // the members are copies
+    stow(self, n);
+  } else {
+    self->code = src;
+    self->line = 1;
+    for(chop(self); self->talk.kind; ) decl(self);
+    tie(self, fixs, 0);
+    veil(self, path, 0);
+  }
   veil(self, name, 1);
   self->name = name;
   self->code = code;
@@ -1016,18 +985,28 @@ void  make(mode* self) {
   crux(self, "int",  .size=4);
   crux(self, "long", .size=8);
 
+  stow(self, 0);
+
   u64i  size = 0;
   while(self->name[size]) size++;
   char* path = malloc(size + 1);
   if(!path) fail("out of memory\n");
   copy((byte*)path, self->name, size + 1);
-  join(self, path, tidy(path, size));
+  size = tidy(path, size);
+  join(self, path, size, scan(path));
   tie(self, 0, 1);
 
   meta* func = sget(self, "main")->data;
   if(!func || func->kind != call) fail("no main function\n");
-  self->main = func->addr;
-  emit(self, link, self->text->head, self->main);
+  self->main = self->boot = func->addr;
+  // a C library linked in starts first: its __libc_start_main calls main and
+  // exits through the library, which flushes stdio
+  meta* libc = sget(self, "__libc_start_main")->data;
+  if(libc && libc->kind == call && libc->ext && libc->addr) {
+    self->boot = self->text->body;
+    emit(self, crt, self->main, libc->addr);
+  }
+  emit(self, link, self->text->head, self->boot);
 
   self->show(self);
   self->drop(self->text, TEXT);
