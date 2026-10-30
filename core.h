@@ -63,7 +63,6 @@ struct unit {
 
 // arch
 typedef enum { cpu_ia64, cpu_arm8 } chip;
-// the OS of a form: its C convention, which calls to C code follow
 typedef enum { os_linux, os_mac, os_win } osys;
 #define WIDE (1 << 24) // calc op flag: on 64 bits, for pointers and long
 // typed slots: a variadic pointer would pass the arguments on the stack on
@@ -200,10 +199,10 @@ struct mode {
 
   file* text; // binary code
   byte* main; // entry of main in text
-  byte* boot; // what the boot stub calls: main, or crt when a C library is in
-  file* data; // binary data
+  byte* boot; // what the boot stub calls: main, or crt
+  file* data; // non-zero initialized data
   u64i  zero; // zero initialized data (bss) bytes
-  u32i  most; // largest alignment of data or code an object asks for, 0: none
+  u32i  most; // largest alignment of data or code an object asks for
   meta* rune; // char: what a string literal points to
 
   poke  hold;
@@ -212,11 +211,11 @@ struct mode {
 
   u32i  top;
   meta  pile[256];
-  s32i  slot; // frame bytes in use
-  s32i  deep; // frame bytes the function needs
-  meta* func; // the function being compiled
-  byte* cont; // continue target, NULL outside loops
-  u32i  ends; // pending break jumps
+  s32i  slot;      // frame bytes in use
+  s32i  deep;      // frame bytes the function needs
+  meta* func;      // the function being compiled
+  byte* cont;      // continue target, NULL outside loops
+  u32i  ends;      // pending break jumps
   byte* quit[64];
   u32i  fixs;
   fix   link[256];
@@ -224,9 +223,9 @@ struct mode {
   seat  aims[1024];
   u32i  defn;
   meta  defs[512]; // pointer, array and struct types, members
-  u32i  from; // 1 + the library of the last load in this source file, 0: none
+  u32i  from;      // 1 + the library of the last load in this source file
   u32i  libn;
-  item* libs[16]; // shared libraries named by load, as string literals
+  item* libs[16];  // shared libraries named by load, as string literals
   u32i  impn;
   meta* imps[256]; // imports in use, each an 8-byte slot the loader fills
   u32i  objn, objc;
