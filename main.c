@@ -213,10 +213,10 @@ int   main(int argc, char** argv) {
   };
 
   opts args[] = {
-    {"-a", "--arch", .args = 1, .desc = "ia64, arm8", .call = arch},
-    {"-f", "--form", .args = 1, .desc = "elfs, mach, pe32", .call = wrap},
-    {"-o", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
-    {"-L", "--libs", .args = 1, .desc = "look for libname.a in this directory too", .call = seek},
+    {"-a", "--arch", .args = 1, .desc = "cpu architecture: ia64, arm8", .call = arch},
+    {"-f", "--form", .args = 1, .desc = "binary format: elfs, mach, pe32", .call = wrap},
+    {"-e", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
+    {"-p", "--path", .args = 1, .desc = "specify path to look for library", .call = seek},
     {"-h", "--help", .desc = "display help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);
