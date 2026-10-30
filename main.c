@@ -37,7 +37,7 @@ extern const form pe32;
 #define host elfs
 #endif
 
-file* look(char* name) {
+file* scan(char* name) {
   FILE* fp = fopen(name, "rb");
   if(!fp) return NULL;
   fseek(fp, 0, SEEK_END);
@@ -51,12 +51,6 @@ file* look(char* name) {
   f->head[size] = 0; // lexer stops at NUL
   if(fread(f->head, 1, size, fp) != size) fail("read error: %s\n", name);
   fclose(fp);
-  return f;
-}
-
-file* scan(char* name) {
-  file* f = look(name);
-  if(!f) fail("cannot open: %s\n", name);
   return f;
 }
 

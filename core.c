@@ -1056,19 +1056,19 @@ bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
 // Freed when the file is in already
 bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
   size = tidy(path, size);
-  if(!code && !(code = look(path))) return 0;
+  if(!code && !(code = scan(path))) return 0;
   if(!join(self, path, size, code, kind)) free(path);
   return 1;
 }
 
 // the file at name, named on the command line, as a unit of kind; read when
-// code is NULL
+// code is NULL, fatal when it cannot be
 void  lead(mode* self, char* name, file* code, byte kind) {
   u64i  size = slen(name);
   char* path = malloc(size + 1);
   if(!path) fail("out of memory\n");
   copy((byte*)path, name, size + 1);
-  land(self, path, size, code? code: scan(name), kind);
+  if(!land(self, path, size, code, kind)) fail("cannot open: %s\n", name);
 }
 
 void  make(mode* self) {

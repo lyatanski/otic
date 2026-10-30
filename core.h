@@ -134,23 +134,16 @@ typedef struct {
 typedef enum { base, list, data, call, glob, refs, many, pend } what;
 typedef struct meta meta;
 struct meta {
-  meta* type; // data link to its type, what refs points to, what many holds,
-              // the first member of a list
-  meta* hide; // what the name meant before, restored when the scope ends; the
-              // next member of a list; of a pend: the next name of its member,
-              // in a ring
+  meta* type; // data link to its type
+  meta* hide; // what the name meant before
   item* name;
   byte* addr;
-  u32i  size; // bytes of a type, parameters of a call (VARY: of a function
-              // from an object, not known)
-  s32i  slot; // frame offset of a local, data offset of a global, offset of a
-              // member, alignment of a list; of an import: 1 + its slot once
-              // it is used, 0 before; of a pend: its member's offset
+  u32i  size; // bytes of a type, parameters of a call
+  s32i  slot; // frame offset, data offset, offset of a member
   what  kind;
   bool  own;  // static: the name is hidden outside its source file
   bool  weak; // defined by an object as weak: a strong definition replaces it
-  bool  ext;  // C code: a function from an object, or an import (a function
-              // without addr, or an extern global), called the C way
+  bool  ext;  // a function from an object, or an import
   bool  more; // variadic: arguments may follow the size named ones
   byte  lib;  // 1 + the library of an import
   u32i  unit; // the unit that defines it
@@ -241,14 +234,12 @@ struct mode {
   u32i  askn, askc, askd;
   item** asks;     // archive names used, their members pulled up to askd
   u32i  dirn;
-  char* dirs[16];  // where link looks for libname.a: each -L
-                   // beside tic's own directory
+  char* dirs[16];  // libraries locations
   u32i  hookn, hookc;
   hook* hooks;
 };
 
-file* scan(char* name); // a source file, NUL terminated
-file* look(char* name); // the same, NULL when it cannot be opened
+file* scan(char* name); // a source file, NUL terminated, NULL when it cannot be opened
 void  ario_load(mode*, file*); // the symbol index of an archive, its table
 void  ario_pull(mode*, meta*); // the member that defines an archive name
 void  make(mode*);
