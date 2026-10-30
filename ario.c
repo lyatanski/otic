@@ -7,7 +7,7 @@
 // that defines it, which is taken (pulled) as a unit of its own only once one
 // of its names is used.
 // - GNU names end in '/'; a long one is "/n", n an offset into the "//"
-//   member. Its index is "/" or "/SYM64/": a big endian count of 4 or 8
+//   member, which follows the index. Its index is "/" or "/SYM64/": a big endian count of 4 or 8
 //   bytes, as many offsets of member headers, then as many names, NUL ended.
 // - BSD names end in spaces; a long one is "#1/n", its n bytes open the body.
 //   Its index is "__.SYMDEF" or "__.SYMDEF_64", maybe " SORTED": the bytes of
@@ -57,12 +57,11 @@ static ario_part ario_read(char* path, file* f, byte* at) {
     p.size -= p.nlen;
     while(p.nlen && !p.name[p.nlen - 1]) p.nlen--;
   } else if(p.name[0] == '/' && p.name[1] >= '0' && p.name[1] <= '9') {
-    u64i off = ario_num(p.name + 1, sizeof(h->name) - 1);
-    ario_part t = {.size = 0};
+    u64i  off = ario_num(p.name + 1, sizeof(h->name) - 1);
     byte* q = f->head + 8;
-    for(; q < at && !alike(q, "// ", 3); q = t.next) t = ario_read(path, f, q);
-    if(q < at) t = ario_read(path, f, q);
-    if(q >= at || off >= t.size) fail("bad archive name: %s\n", path);
+    while(q < at && (alike(q, "/ ", 2) || alike(q, "/SYM64/ ", 8))) q = ario_read(path, f, q).next;
+    ario_part t = q < at && alike(q, "// ", 3)? ario_read(path, f, q): (ario_part){.size = 0};
+    if(off >= t.size) fail("bad archive name: %s\n", path);
     p.name = (char*)t.body + off;
     for(p.nlen = 0; off + p.nlen < t.size && p.name[p.nlen] != '/' && p.name[p.nlen] != '\n'; p.nlen++);
   } else {
@@ -77,10 +76,30 @@ static void ario_name(mode* self, meta* x, char* name, u64i len, u64i off) {
   file* f = home(self)->code;
   if(off < 8 || off >= (u64i)(f->tail - f->head) || off >> 31 || !len)
     fail("bad archive index: %s\n", home(self)->path);
-  item* s = hget(home(self), name, len);
+  item* s = hget(self, self->unit, name, len);
   if(s->data) return;
   *x = (meta){.name = s, .kind = pend, .ext = 1, .size = VARY, .slot = off, .unit = self->unit};
   s->data = x;
+}
+
+static int ario_cmp(const void* x, const void* y) {
+  s32i a = (*(meta**)x)->slot, b = (*(meta**)y)->slot;
+  return (a > b) - (a < b);
+}
+
+// the names of each member, of the n in defs, linked in a ring (meta.hide):
+// ario_pull takes them out of the table without a scan of it
+static void ario_ring(meta* defs, u64i n) {
+  meta** by = malloc(n * sizeof(meta*) + 1);
+  if(!by) fail("out of memory\n");
+  u64i k = 0;
+  for(u64i i = 0; i < n; i++) if(defs[i].kind == pend) by[k++] = defs + i;
+  qsort(by, k, sizeof(meta*), ario_cmp);
+  for(u64i i = 0, j; i < k; i = j) {
+    for(j = i + 1; j < k && by[j]->slot == by[i]->slot; j++) by[j - 1]->hide = by[j];
+    by[j - 1]->hide = by[i];
+  }
+  free(by);
 }
 
 // the symbol index of the archive f, the unit being joined, into its table.
@@ -113,6 +132,7 @@ void ario_load(mode* self, file* f) {
       ario_name(self, defs + i, name, len, ario_word(b + w + i * w, w, 1));
       name += len + 1;
     }
+    ario_ring(defs, n);
     return;
   }
   u64i pairs = ario_word(b, w, 0); // bytes of (name, offset) pairs, names
@@ -129,6 +149,7 @@ void ario_load(mode* self, file* f) {
     while(at + len < strs && name[at + len]) len++;
     ario_name(self, defs + i, name + at, len, ario_word(b + 2 * w + 2 * w * i, w, 0));
   }
+  ario_ring(defs, n);
 }
 
 // take the member that defines archive name x, as a unit named
@@ -137,12 +158,9 @@ void ario_load(mode* self, file* f) {
 void ario_pull(mode* self, meta* x) {
   unit*     a = self->units + x->unit;
   ario_part p = ario_read(a->path, a->code, a->code->head + x->slot);
-  for(u32i i = 0; i < a->size; i++) {
-    meta* m = a->pool[i]? a->pool[i]->data: NULL;
-    if(m && m->kind == pend && m->slot == x->slot) a->pool[i]->data = NULL;
-  }
-  u64i  plen = 0;
-  while(a->path[plen]) plen++;
+  meta*     m = x;
+  do m->name->data = NULL; while((m = m->hide) != x);
+  u64i  plen = slen(a->path);
   file* o = malloc(sizeof(file) + p.size);
   char* n = malloc(plen + p.nlen + 3);
   if(!o || !n) fail("out of memory\n");

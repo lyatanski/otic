@@ -187,8 +187,7 @@ static void seek(mode* self, opts*, char* para) {
 // the source, an object file (name.o), or a static library (name.a), whose
 // members are object files
 static void apos(mode* self, opts*, char* para) {
-  u64i n = 0;
-  while(para[n]) n++;
+  u64i n = slen(para);
   if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, scan(para), un_objs);
   else if(n > 2 && !scmp(para + n - 2, ".a")) bolt(self, para, scan(para), un_arch);
   else self->name = para;

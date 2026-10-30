@@ -132,6 +132,14 @@ static char* elfs_str(byte* o, sh64* tab, u64i at) {
   return tab && at < tab->size? (char*)o + tab->offset + at: "";
 }
 
+// the name of symbol s, string table str, in the table of the unit being
+// joined: NULL when it has none
+static item* elfs_name(mode* self, byte* o, sh64* str, sym64* s) {
+  char* at = elfs_str(o, str, s->name);
+  u64i  len = slen(at);
+  return len? hget(self, self->unit, at, len): NULL;
+}
+
 // a relocatable object, the unit being joined, aligned for its headers, NUL
 // ended and kept: its table points at its names. Its code goes after text,
 // its data and bss are laid out, its globals defined in its table, its
@@ -178,16 +186,9 @@ void elfs_take(mode* self, file* f) {
       if(at + s->size > (u64i)(t->tail - t->head)) fail("text section overflow\n");
       put[i] = (seat){t->head + at, 0};
       t->body = copy(put[i].at, o + s->offset, s->type == SHT_NOBITS? 0: s->size);
-    } else if(s->type == SHT_NOBITS) {
-      self->zero = (self->zero + a - 1) & -a;
-      put[i].off = lay(self, s->size, 1);
     } else {
-      file* d = self->data;
-      u64i  at = ((d->body - d->head) + a - 1) & -a;
-      if(at > (u64i)(d->tail - d->head)) fail("data section overflow\n");
-      d->body = d->head + at;
-      put[i].off = lay(self, s->size, 0);
-      copy(d->head + put[i].off, o + s->offset, s->size);
+      put[i].off = lay(self, s->size, s->type == SHT_NOBITS, a);
+      if(s->type != SHT_NOBITS) copy(self->data->head + put[i].off, o + s->offset, s->size);
     }
   }
 
@@ -211,26 +212,22 @@ void elfs_take(mode* self, file* f) {
   for(u64i i = 1; i < nsym; i++) {
     sym64* s = sym + i;
     if(s->bind == STB_LOCAL || s->shidx == SHN_UNDEF || s->shidx == SHN_ABS) continue;
-    char*  at = elfs_str(o, str, s->name);
-    u64i   len = 0;
-    while(at[len]) len++;
-    if(!len) continue;
-    item*  name = hget(home(self), at, len);
+    item*  name = elfs_name(self, o, str, s);
+    if(!name) continue;
     meta*  prev = find(self, 0, name);
     u32i   held = prev? heft(prev): 0;
     meta   x = {.name = name, .kind = glob, .unit = self->unit,
                 .weak = s->bind == STB_WEAK || s->shidx == SHN_COMMON};
     if(held > 2 && x.weak) continue;
-    if(held == 4) flop("'%.*s' is defined twice\n", (int)len, at);
-    if(prev && prev->lib) flop("'%.*s' is declared before the object\n", (int)len, at);
+    if(held == 4) flop("'%.*s' is defined twice\n", nick(name));
+    if(prev && prev->lib) flop("'%.*s' is declared before the object\n", nick(name));
     if(s->shidx == SHN_COMMON) { // value: alignment
       u64i a = s->value? s->value: 1;
       if(a > 16 || a & (a - 1) || s->size >> 30) flop("bad common symbol\n");
-      self->zero = (self->zero + a - 1) & -a;
-      x.slot = lay(self, s->size, 1);
+      x.slot = lay(self, s->size, 1, a);
     } else {
       if(s->shidx >= n || put[s->shidx].off == GONE.off)
-        flop("'%.*s' is in a section left out\n", (int)len, at);
+        flop("'%.*s' is in a section left out\n", nick(name));
       seat p = put[s->shidx];
       if(p.at) { x.kind = call; x.addr = p.at + s->value; x.size = VARY; x.ext = 1; }
       else x.slot = p.off + s->value;
@@ -241,10 +238,7 @@ void elfs_take(mode* self, file* f) {
   for(u64i i = 1; i < nsym; i++) { // a weak undefined name does not pull
     sym64* s = sym + i;
     if(s->bind != STB_GLOBAL || s->shidx != SHN_UNDEF) continue;
-    char*  at = elfs_str(o, str, s->name);
-    u64i   len = 0;
-    while(at[len]) len++;
-    item*  name = len? hget(home(self), at, len): NULL;
+    item*  name = elfs_name(self, o, str, s);
     meta*  m = name && !name->data? find(self, self->unit, name): NULL;
     if(m && m->kind == pend) ask(self, m);
   }
@@ -277,21 +271,14 @@ void elfs_take(mode* self, file* f) {
       hook   h = {.site = p.at? (seat){at, 0}: (seat){NULL, p.off + (u32i)r->offset},
                   .unit = self->unit, .add = r->addend};
       if(s->bind != STB_LOCAL) {
-        char* name = elfs_str(o, str, s->name);
-        u64i  len = 0;
-        while(name[len]) len++;
-        h.name = hget(home(self), name, len);
+        if(!(h.name = elfs_name(self, o, str, s))) flop("a reference to a symbol without a name\n");
       } else if(s->shidx >= n || put[s->shidx].off == GONE.off) {
         flop("a reference into a section left out\n");
       } else {
         seat q = put[s->shidx];
         h.aim = q.at? (seat){q.at + s->value, 0}: (seat){NULL, q.off + (u32i)s->value};
       }
-      if(self->hookn == self->hookc) {
-        self->hookc = self->hookc * 2 + 256;
-        self->hooks = realloc(self->hooks, self->hookc * sizeof(hook));
-        if(!self->hooks) fail("out of memory\n");
-      }
+      self->hooks = swell(self->hooks, self->hookn, &self->hookc, sizeof(hook), 256);
       self->hooks[self->hookn++] = h;
     }
   }

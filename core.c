@@ -13,6 +13,19 @@ byte* copy(byte* dst, void* src, u64i size) {
   return dst;
 }
 
+u64i  slen(char* s) {
+  u64i n = 0;
+  while(s[n]) n++;
+  return n;
+}
+
+void* swell(void* p, u32i n, u32i* cap, u64i size, u32i least) {
+  if(n < *cap) return p;
+  *cap = *cap * 2 + least;
+  if(!(p = realloc(p, *cap * size))) fail("out of memory\n");
+  return p;
+}
+
 bool  alike(void* x, void* y, u64i size) {
   byte *a = x, *b = y;
   for(; size && *a == *b; size--, a++, b++);
@@ -64,10 +77,9 @@ static void  hgrow(unit* self) {
 
 // the table grows when 3/4 full or when 10 probes fail. Items are allocated
 // apart from it and never move: metas, words and fixes point to them
-item* hget(unit* self, char* mark, u64i size) {
+static item* hput(unit* self, char* mark, u64i size, u64i k) {
   static item* heap;
   static u32i  left;
-  u64i   k  = clue(mark, size);
   item** at = hpos(self, mark, size, k);
   if(at && *at) return *at;
   while(!at || 4 * (self->used + 1) > 3 * self->size) {
@@ -82,6 +94,21 @@ item* hget(unit* self, char* mark, u64i size) {
   *at = heap + --left;
   **at = (item){.size = size, .name = mark};
   return *at;
+}
+
+// a new item also joins the items of its spelling, in join order, so that
+// find visits only the units that have the name
+item* hget(mode* self, u32i at, char* mark, u64i size) {
+  u64i  k = clue(mark, size);
+  unit* u = self->units + at;
+  u32i  used = u->used;
+  item* s = hput(u, mark, size, k);
+  if(u->used == used) return s;
+  item** p = (item**)&hput(&self->names, mark, size, k)->data;
+  for(; *p && (*p)->unit < at; p = &(*p)->next);
+  s->unit = at;
+  s->next = *p;
+  return *p = s;
 }
 
 void chop(mode* self) {
@@ -172,7 +199,7 @@ void chop(mode* self) {
   }
 
   if(kind == '"' || kind == ttag) {
-    self->talk.hash = hget(home(self), (char*)self->code->body, c - self->code->body);
+    self->talk.hash = hget(self, self->unit, (char*)self->code->body, c - self->code->body);
   }
   else
     self->talk.ival = kind == tnum? ival: 0;
@@ -242,13 +269,13 @@ typedef struct { vkind kind; s32i ival; meta* type; } oper;
 #define acc(t)  ((oper){vacc, 0, (t)})
 
 // size bytes of data, or of bss when zero: their offset
-u32i  lay(mode* self, u32i size, bool zero) {
+u32i  lay(mode* self, u32i size, bool zero, u32i align) {
   if(zero) {
-    self->zero = ((self->zero + 7) & -8) + size;
+    self->zero = ((self->zero + align - 1) & -align) + size;
     return (self->zero - size) | ZERO;
   }
   file* d = self->data;
-  u32i  off = ((d->body - d->head) + 7) & -8;
+  u32i  off = ((d->body - d->head) + align - 1) & -align;
   if(off + size > (u64i)(d->tail - d->head)) fail("data section overflow\n");
   d->body = d->head + off + size;
   return off;
@@ -437,7 +464,7 @@ oper  atom(mode* self) {
   switch(op) {
     case tnum: x = cnst(self->talk.ival); chop(self); return x;
     case '"': {
-      u32i off = lay(self, self->talk.hash->size - 1, 0);
+      u32i off = lay(self, self->talk.hash->size - 1, 0, 8);
       quote(self->talk.hash, self->data->head + off);
       chop(self);
       spot(self, off);
@@ -983,7 +1010,7 @@ void  decl(mode* self) {
       continue;
     }
     once(self, find(self, self->unit, name), name, own);
-    u32i off = lay(self, type->size, self->talk.kind != '=');
+    u32i off = lay(self, type->size, self->talk.kind != '=', 8);
     if(twin(self, '=')) seal(self, type, self->data->head + off, 0);
     seed(self, .name=name, .type=type, .kind=glob, .slot=off, .own=own);
     if(!twin(self, ',')) break;
@@ -1024,16 +1051,24 @@ bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
   return 1;
 }
 
+// path, size bytes from malloc, tidy'd and joined as a unit of kind with
+// code, read when NULL: 0, path still the caller's, when it cannot be read.
+// Freed when the file is in already
+bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
+  size = tidy(path, size);
+  if(!code && !(code = look(path))) return 0;
+  if(!join(self, path, size, code, kind)) free(path);
+  return 1;
+}
+
 // the file at name, named on the command line, as a unit of kind; read when
 // code is NULL
 void  lead(mode* self, char* name, file* code, byte kind) {
-  u64i  size = 0;
-  while(name[size]) size++;
+  u64i  size = slen(name);
   char* path = malloc(size + 1);
   if(!path) fail("out of memory\n");
   copy((byte*)path, name, size + 1);
-  size = tidy(path, size);
-  if(!join(self, path, size, code? code: scan(path), kind)) free(path);
+  land(self, path, size, code? code: scan(name), kind);
 }
 
 void  make(mode* self) {

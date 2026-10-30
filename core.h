@@ -24,13 +24,20 @@ typedef  uint8_t byte;
 #define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
 
 byte* copy(byte* dst, void* src, u64i size); // returns dst + size
+u64i  slen(char* s); // bytes before the NUL
+// p, an array of *cap elements of size bytes with n in use, with room for one
+// more: it grows to twice its size plus least
+void* swell(void* p, u32i n, u32i* cap, u64i size, u32i least);
 
 // a name in the table of a unit, and what it means there
-typedef struct {
+typedef struct item item;
+struct item {
   u64i  size;
   char* name;
   void* data;
-} item;
+  item* next; // the same spelling in the table of a later unit (mode.names)
+  u32i  unit; // the unit whose table it is in
+};
 
 typedef struct {
   byte*  body;
@@ -129,7 +136,8 @@ struct meta {
   meta* type; // data link to its type, what refs points to, what many holds,
               // the first member of a list
   meta* hide; // what the name meant before, restored when the scope ends; the
-              // next member of a list
+              // next member of a list; of a pend: the next name of its member,
+              // in a ring
   item* name;
   byte* addr;
   u32i  size; // bytes of a type, parameters of a call (VARY: of a function
@@ -188,6 +196,8 @@ struct mode {
   u32i  unit; // the unit being parsed
   u32i  unitn, unitc;
   unit* units; // in join order, the root first
+  unit  names; // each spelling in any unit's table: data, the first of its
+               // items in join order (item.next)
   emit  arch;
   form  form;
 
@@ -242,15 +252,15 @@ void  bolt(mode*, char* name, file*, byte kind); // a file named on the command 
 bool  alike(void* x, void* y, u64i size);
 u64i  clue(char* mark, u64i size);
 item* hsee(unit*, char* mark, u64i size, u64i clue); // NULL when not in
-item* hget(unit*, char* mark, u64i size);            // made when not in
-u32i  lay(mode*, u32i size, bool zero);
+item* hget(mode*, u32i at, char* mark, u64i size);   // in unit at, made when not in
+u32i  lay(mode*, u32i size, bool zero, u32i align);
 
 // the unit being parsed
 #define home(self) ((self)->units + (self)->unit)
 // fail at the line being parsed, in the file of the unit being parsed
 #define flaw(self, fmt, ...) \
   fail("%s:%ld: " fmt, home(self)->path, (self)->line __VA_OPT__(,) __VA_ARGS__)
-#define sget(self, k) hget(home(self), k, sizeof(k)-1)
+#define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
 #define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
 #define nick(x) (int)(x)->size, (x)->name
 
@@ -259,6 +269,7 @@ u32i  wide(meta*);
 u32i  quote(item* s, byte* out);
 void  bind(mode*, byte* at, item* name, meta* func, u32i argc, bool ext);
 bool  join(mode*, char* path, u64i size, file* code, byte kind);
+bool  land(mode*, char* path, u64i size, file* code, byte kind);
 
 // link.c
 u64i  tidy(char* path, u64i size);
