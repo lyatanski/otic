@@ -176,15 +176,18 @@ typedef struct {
   u32i  off;
 } seat;
 
-// a 32-bit pc-relative reference of object code: site holds the distance to
-// aim, or to what name, in the table of unit, means when the run ends, plus
-// add; patched by dock
+// a reference of object code: site holds the distance to aim (wide: its
+// address), or to what name, in the table of unit, means when the run ends,
+// plus add; patched by dock. Address 0 when name is weak and nothing defines it
 typedef struct {
   seat  site;
   seat  aim;
   item* name;
   u32i  unit;
   s64i  add;
+  bool  wide; // 64-bit absolute, else 32-bit pc-relative
+  bool  weak;
+  bool  load; // a GOT load made a REX lea: mov reg, 0 for address 0
 } hook;
 
 struct mode {
@@ -206,6 +209,7 @@ struct mode {
   byte* boot; // what the boot stub calls: main, or crt when a C library is in
   file* data; // binary data
   u64i  zero; // zero initialized data (bss) bytes
+  u32i  most; // largest alignment of data or code an object asks for, 0: none
   meta* rune; // char: what a string literal points to
 
   poke  hold;
@@ -247,7 +251,8 @@ file* look(char* name); // the same, NULL when it cannot be opened
 void  ario_load(mode*, file*); // the symbol index of an archive, its table
 void  ario_pull(mode*, meta*); // the member that defines an archive name
 void  make(mode*);
-void  dock(mode*, u64i at); // lay data out at text + at, bss after it
+void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it, text at org
+u64i  gap(mode*); // alignment of data and of bss after it
 void  bolt(mode*, char* name, file*, byte kind); // a file named on the command line
 bool  alike(void* x, void* y, u64i size);
 u64i  clue(char* mark, u64i size);

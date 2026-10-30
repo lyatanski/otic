@@ -57,16 +57,19 @@ typedef struct {
 } ph64;
 
 // text, then data and bss in a second, writable segment: 64 KB apart in
-// memory so both segments start on their own page with any page size
+// memory so both segments start on their own page with any page size. Text
+// starts at the alignment objects ask for, data and bss at gap
 file* elfs_pack(mode* self) {
   const u64i org  = 0x400000;
+  const u64i step = gap(self);
   const u64i code = self->text->body - self->text->head;
   const u64i size = self->data->body - self->data->head;
-  const u64i data = (code + 15) & ~15; // data after text in the file
+  const u64i data = (code + step - 1) & -step; // data after text in the file
   const u64i nph  = size || self->zero? 2: 1;
-  const u64i top  = sizeof(elfs_id) + sizeof(eh64) + nph * sizeof(ph64);
+  const u64i head = sizeof(elfs_id) + sizeof(eh64) + nph * sizeof(ph64);
+  const u64i top  = self->most? (head + self->most - 1) & -(u64i)self->most: head;
   const u64i all  = top + (nph > 1? data + size: code);
-  dock(self, data + 0x10000);
+  dock(self, data + 0x10000, org + top);
 
   elfs_id id = {
     .seal   = {0x7f, 'E', 'L', 'F'},
@@ -99,7 +102,7 @@ file* elfs_pack(mode* self) {
     .vaddr  = org + top + data + 0x10000,
     .paddr  = org + top + data + 0x10000,
     .filesz = size,
-    .memsz  = ((size + 15) & ~15) + self->zero,
+    .memsz  = ((size + step - 1) & -step) + self->zero,
     .align  = 0x10000,
   }};
 
@@ -108,7 +111,8 @@ file* elfs_pack(mode* self) {
   out->body = out->head + all;
   out->tail = out->head + all;
   byte* at = copy(copy(out->head, &id, sizeof(id)), &eh, sizeof(eh));
-  copy(copy(at, ph, nph * sizeof(ph64)), self->text->head, code);
+  copy(at, ph, nph * sizeof(ph64));
+  copy(out->head + top, self->text->head, code);
   copy(out->head + top + data, self->data->head, size);
   return out;
 }
@@ -118,7 +122,7 @@ enum { SHF_ALLOC = 0x2, SHF_EXECINSTR = 0x4, SHF_TLS = 0x400 };
 enum { STB_LOCAL, STB_GLOBAL, STB_WEAK };
 enum { SHN_UNDEF, SHN_ABS = 0xfff1, SHN_COMMON };
 enum {
-  R_X86_64_NONE, R_X86_64_PC32 = 2, R_X86_64_PLT32 = 4, R_X86_64_GOTPCREL = 9,
+  R_X86_64_NONE, R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32 = 4, R_X86_64_GOTPCREL = 9,
   R_X86_64_GOTPCRELX = 41, R_X86_64_REX_GOTPCRELX,
 };
 
@@ -144,8 +148,8 @@ static item* elfs_name(mode* self, byte* o, sh64* str, sym64* s) {
 // ended and kept: its table points at its names. Its code goes after text,
 // its data and bss are laid out, its globals defined in its table, its
 // undefined names ask for the archive members that define them, and its
-// references are hooked for dock. Only x86-64 and pc-relative references so
-// far: no absolute pointers, thread-locals or constructors
+// references are hooked for dock. Only x86-64 so far: no thread-locals or
+// constructors
 void elfs_take(mode* self, file* f) {
   u64i  size = f->tail - f->head;
   byte* o = f->head;
@@ -179,7 +183,8 @@ void elfs_take(mode* self, file* f) {
     if(s->flags & SHF_TLS) flop("thread-local storage is not supported\n");
     if(s->type == SHT_INIT_ARRAY || s->type == SHT_FINI_ARRAY || s->type == SHT_PREINIT_ARRAY)
       flop("constructors are not supported\n");
-    if(a > 16 || a & (a - 1)) flop("alignment over 16\n");
+    if(a > 4096 || a & (a - 1)) flop("alignment over a page\n");
+    if(a > self->most) self->most = a;
     if(s->flags & SHF_EXECINSTR) {
       file* t = self->text;
       u64i  at = ((t->body - t->head) + a - 1) & -a;
@@ -223,7 +228,8 @@ void elfs_take(mode* self, file* f) {
     if(prev && prev->lib) flop("'%.*s' is declared before the object\n", nick(name));
     if(s->shidx == SHN_COMMON) { // value: alignment
       u64i a = s->value? s->value: 1;
-      if(a > 16 || a & (a - 1) || s->size >> 30) flop("bad common symbol\n");
+      if(a > 4096 || a & (a - 1) || s->size >> 30) flop("bad common symbol\n");
+      if(a > self->most) self->most = a;
       x.slot = lay(self, s->size, 1, a);
     } else {
       if(s->shidx >= n || put[s->shidx].off == GONE.off)
@@ -253,23 +259,30 @@ void elfs_take(mode* self, file* f) {
       flop("bad relocations\n");
     for(rela64* e = r + sh[i].size / sizeof(rela64); r < e; r++) {
       if(r->type == R_X86_64_NONE) continue;
-      if(r->offset < 2 || r->offset > t->size - 4 || t->size < 4 || r->sym >= nsym)
+      u64i  w = r->type == R_X86_64_64? 8: 4;
+      if(r->offset > t->size || t->size - r->offset < w || r->sym >= nsym)
         flop("bad relocation\n");
       byte* at = p.at? p.at + r->offset: self->data->head + p.off + r->offset;
+      bool  load = 0;
       switch(r->type) {
       case R_X86_64_GOTPCREL: case R_X86_64_GOTPCRELX: case R_X86_64_REX_GOTPCRELX:
         // no GOT: its loads become the address itself
-        if(at[-2] == 0x8b) at[-2] = 0x8d;                                // mov reg -> lea reg
+        if(r->offset < 2) flop("bad relocation\n");
+        if(at[-2] == 0x8b) { // mov reg -> lea reg
+          at[-2] = 0x8d;
+          load = r->type == R_X86_64_REX_GOTPCRELX && r->offset > 2;
+        }
         else if(at[-2] == 0xff && at[-1] == 0x15) at[-2] = 0x67, at[-1] = 0xe8; // call * -> addr32 call
         else if(at[-2] == 0xff && at[-1] == 0x25) at[-2] = 0x90, at[-1] = 0xe9; // jmp * -> nop; jmp
         else flop("cannot drop the GOT load at %#llx\n", (unsigned long long)r->offset);
         break;
-      case R_X86_64_PC32: case R_X86_64_PLT32: break;
+      case R_X86_64_PC32: case R_X86_64_PLT32: case R_X86_64_64: break;
       default: flop("relocation type %u is not supported\n", r->type);
       }
       sym64* s = sym + r->sym;
       hook   h = {.site = p.at? (seat){at, 0}: (seat){NULL, p.off + (u32i)r->offset},
-                  .unit = self->unit, .add = r->addend};
+                  .unit = self->unit, .add = r->addend, .wide = w == 8,
+                  .weak = s->bind == STB_WEAK && s->shidx == SHN_UNDEF, .load = load};
       if(s->bind != STB_LOCAL) {
         if(!(h.name = elfs_name(self, o, str, s))) flop("a reference to a symbol without a name\n");
       } else if(s->shidx >= n || put[s->shidx].off == GONE.off) {

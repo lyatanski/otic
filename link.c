@@ -160,12 +160,15 @@ void  tie(mode* self, u32i from, bool last) {
   self->line = line;
 }
 
-// where what name, in the table of unit at, means when the run ends is: a
-// global, or with code a function with a body, but not an import
+// m is a global, or with code a function with a body, but not an import
+static bool real(meta* m, bool code) {
+  return m && !m->lib && (m->kind == glob || (code && m->kind == call && m->addr));
+}
+
+// where what name, in the table of unit at, means when the run ends is
 seat  goal(mode* self, u32i at, item* name, bool code) {
   meta* m = find(self, at, name);
-  if(!m || m->lib || (m->kind != glob && (!code || m->kind != call || !m->addr)))
-    fail("undefined: %.*s\n", nick(name));
+  if(!real(m, code)) fail("undefined: %.*s\n", nick(name));
   return m->kind == call? (seat){m->addr, 0}: (seat){NULL, m->slot};
 }
 
@@ -178,16 +181,34 @@ u64i  pose(mode* self, seat s, u64i at, u64i bss) {
          s.off & WANT? pose(self, goal(self, 0, self->asks[s.off & ~WANT], 0), at, bss): at + s.off;
 }
 
-void  dock(mode* self, u64i at) {
-  u64i bss = at + ((self->data->body - self->data->head + 15) & -16);
+u64i  gap(mode* self) {
+  return self->most > 16? self->most: 16;
+}
+
+void  dock(mode* self, u64i at, u64i org) {
+  u64i bss = at + ((self->data->body - self->data->head + gap(self) - 1) & -gap(self));
   for(seat* s = self->aims; s < self->aims + self->seats; s++)
     emit(self, site, s->at, pose(self, (seat){NULL, s->off}, at, bss)
                             - (s->at - self->text->head));
   for(hook* h = self->hooks; h < self->hooks + self->hookn; h++) {
-    seat  aim = h->name? goal(self, h->unit, h->name, 1): h->aim;
-    s64i  rel = pose(self, aim, at, bss) + h->add - pose(self, h->site, at, bss);
+    byte* site = h->site.at? h->site.at: self->data->head + h->site.off;
+    bool  null = h->weak && !real(find(self, h->unit, h->name), 1);
+    if(null && h->load) { // lea r, [rip+x] -> mov r, 0: rex.r moves to rex.b
+      site[-3] = (site[-3] & ~5) | (site[-3] >> 2 & 1);
+      site[-1] = 0xc0 | (site[-1] >> 3 & 7);
+      site[-2] = 0xc7;
+      copy(site, &(s32i){0}, 4);
+      continue;
+    }
+    s64i  to = null? -org: pose(self, h->name? goal(self, h->unit, h->name, 1): h->aim, at, bss);
+    if(h->wide) {
+      u64i a = org + to + h->add;
+      copy(site, &a, sizeof(a));
+      continue;
+    }
+    s64i  rel = to + h->add - pose(self, h->site, at, bss);
     s32i  r   = rel;
     if(r != rel) fail("object reference too far\n");
-    copy(h->site.at? h->site.at: self->data->head + h->site.off, &r, sizeof(r));
+    copy(site, &r, sizeof(r));
   }
 }

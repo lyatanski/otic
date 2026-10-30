@@ -112,9 +112,9 @@ void  exec(mode* self) {
   u64i  code = self->text->body - self->text->head;
   u64i  at   = (code + 0x3fff) & ~0x3fff; // 16 KB: pages on any host
   u64i  size = self->data->body - self->data->head;
-  u64i  all  = at + ((size + 15) & ~15) + self->zero;
+  u64i  all  = at + ((size + gap(self) - 1) & -gap(self)) + self->zero;
   byte* run  = self->hold(0, all);
-  dock(self, at);
+  dock(self, at, (u64i)run);
   copy(run, self->text->head, code);
   copy(run + at, self->data->head, size);
   if(at) prep(run, at); // text only: data and bss stay writable

@@ -623,6 +623,27 @@ spec(TAG) {
       lib = archive("ar-glob", (char*[]){"int seven = 7;\n", NULL});
       expect(9, "int main() { return seven + 2; }\n");
     }
+    elfs_it("aligns code, data and bss over 16") {
+      lib = archive("ar-wide", (char*[]){
+        "_Alignas(64) int tab[4] = {1, 2, 3, 4};\n_Alignas(128) char buf[8];\n"
+        "__attribute__((aligned(64))) int wide(void) { return tab[3]; }\n"
+        "long at[3] = {(long)tab, (long)buf, (long)wide};\n" // not folded by cc
+        "int ok(void) { return !(at[0] & 63) + !(at[1] & 127) + !(at[2] & 63) + wide(); }\n", NULL});
+      expect(7, "int main() { return ok(); }\n");
+    }
+    elfs_it("fills pointers in data") {
+      lib = archive("ar-addr", (char*[]){
+        "static int v[2] = {3, 4};\nint* p = &v[1];\nint two(void) { return 2; }\n"
+        "int (*fp)(void) = two;\nint deref(void) { return *p * 10 + fp(); }\n", NULL});
+      expect(42, "int main() { return deref(); }\n");
+    }
+    elfs_it("puts a weak undefined name at address 0") {
+      lib = archive("ar-null", (char*[]){
+        "extern __attribute__((weak)) int missing(void);\nextern __attribute__((weak)) char gone[];\n"
+        "int has(void) { char* volatile a = (char*)missing; char* volatile b = gone;\n" // GOT loads
+        "  return 7 + (a != 0) + (b != 0); }\n", NULL});
+      expect(7, "int main() { return has(); }\n");
+    }
     elfs_it("rejects an undefined symbol") {
       lib = archive("ar-undef", (char*[]){
         "int nowhere(void);\nint broken(void) { return nowhere(); }\n", NULL});
