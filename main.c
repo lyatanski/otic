@@ -173,7 +173,7 @@ void  exec(mode* self) {
 }
 
 void  save(mode* self) {
-  if(self->impn) fail("cannot call a library from this form yet\n"); // steps 12b-12d
+  if(self->impn) fail("cannot call a library from this form yet\n");
   file* out = self->form.pack(self);
   FILE* fp = fopen(self->outp, "wb");
   if(!fp) fail("cannot write: %s\n", self->outp);
