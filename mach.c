@@ -98,7 +98,7 @@ file* mach_pack(mode* self) {
   const u32i cdsz = 88 + sizeof(mach_name) + 32 * slots;
   const u32i sign = (20 + cdsz + 15) & ~15;
   const u64i all = link + sign;
-  dock(self, text - top);
+  dock(self, text - top, 0);
 
   mach_head h = {
     .mh   = {mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_exec,
@@ -143,4 +143,5 @@ file* mach_pack(mode* self) {
 
 const form mach = {
   .pack = mach_pack,
+  .os   = os_mac,
 };

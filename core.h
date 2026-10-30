@@ -24,15 +24,20 @@ typedef  uint8_t byte;
 #define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
 
 byte* copy(byte* dst, void* src, u64i size); // returns dst + size
+u64i  slen(char* s); // bytes before the NUL
+// p, an array of *cap elements of size bytes with n in use, with room for one
+// more: it grows to twice its size plus least
+void* swell(void* p, u32i n, u32i* cap, u64i size, u32i least);
 
-// hash
-#define POOL (1 << 13)
-typedef struct {
+// a name in the table of a unit, and what it means there
+typedef struct item item;
+struct item {
   u64i  size;
   char* name;
   void* data;
-} item;
-typedef item hash[POOL];
+  item* next; // the same spelling in the table of a later unit (mode.names)
+  u32i  unit; // the unit whose table it is in
+};
 
 typedef struct {
   byte*  body;
@@ -40,8 +45,25 @@ typedef struct {
   byte   head[1];
 } file;
 
+// each file in the pass, and the builtins (the root, unit 0): its path and
+// its own symbol table. A name is looked up in the unit being parsed, then in
+// the others in join order (find). Kinds: the root, a source, an object, an
+// archive (its table is the symbol index), a member pulled from an archive
+enum { un_root, un_code, un_objs, un_arch, un_memb };
+typedef struct unit unit;
+struct unit {
+  char*  path; // tidy'd, one name per file
+  item** pool; // its symbol table, small and growable: the items stay put
+  u32i   size; // slots in pool, a power of 2
+  u32i   used;
+  file*  code; // the source or object, kept: names point into it
+  struct meta* defs; // an archive's index, kept: pulled names leave it
+  byte   kind;
+};
+
 // arch
 typedef enum { cpu_ia64, cpu_arm8 } chip;
+typedef enum { os_linux, os_mac, os_win } osys;
 #define WIDE (1 << 24) // calc op flag: on 64 bits, for pointers and long
 // typed slots: a variadic pointer would pass the arguments on the stack on
 // Apple arm64, where the encoders read them from registers
@@ -73,17 +95,27 @@ typedef struct {
   void (*done)(file*);                             // epilogue and return
   void (*boot)(file*);                             // entry stub: call main
   void (*link)(file*, byte* boot, byte* main);     // point a call at its function
+  // call C code at func, or at the address in [acc] (an import slot), the C
+  // way of os: pop the argc pushed arguments, the first fixed of them named.
+  // The call to func, which link may point elsewhere, NULL through [acc]
+  byte* (*ffi)(file*, byte* func, u32i argc, u32i fixed, osys os);
+  // entry of a C library, called by boot: start(main, argc, argv, 0, 0, 0)
+  // with argc and argv from the initial stack
+  void (*crt)(file*, byte* main, byte* start);
   chip  cpu;  // target, each form maps it to its own machine id
 } emit;
 
 // core
 typedef struct mode mode;
+#define VARY (~0u) // meta.size of a function from an object
 typedef void* (*poke)(void*, size_t);
 typedef void  (*pack)(mode*);
 
 // container
 typedef struct {
-  file* (*pack)(mode*); // lay text/data out as an output image
+  file* (*pack)(mode*);                    // lay text/data out as an output image
+  void  (*take)(mode*, file*);             // load a relocatable object, named by mode.name
+  osys  os;
 } form;
 
 typedef struct {
@@ -96,54 +128,81 @@ typedef struct {
 } word;
 
 // base and list (struct) are types, data a local, glob a global, call a function,
-// refs a pointer type, many an array type
-typedef enum { base, list, data, call, glob, refs, many } what;
+// refs a pointer type, many an array type, pend a name in an archive's index
+// whose member is not pulled yet
+typedef enum { base, list, data, call, glob, refs, many, pend } what;
 typedef struct meta meta;
 struct meta {
-  meta* type; // data link to its type, what refs points to, what many holds,
-              // the first member of a list
-  meta* hide; // what the name meant before, restored when the scope ends; the
-              // next member of a list
+  meta* type; // data link to its type
+  meta* hide; // what the name meant before
   item* name;
   byte* addr;
   u32i  size; // bytes of a type, parameters of a call
-  s32i  slot; // frame offset of a local, data offset of a global, offset of a
-              // member, alignment of a list, 1 + the library of an import
-              // (a call without addr)
+  s32i  slot; // frame offset, data offset, offset of a member
   what  kind;
   bool  own;  // static: the name is hidden outside its source file
-  char* path; // the source file of a global or function
+  bool  weak; // defined by an object as weak: a strong definition replaces it
+  bool  ext;  // a function from an object, or an import
+  bool  more; // variadic: arguments may follow the size named ones
+  byte  lib;  // 1 + the library of an import
+  u32i  unit; // the unit that defines it
 };
 
-// call to a function not seen yet, patched when the run ends
+// call to a function not seen yet, or to C code in an archive member not
+// pulled yet (ext, through ffi), patched when the run ends
 typedef struct {
-  item* name;
+  item* name; // in the table of unit
   byte* at;   // NULL when the call was dropped as dead code
   u32i  argc;
   u64i  line;
-  char* path; // the source file of the call
+  u32i  unit; // the unit of the call
+  bool  ext;
 } fix;
 
-// address of a global (data offset, or bss offset | ZERO), patched by dock
+// address of a global (data offset, bss offset | ZERO, import slot i | SLOT,
+// or the global named by ask i | WANT), patched by dock
+#define WANT (1u << 29)
+#define SLOT (1u << 30)
+#define ZERO (1u << 31)
 typedef struct {
   byte* at;
   u32i  off;
 } seat;
 
+// a reference of object code: site holds the distance to aim (wide: its
+// address), or to what name, in the table of unit, means when the run ends,
+// plus add; patched by dock. Address 0 when name is weak and nothing defines it
+typedef struct {
+  seat  site;
+  seat  aim;
+  item* name;
+  u32i  unit;
+  s64i  add;
+  bool  wide; // 64-bit absolute, else 32-bit pc-relative
+  bool  weak;
+  bool  load; // a GOT load made a REX lea: mov reg, 0 for address 0
+} hook;
+
 struct mode {
-  char* name; // input, then the source file being parsed
+  char* name; // input
   char* outp; // output
   file* code; // source being parsed
   u64i  line;
   word  talk; // last
-  hash  pool;
+  u32i  unit; // the unit being parsed
+  u32i  unitn, unitc;
+  unit* units; // in join order, the root first
+  unit  names; // each spelling in any unit's table: data, the first of its
+               // items in join order (item.next)
   emit  arch;
   form  form;
 
   file* text; // binary code
   byte* main; // entry of main in text
-  file* data; // binary data
+  byte* boot; // what the boot stub calls: main, or crt
+  file* data; // non-zero initialized data
   u64i  zero; // zero initialized data (bss) bytes
+  u32i  most; // largest alignment of data or code an object asks for
   meta* rune; // char: what a string literal points to
 
   poke  hold;
@@ -152,11 +211,11 @@ struct mode {
 
   u32i  top;
   meta  pile[256];
-  s32i  slot; // frame bytes in use
-  s32i  deep; // frame bytes the function needs
-  meta* func; // the function being compiled
-  byte* cont; // continue target, NULL outside loops
-  u32i  ends; // pending break jumps
+  s32i  slot;      // frame bytes in use
+  s32i  deep;      // frame bytes the function needs
+  meta* func;      // the function being compiled
+  byte* cont;      // continue target, NULL outside loops
+  u32i  ends;      // pending break jumps
   byte* quit[64];
   u32i  fixs;
   fix   link[256];
@@ -164,12 +223,60 @@ struct mode {
   seat  aims[1024];
   u32i  defn;
   meta  defs[512]; // pointer, array and struct types, members
-  u32i  from; // 1 + the library of the last load in this source file, 0: none
+  u32i  from;      // 1 + the library of the last load in this source file
   u32i  libn;
-  item* libs[16]; // shared libraries named by load, as string literals
+  item* libs[16];  // shared libraries named by load, as string literals
+  u32i  impn;
+  meta* imps[256]; // imports in use, each an 8-byte slot the loader fills
+  u32i  objn, objc;
+  unit* objs;      // objects and archives named on the command line
+  u32i  askn, askc, askd;
+  item** asks;     // archive names used, their members pulled up to askd
+  u32i  dirn;
+  char* dirs[16];  // libraries locations
+  u32i  hookn, hookc;
+  hook* hooks;
 };
 
-file* scan(char* name); // a source file, NUL terminated
+file* scan(char* name); // a source file, NUL terminated, NULL when it cannot be opened
+void  ario_load(mode*, file*); // the symbol index of an archive, its table
+void  ario_pull(mode*, meta*); // the member that defines an archive name
 void  make(mode*);
-void  dock(mode*, u64i at); // lay data out at text + at, bss after it
+void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it, text at org
+u64i  gap(mode*); // alignment of data and of bss after it
+void  bolt(mode*, char* name, file*, byte kind); // a file named on the command line
+bool  alike(void* x, void* y, u64i size);
+u64i  clue(char* mark, u64i size);
+item* hsee(unit*, char* mark, u64i size, u64i clue); // NULL when not in
+item* hget(mode*, u32i at, char* mark, u64i size);   // in unit at, made when not in
+u32i  lay(mode*, u32i size, bool zero, u32i align);
+
+// the unit being parsed
+#define home(self) ((self)->units + (self)->unit)
+// fail at the line being parsed, in the file of the unit being parsed
+#define flaw(self, fmt, ...) \
+  fail("%s:%ld: " fmt, home(self)->path, (self)->line __VA_OPT__(,) __VA_ARGS__)
+#define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
+#define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
+#define nick(x) (int)(x)->size, (x)->name
+
+// core.c, for link.c
+u32i  wide(meta*);
+u32i  quote(item* s, byte* out);
+void  bind(mode*, byte* at, item* name, meta* func, u32i argc, bool ext);
+bool  join(mode*, char* path, u64i size, file* code, byte kind);
+bool  land(mode*, char* path, u64i size, file* code, byte kind);
+
+// link.c
+u64i  tidy(char* path, u64i size);
+void  haul(mode*, item* s);
+u32i  nest(mode*, unit x);
+bool  akin(item* x, item* y);
+u32i  heft(meta* x);
+meta* find(mode*, u32i at, item* name);
+u32i  ask(mode*, meta* x);
+void  reel(mode*);
+u32i  rack(mode*, item* s);
+u32i  port(mode*, meta* x);
+void  tie(mode*, u32i from, bool last);
 

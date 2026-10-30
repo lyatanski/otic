@@ -84,7 +84,7 @@ file* pe32_pack(mode* self) {
   const u32i size = self->data->body - self->data->head;
   const u32i fsz = up(idat + size, falign), vmsz = idat + up(size, 16) + self->zero;
   const u32i all = doff + fsz;
-  dock(self, drva + idat - trva);
+  dock(self, drva + idat - trva, 0);
 
   pe32_head h = {
     .dos  = {.magic = 0x5a4d, .next = offs(pe32_head, seal)}, // "MZ"
@@ -139,4 +139,5 @@ file* pe32_pack(mode* self) {
 
 const form pe32 = {
   .pack = pe32_pack,
+  .os   = os_win,
 };

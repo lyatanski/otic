@@ -425,6 +425,37 @@ void arm8_link(file*, byte* boot, byte* main) {
   *(uint32_t*)boot = I3206_BL | (((main - boot) >> 2) & 0x3ffffff);
 }
 
+// called by boot, which leaves sp as it was: [sp] is argc, argv follows it
+void arm8_crt(file* data, byte* main, byte* start) {
+  s64i d = main - data->body - 8;
+  if(d < -(1 << 20)) fail("main too far: %ld bytes\n", d);
+  arm8_put(data, 0xf94003e1);                                       // ldr x1, [sp]
+  arm8_put(data, 0x910023e2);                                       // add x2, sp, #8
+  arm8_put(data, I3406_ADR | (d & 3) << 29 | ((d >> 2) & 0x7ffff) << 5 | r0); // adr x0, main
+  for(u32i r = 3; r < 6; r++) arm8_put(data, X | dati_movz | r);    // mov xr, #0
+  byte* at = data->body;
+  arm8_dial(data);
+  arm8_link(data, at, start);
+  arm8_put(data, 0xd4200000);                                       // brk #0: start never returns
+}
+
+// AAPCS64: arguments in x0-x5, sp is always 16-byte aligned here. Apple passes
+// the variadic ones on the stack instead, 8 bytes each, through x9-x14
+byte* arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
+  u32i vary = os == os_mac && fixed < argc? argc - fixed: 0, room = (vary * 8 + 15) & -16;
+  if(!func) arm8_put(data, 0xf9400010);                             // ldr x16, [x0]
+  for(u32i i = argc; i--; )
+    arm8_put(data, 0xf84107e0 | (vary && i >= fixed? 9 + i - fixed: i)); // ldr xi, [sp], #16
+  if(room) arm8_put(data, 0xd10003ff | room << 10);                 // sub sp, sp, #room
+  for(u32i j = 0; j < vary; j++)
+    arm8_put(data, 0xf90003e0 | j << 10 | (9 + j));                 // str x(9+j), [sp, #8j]
+  byte* at = func? data->body: NULL;
+  if(func) { arm8_dial(data); arm8_link(data, at, func); }
+  else arm8_put(data, 0xd63f0200);                                  // blr x16
+  if(room) arm8_put(data, 0x910003ff | room << 10);                 // add sp, sp, #room
+  return at;
+}
+
 const emit arm8 = {
   .move = arm8_move,
   .load = arm8_load,
@@ -453,6 +484,8 @@ const emit arm8 = {
   .done = arm8_done,
   .boot = arm8_boot,
   .link = arm8_link,
+  .ffi  = arm8_ffi,
+  .crt  = arm8_crt,
   .cpu  = cpu_arm8,
 };
 
