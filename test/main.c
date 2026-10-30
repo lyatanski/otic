@@ -562,6 +562,10 @@ spec(TAG) {
     it("binds only the imports it uses")
       here(2, "load \"zzz\";\nint f(int);\nload \"c\";\nlong labs(long n);\n"
               "int main() { long v = -2; return labs(v); }\n");
+    it("runs a link of a shared library as its load")
+      here(6, "link \"c\";\nlong labs(long n);\nint main() { long v = -6; return labs(v); }\n");
+    it("rejects a link of a library the host does not have")
+      expect(bad, "link \"zzz\";\nint main() { return 0; }\n");
   }
 
   context("objects") { // built by cc: an object, or the members of an archive

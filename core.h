@@ -213,6 +213,7 @@ struct mode {
   poke  drop;
   pack  show;
   grab  scan;
+  bool  (*have)(item*); // running: whether the host has shared library s
 
   u32i  top;
   meta  pile[256];

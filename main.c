@@ -128,6 +128,10 @@ void* bring(item* s) {
 #endif
 }
 
+bool  have(item* s) {
+  return bring(s) != NULL;
+}
+
 // the address of each import in its slot, from the libraries it loads
 void  plug(mode* self, u64i* slot) {
   char  name[256];
@@ -281,6 +285,7 @@ int   main(int argc, char** argv) {
   if(!self.name) fail("no input file\n");
   if(self.show == exec && self.arch.cpu != base.cpu)
     fail("cannot run foreign code, write it with -e\n");
+  if(self.show == exec) self.have = have;
 
   make(&self);
 

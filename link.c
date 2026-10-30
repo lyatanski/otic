@@ -24,7 +24,8 @@ u64i  tidy(char* path, u64i size) {
 }
 
 // link "name": the first of name.c, name.o and libname.a beside this source,
-// then libname.a in the library directories (mode.dirs)
+// then, when running, the host's shared library name, as load "name" takes
+// it, then libname.a in the library directories (mode.dirs)
 void  haul(mode* self, item* s) {
   static char* const ends[] = {".c", ".o", ".a"};
   char* from = home(self)->path;
@@ -46,6 +47,7 @@ void  haul(mode* self, item* s) {
     copy(p + n + lib, ends[k < 3? k: 2], 3);
     if(land(self, path, d + n + lib + 2, NULL, un_code + (k < 3? k: 2))) return;
     free(path);
+    if(k == 2 && self->have && self->have(s)) { home(self)->from = rack(self, s); return; }
   }
   flaw(self, "cannot find %.*s\n", nick(s));
 }
