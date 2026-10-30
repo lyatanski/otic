@@ -408,7 +408,7 @@ void ia64_crt(file* text, byte* main, byte* start) {
 // past 32 bytes of shadow space. Both want rsp 16-byte aligned, which pushed
 // operands may break: the old rsp is pushed twice, then rsp rounded down, so
 // one copy is at [rsp+8] either way
-void ia64_ffi(file* text, byte* func, u32i argc, u32i, osys os) {
+byte* ia64_ffi(file* text, byte* func, u32i argc, u32i, osys os) {
   static const byte win[] = { 1, 2, 8, 9, 10, 0 }; // r10 and rax go on the stack
   byte room = os == os_win? argc > 4? 48: 32: 0;
   if(!func) { ib(text, 0x4c); iw(text, 0x188b); } // mov r11, [rax]
@@ -420,9 +420,11 @@ void ia64_ffi(file* text, byte* func, u32i argc, u32i, osys os) {
   else iw(text, 0xc031);                          // xor eax, eax
   if(argc > 4 && room) { id(text, 0x2454894c); ib(text, 32); } // mov [rsp+32], r10
   if(argc > 5 && room) { id(text, 0x24448948); ib(text, 40); } // mov [rsp+40], rax
-  if(func) { byte* at = text->body; ia64_dial(text); ia64_link(text, at, func); }
+  byte* at = func? text->body: NULL;
+  if(func) { ia64_dial(text); ia64_link(text, at, func); }
   else { ib(text, 0x41); iw(text, 0xd3ff); }      // call r11
   id(text, 0x24648b48); ib(text, room + 8);       // mov rsp, [rsp+room+8]
+  return at;
 }
 
 const emit ia64 = {

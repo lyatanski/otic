@@ -441,7 +441,7 @@ void arm8_crt(file* data, byte* main, byte* start) {
 
 // AAPCS64: arguments in x0-x5, sp is always 16-byte aligned here. Apple passes
 // the variadic ones on the stack instead, 8 bytes each, through x9-x14
-void arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
+byte* arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
   u32i vary = os == os_mac && fixed < argc? argc - fixed: 0, room = (vary * 8 + 15) & -16;
   if(!func) arm8_put(data, 0xf9400010);                             // ldr x16, [x0]
   for(u32i i = argc; i--; )
@@ -449,9 +449,11 @@ void arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
   if(room) arm8_put(data, 0xd10003ff | room << 10);                 // sub sp, sp, #room
   for(u32i j = 0; j < vary; j++)
     arm8_put(data, 0xf90003e0 | j << 10 | (9 + j));                 // str x(9+j), [sp, #8j]
-  if(func) { byte* at = data->body; arm8_dial(data); arm8_link(data, at, func); }
+  byte* at = func? data->body: NULL;
+  if(func) { arm8_dial(data); arm8_link(data, at, func); }
   else arm8_put(data, 0xd63f0200);                                  // blr x16
   if(room) arm8_put(data, 0x910003ff | room << 10);                 // add sp, sp, #room
+  return at;
 }
 
 const emit arm8 = {

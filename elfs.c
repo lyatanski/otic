@@ -125,18 +125,19 @@ enum {
 typedef struct { u64i offset; u32i type, sym; s64i addend; } rela64;
 
 #define GONE ((seat){NULL, ~0u}) // a section left out
-#define flop(fmt, ...) fail("%s: " fmt, self->name __VA_OPT__(,) __VA_ARGS__)
+#define flop(fmt, ...) fail("%s: " fmt, home(self)->path __VA_OPT__(,) __VA_ARGS__)
 
 // string at in table tab, "" past its end; the object is NUL terminated
 static char* elfs_str(byte* o, sh64* tab, u64i at) {
   return tab && at < tab->size? (char*)o + tab->offset + at: "";
 }
 
-// a relocatable object, named by mode.name, aligned for its headers, NUL ended
-// and kept: the pool points at its names. Its code goes after text, its data
-// and bss are laid out, its globals defined, and its references hooked for
-// dock. Only x86-64 and pc-relative references so far: no absolute pointers,
-// thread-locals or constructors
+// a relocatable object, the unit being joined, aligned for its headers, NUL
+// ended and kept: its table points at its names. Its code goes after text,
+// its data and bss are laid out, its globals defined in its table, its
+// undefined names ask for the archive members that define them, and its
+// references are hooked for dock. Only x86-64 and pc-relative references so
+// far: no absolute pointers, thread-locals or constructors
 void elfs_take(mode* self, file* f) {
   u64i  size = f->tail - f->head;
   byte* o = f->head;
@@ -190,7 +191,9 @@ void elfs_take(mode* self, file* f) {
     }
   }
 
-  // globals: defined in the pool, as functions taking any arguments or data
+  // globals: functions taking any arguments, or data. A weak or tentative
+  // (common) one is left out when another unit defines the name, and a strong
+  // one replaces it
   sym64* sym = NULL;
   sh64*  str = NULL;
   u64i   nsym = 0;
@@ -212,15 +215,14 @@ void elfs_take(mode* self, file* f) {
     u64i   len = 0;
     while(at[len]) len++;
     if(!len) continue;
-    item*  name = hget(self->pool, at, len);
-    meta*  prev = name->data;
-    meta   x = {.name = name, .kind = glob, .weak = s->bind == STB_WEAK, .path = self->name};
-    if(prev && x.weak) continue; // the first or the strong definition stays
-    if(prev && !prev->weak) {
-      if(s->shidx == SHN_COMMON) continue; // a tentative definition
-      if(prev->ext && !prev->addr) flop("'%.*s' is declared before the object\n", (int)len, at);
-      flop("'%.*s' is defined twice\n", (int)len, at);
-    }
+    item*  name = hget(home(self), at, len);
+    meta*  prev = find(self, 0, name);
+    u32i   held = prev? heft(prev): 0;
+    meta   x = {.name = name, .kind = glob, .unit = self->unit,
+                .weak = s->bind == STB_WEAK || s->shidx == SHN_COMMON};
+    if(held > 2 && x.weak) continue;
+    if(held == 4) flop("'%.*s' is defined twice\n", (int)len, at);
+    if(prev && prev->lib) flop("'%.*s' is declared before the object\n", (int)len, at);
     if(s->shidx == SHN_COMMON) { // value: alignment
       u64i a = s->value? s->value: 1;
       if(a > 16 || a & (a - 1) || s->size >> 30) flop("bad common symbol\n");
@@ -235,6 +237,16 @@ void elfs_take(mode* self, file* f) {
     }
     defs[i] = x;
     name->data = defs + i;
+  }
+  for(u64i i = 1; i < nsym; i++) { // a weak undefined name does not pull
+    sym64* s = sym + i;
+    if(s->bind != STB_GLOBAL || s->shidx != SHN_UNDEF) continue;
+    char*  at = elfs_str(o, str, s->name);
+    u64i   len = 0;
+    while(at[len]) len++;
+    item*  name = len? hget(home(self), at, len): NULL;
+    meta*  m = name && !name->data? find(self, self->unit, name): NULL;
+    if(m && m->kind == pend) ask(self, m);
   }
 
   // references: by name to globals, which a later definition may replace
@@ -263,12 +275,12 @@ void elfs_take(mode* self, file* f) {
       }
       sym64* s = sym + r->sym;
       hook   h = {.site = p.at? (seat){at, 0}: (seat){NULL, p.off + (u32i)r->offset},
-                  .add  = r->addend};
+                  .unit = self->unit, .add = r->addend};
       if(s->bind != STB_LOCAL) {
         char* name = elfs_str(o, str, s->name);
         u64i  len = 0;
         while(name[len]) len++;
-        h.name = hget(self->pool, name, len);
+        h.name = hget(home(self), name, len);
       } else if(s->shidx >= n || put[s->shidx].off == GONE.off) {
         flop("a reference into a section left out\n");
       } else {

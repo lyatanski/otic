@@ -608,6 +608,21 @@ spec(TAG) {
       lib = archive("ar-long", (char*[]){"long big(void) { return 1L << 40; }\n", NULL});
       expect(1, "long big(void);\nlong big(void);\nint main() { return big() >> 40; }\n");
     }
+    elfs_it("pulls only the members it uses") { // the second one would be undefined
+      lib = archive("ar-lazy", (char*[]){"int add(int a, int b) { return a + b; }\n",
+        "int nowhere(void);\nint broken(void) { return nowhere(); }\n", NULL});
+      expect(5, "int main() { return add(2, 3); }\n");
+    }
+    elfs_it("keeps a weak definition when no strong one is pulled") {
+      lib = archive("ar-keep", (char*[]){
+        "__attribute__((weak)) int pick(void) { return 1; }\nint use(void) { return pick(); }\n",
+        "int pick(void) { return 2; }\n", NULL});
+      expect(1, "int main() { return use(); }\n");
+    }
+    elfs_it("reads data of a member") {
+      lib = archive("ar-glob", (char*[]){"int seven = 7;\n", NULL});
+      expect(9, "int main() { return seven + 2; }\n");
+    }
     elfs_it("rejects an undefined symbol") {
       lib = archive("ar-undef", (char*[]){
         "int nowhere(void);\nint broken(void) { return nowhere(); }\n", NULL});
@@ -645,6 +660,11 @@ spec(TAG) {
         "int started(void) { return up; }\n", NULL});
       only(12, "link \"st\";\nint started(void);\n"
                "int main(int argc, char** argv) { return started() * 10 + argc; }\n");
+    }
+    elfs_it("calls an archive member from a module") {
+      archive("libmd", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
+      module("mdl", "link \"md\";\nint md() { return add(4, 5); }\n");
+      expect(9, "link \"mdl\";\nint main() { return md(); }\n");
     }
     elfs_it("rejects a forward call to an object") {
       archive("lk-fwd", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});

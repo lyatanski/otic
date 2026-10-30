@@ -189,8 +189,8 @@ static void seek(mode* self, opts*, char* para) {
 static void apos(mode* self, opts*, char* para) {
   u64i n = 0;
   while(para[n]) n++;
-  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, scan(para));
-  else if(n > 2 && !scmp(para + n - 2, ".a")) ario_load(self, para, scan(para));
+  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, scan(para), un_objs);
+  else if(n > 2 && !scmp(para + n - 2, ".a")) bolt(self, para, scan(para), un_arch);
   else self->name = para;
 }
 
