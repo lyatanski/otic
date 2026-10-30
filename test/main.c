@@ -1,7 +1,7 @@
 // vim: ts=2:sw=2
 // tic's spec: each case is written to bins/ and compiled by the tic binary in
 // $TIC (default bins/one) in a child process (fail() exits, code may crash),
-// run in memory and as an executable written with `-o` (ELF, Mach-O
+// run in memory and as an executable written with `-e` (ELF, Mach-O
 // or PE). Constant operands are folded, so the cases that test generated code
 // take their operands from locals. It tests the target it is built for, which
 // must be tic's: ./check cross-builds both for arm8.
@@ -109,11 +109,11 @@ static int  jit(void) {
   return sscanf(last, "%d", &value) == 1? value: odd;
 }
 
-// `tic -o`: the written executable's exit code
+// `tic -e`: the written executable's exit code
 static int  exe(void) {
   int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
-  int code = spawn(null, (char*[]){tic(), "-o", exe_at, src_at, lib, NULL});
+  int code = spawn(null, (char*[]){tic(), "-e", exe_at, src_at, lib, NULL});
   close(null);
   if(code == 1) return access(exe_at, F_OK)? bad: odd; // and no executable
   if(code || chmod(exe_at, 0755)) return odd;
@@ -128,7 +128,7 @@ static char* shown(int value, char* buf) {
   return buf;
 }
 
-// compile src both ways: NULL when exec gives run and -o gives want, else why
+// compile src both ways: NULL when exec gives run and -e gives want, else why
 // not
 static char* tried(char* src, int run, int want) {
   mkdir("bins", 0755);
@@ -153,8 +153,11 @@ static char* tried(char* src, int run, int want) {
 
 // expect(want, src): main returns want, or tic exits 1 when want is bad
 #define expect(want, src) saw(want, want, src)
-// only(want, src): exec rejects it, the executable from -o returns want
+// only(want, src): exec rejects it, the executable from -e returns want
 #define only(want, src) saw(bad, want, src)
+// here(run, src): exec returns run, writing an executable rejects it (it
+// cannot bind imports yet)
+#define here(run, src) saw(run, bad, src)
 #define saw(run, want, src) \
   if((error = tried(src, run, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
@@ -532,7 +535,7 @@ spec(TAG) {
     }
   }
 
-  context("load") { // imports are only recorded until the forms bind them
+  context("load") { // exec binds imports; the forms only record them so far
     it("declares imports after a load")
       expect(3, "load \"c\";\nint puts(char*);\nlong labs(long n);\n"
                 "int main() { return 3; }\n");
@@ -548,6 +551,17 @@ spec(TAG) {
     it("declares variadic, (void) and extern imports")
       expect(4, "int printf(char* f, ...);\nint getpid(void);\nextern char** environ;\n"
                 "extern int a, b[2];\nint main() { return 4; }\n");
+    it("calls an import")
+      here(7, "load \"c\";\nlong labs(long n);\nint main() { long v = -7; return labs(v); }\n");
+    it("calls a variadic import")
+      here(5, "int printf(char* f, ...);\nint main() { int v = 5; return printf(\"%d\\n\", v) + 3; }\n");
+    it("compiles a dead call to an import")
+      here(0, "load \"c\";\nint puts(char*);\nint main() { return 0 && puts(\"x\"); }\n");
+    it("reads an extern import")
+      here(1, "extern char** environ;\nint main() { return environ != 0; }\n");
+    it("binds only the imports it uses")
+      here(2, "load \"zzz\";\nint f(int);\nload \"c\";\nlong labs(long n);\n"
+              "int main() { long v = -2; return labs(v); }\n");
   }
 
   context("objects") { // built by cc: an object, or the members of an archive
@@ -821,10 +835,10 @@ spec(TAG) {
       expect(bad, "extern int g = 1;\nint main() { return 0; }\n");
     it("rejects a variadic function with a body")
       expect(bad, "int f(int n, ...) { return n; }\nint main() { return f(1); }\n");
-    it("rejects a call to an import")
-      expect(bad, "load \"c\";\nint puts(char*);\nint main() { return puts(\"x\"); }\n");
-    it("rejects a dead call to an import")
-      expect(bad, "load \"c\";\nint puts(char*);\nint main() { return 0 && puts(\"x\"); }\n");
+    it("rejects a call to an import that is not in its library")
+      expect(bad, "load \"c\";\nint nosuch(int);\nint main() { return nosuch(1); }\n");
+    it("rejects a call to an import from a missing library")
+      expect(bad, "load \"zzz\";\nint f(int);\nint main() { return f(1); }\n");
     it("rejects a forward call to an import")
       expect(bad, "int main() { return puts(\"x\"); }\nload \"c\";\nint puts(char*);\n");
     it("rejects an import from two libraries")

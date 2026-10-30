@@ -3,8 +3,10 @@
 
 #ifdef _WIN32
 #include <memoryapi.h>  /* for VirtualAlloc */
+#include <libloaderapi.h> /* for LoadLibrary */
 #else
 #include <sys/mman.h>   /* for mmap         */
+#include <dlfcn.h>      /* for dlopen       */
 #endif
 
 // after the system headers: macros of the parts (arm8.c X) clash with them
@@ -94,23 +96,77 @@ void* drop(void* memory, size_t size) {
   return NULL;
 }
 
+// the library s of a load ("c" is libc: tic's own on Unix), as given or
+// decorated (m: libm.so, libm.dylib, m.dll)
+void* bring(item* s) {
+  char  name[256];
+  int   n = (int)s->size - 2; // without the quotes
+  if(n > 200) fail("library name too long: %.*s\n", nick(s));
+#ifdef _WIN32
+  if(n == 1 && *(s->name + 1) == 'c') return LoadLibraryA("msvcrt.dll");
+  snprintf(name, sizeof name, "%.*s", n, s->name + 1);
+  void* at = LoadLibraryA(name);
+  if(at) return at;
+  snprintf(name, sizeof name, "%.*s.dll", n, s->name + 1);
+  return LoadLibraryA(name);
+#else
+  if(n == 1 && *(s->name + 1) == 'c') return dlopen(NULL, RTLD_NOW);
+  snprintf(name, sizeof name, "%.*s", n, s->name + 1);
+  void* at = dlopen(name, RTLD_NOW);
+  if(at) return at;
+#ifdef __APPLE__
+  snprintf(name, sizeof name, "lib%.*s.dylib", n, s->name + 1);
+  return dlopen(name, RTLD_NOW);
+#else // libname.so may be an ld script (glibc's libm.so): then a soname, libm.so.6
+  for(int v = -1; !at && v < 10; v++) {
+    if(v < 0) snprintf(name, sizeof name, "lib%.*s.so", n, s->name + 1);
+    else snprintf(name, sizeof name, "lib%.*s.so.%d", n, s->name + 1, v);
+    at = dlopen(name, RTLD_NOW);
+  }
+  return at;
+#endif
+#endif
+}
+
+// the address of each import in its slot, from the libraries it loads
+void  plug(mode* self, u64i* slot) {
+  void* libs[sizeof self->libs / sizeof *self->libs] = {0};
+  char  name[256];
+  for(u32i i = 0; i < self->impn; i++) {
+    meta* x = self->imps[i];
+    u32i  l = x->lib - 1;
+    if(!libs[l] && !(libs[l] = bring(self->libs[l])))
+      fail("cannot load library %.*s\n", nick(self->libs[l]));
+    if(x->name->size >= sizeof name) fail("name too long: %.*s\n", nick(x->name));
+    snprintf(name, sizeof name, "%.*s", nick(x->name));
+#ifdef _WIN32
+    void* at = (void*)GetProcAddress(libs[l], name);
+#else
+    void* at = dlsym(libs[l], name);
+#endif
+    if(!at) fail("undefined: %s in %.*s\n", name, nick(self->libs[l]));
+    slot[x->slot - 1] = (u64i)at;
+  }
+}
+
 #if defined(_WIN32) && defined(__x86_64__)
 typedef int (__attribute__((sysv_abi)) *func)(); // generated code clobbers rdi, rsi
 #else
 typedef int (*func)();
 #endif
-// the image: text, then data and bss on pages of their own
+// the image: text, then data, bss and the import slots on pages of their own
 void  exec(mode* self) {
-  if(self->impn) fail("cannot run a program that calls a library, write it with -o\n");
-  if(self->boot != self->main) fail("cannot run a program with a C library, write it with -o\n");
+  if(self->boot != self->main) fail("cannot run a program with a C library, write it with -e\n");
   u64i  code = self->text->body - self->text->head;
   u64i  at   = (code + 0x3fff) & ~0x3fff; // 16 KB: pages on any host
   u64i  size = self->data->body - self->data->head;
-  u64i  all  = at + ((size + gap(self) - 1) & -gap(self)) + self->zero;
+  u64i  bss  = at + ((size + gap(self) - 1) & -gap(self));
+  u64i  all  = bss + ((self->zero + 7) & -8) + 8 * self->impn; // the slots as pose places them
   byte* run  = self->hold(0, all);
   dock(self, at, (u64i)run);
   copy(run, self->text->head, code);
   copy(run + at, self->data->head, size);
+  plug(self, (u64i*)(run + all) - self->impn);
   if(at) prep(run, at); // text only: data and bss stay writable
   int return_code = ((func)(run + (self->main - self->text->head)))();
   printf("%d\n", return_code);
@@ -222,7 +278,7 @@ int   main(int argc, char** argv) {
   parse(&self, args, argc, argv, apos);
   if(!self.name) fail("no input file\n");
   if(self.show == exec && self.arch.cpu != base.cpu)
-    fail("cannot run foreign code, write it with -o\n");
+    fail("cannot run foreign code, write it with -e\n");
 
   make(&self);
 
