@@ -57,6 +57,7 @@ struct unit {
   u32i   size; // slots in pool, a power of 2
   u32i   used;
   file*  code; // the source or object, kept: names point into it
+  struct meta* defs; // an archive's index, kept: pulled names leave it
   byte   kind;
 };
 

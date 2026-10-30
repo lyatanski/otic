@@ -123,7 +123,7 @@ void ario_load(mode* self, file* f) {
     if(n > (size - w) / (w + 1)) fail("bad archive index: %s\n", path);
     char* name = (char*)b + w + n * w;
     char* end  = (char*)b + size;
-    meta* defs = calloc(n + 1, sizeof(meta));
+    meta* defs = home(self)->defs = calloc(n + 1, sizeof(meta));
     if(!defs) fail("out of memory\n");
     for(u64i i = 0; i < n; i++) {
       u64i len = 0;
@@ -141,7 +141,7 @@ void ario_load(mode* self, file* f) {
   if(strs > size - 2 * w - pairs) fail("bad archive index: %s\n", path);
   char* name = (char*)b + 2 * w + pairs;
   n = pairs / (2 * w);
-  meta* defs = calloc(n + 1, sizeof(meta));
+  meta* defs = home(self)->defs = calloc(n + 1, sizeof(meta));
   if(!defs) fail("out of memory\n");
   for(u64i i = 0; i < n; i++) {
     u64i at = ario_word(b + w + 2 * w * i, w, 0), len = 0;
