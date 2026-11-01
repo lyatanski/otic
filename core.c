@@ -115,10 +115,10 @@ void chop(mode* self) {
   s64i  ival = 0;
   s64i  fval = 0;
   u32i  kind = tend;
-  byte* c = self->code->body;
+  byte* c = home(self)->code->body;
 
-  pass: switch(*(self->code->body = c)) {
-    case '\n': self->line++; // fallthrough
+  pass: switch(*(home(self)->code->body = c)) {
+    case '\n': home(self)->line++; // fallthrough
     case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
     case '#': case ',': case ';': case ':': case '?': case '~': case '@':
     case '(': case ')': case '[': case ']': case '{': case '}':
@@ -144,7 +144,7 @@ void chop(mode* self) {
         case '/': while(*c && *c != '\n') c++; goto pass;
         case '*':
           for(c += 2; *c && (c[0] != '*' || c[1] != '/'); c++)
-            self->line += *c == '\n';
+            home(self)->line += *c == '\n';
           if(!*c) flaw(self, "unterminated comment\n");
           c += 2; goto pass;
         default: kind = (c[1] == '='? tok2(c): tok1(c));
@@ -199,25 +199,25 @@ void chop(mode* self) {
   }
 
   if(kind == '"' || kind == ttag) {
-    self->talk.hash = hget(self, self->unit, (char*)self->code->body, c - self->code->body);
+    home(self)->talk.hash = hget(self, self->unit, (char*)home(self)->code->body, c - home(self)->code->body);
   }
   else
-    self->talk.ival = kind == tnum? ival: 0;
-  self->talk.kind = kind;
-  self->code->body = c;
+    home(self)->talk.ival = kind == tnum? ival: 0;
+  home(self)->talk.kind = kind;
+  home(self)->code->body = c;
 }
 
 #define same(self, name) (\
-  (self)->talk.kind == ttag &&\
-  (self)->talk.hash == sget((self), (name)))
+  home(self)->talk.kind == ttag &&\
+  home(self)->talk.hash == sget((self), (name)))
 
 bool  twin(mode* self, u32i  kind) {
-  return (self->talk.kind == kind)? chop(self), 1 : 0;
+  return (home(self)->talk.kind == kind)? chop(self), 1 : 0;
 }
 
 bool  skip(mode* self, int   kind) {
   if(!twin(self, kind))
-    flaw(self, "expected %x, got %x\n", kind, self->talk.kind);
+    flaw(self, "expected %x, got %x\n", kind, home(self)->talk.kind);
   return 1;
 }
 
@@ -338,9 +338,9 @@ oper  star(mode* self, oper x) {
 // x.name
 oper  memb(mode* self, oper x) {
   meta* m = x.type && x.type->kind == list? x.type->type: NULL;
-  if(!m || self->talk.kind != ttag) flaw(self, "expected a member\n");
-  for(; m && !akin(m->name, self->talk.hash); m = m->hide); // m->name may be another unit's
-  if(!m) flaw(self, "no member '%.*s'\n", nick(self->talk.hash));
+  if(!m || home(self)->talk.kind != ttag) flaw(self, "expected a member\n");
+  for(; m && !akin(m->name, home(self)->talk.hash); m = m->hide); // m->name may be another unit's
+  if(!m) flaw(self, "no member '%.*s'\n", nick(home(self)->talk.hash));
   chop(self);
   if(x.kind != vmem) x.ival += m->slot;
   else if(m->slot) emit(self, calc, '+' | WIDE, 1, m->slot);
@@ -384,7 +384,7 @@ void  eval(mode* self);
 // add a forward call: name, called at at with argc arguments, the C way when ext
 void  post(mode* self, item* name, byte* at, u32i argc, bool ext) {
   if(self->fixs == sizeof self->link / sizeof *self->link) flaw(self, "too many forward calls\n");
-  self->link[self->fixs++] = (fix){name, at, argc, self->line, self->unit, ext};
+  self->link[self->fixs++] = (fix){name, at, argc, home(self)->line, self->unit, ext};
 }
 
 // point the call at to func, the function name with argc arguments; a call
@@ -459,20 +459,20 @@ byte* keep(mode* self, oper* x) {
 oper  pair(mode* self, u32i op, oper x, oper y, byte* mark);
 
 oper  atom(mode* self) {
-  u32i op = self->talk.kind;
+  u32i op = home(self)->talk.kind;
   oper x;
   switch(op) {
-    case tnum: x = cnst(self->talk.ival); chop(self); return x;
+    case tnum: x = cnst(home(self)->talk.ival); chop(self); return x;
     case '"': {
-      u32i off = lay(self, self->talk.hash->size - 1, 0, 8);
-      quote(self->talk.hash, self->data->head + off);
+      u32i off = lay(self, home(self)->talk.hash->size - 1, 0, 8);
+      quote(home(self)->talk.hash, self->data->head + off);
       chop(self);
       spot(self, off);
       x = acc(href(self, self->rune));
       break;
     }
     case ttag: {
-      item* name = self->talk.hash;
+      item* name = home(self)->talk.hash;
       chop(self);
       if(twin(self, '(')) { x = dial(self, name); break; }
       meta* var = find(self, self->unit, name);
@@ -622,9 +622,9 @@ oper  give(mode* self, u32i op, oper x) {
 // precedence climbing over binary operators of rank >= least
 oper  expr(mode* self, int least) {
   oper x = atom(self);
-  u32i op = sets(self->talk.kind);
+  u32i op = sets(home(self)->talk.kind);
   if(op && least <= 1) { chop(self); return give(self, op, x); }
-  for(u32i r; (r = rank(op = self->talk.kind)) >= (u32i)least; ) {
+  for(u32i r; (r = rank(op = home(self)->talk.kind)) >= (u32i)least; ) {
     chop(self);
     if(op == tokd('&', '&') || op == tokd('|', '|')) { x = both(self, op, x, r); continue; }
 
@@ -668,7 +668,7 @@ s32i  room(mode* self, u32i size) {
 
 // the type the word names, NULL when it names none
 meta* ilk(mode* self) {
-  meta* x = self->talk.kind == ttag? find(self, self->unit, self->talk.hash): NULL;
+  meta* x = home(self)->talk.kind == ttag? find(self, self->unit, home(self)->talk.hash): NULL;
   return x && (x->kind == base || x->kind == list)? x: NULL;
 }
 
@@ -679,9 +679,9 @@ meta* sort(mode* self) {
   if(same(self, "struct")) chop(self);
   meta* type = ilk(self);
   if(!type) {
-    if(self->talk.kind == ttag)
-      flaw(self, "expected type, got '%.*s'\n", nick(self->talk.hash));
-    flaw(self, "expected type, got %x\n", self->talk.kind);
+    if(home(self)->talk.kind == ttag)
+      flaw(self, "expected type, got '%.*s'\n", nick(home(self)->talk.hash));
+    flaw(self, "expected type, got %x\n", home(self)->talk.kind);
   }
   chop(self);
   return type;
@@ -690,9 +690,9 @@ meta* sort(mode* self) {
 // the stars before a declared name: pointers to type, the name into *name
 meta* term(mode* self, meta* type, item** name) {
   while(twin(self, '*')) type = href(self, type);
-  if(self->talk.kind != ttag)
-    flaw(self, "expected name, got %x\n", self->talk.kind);
-  *name = self->talk.hash;
+  if(home(self)->talk.kind != ttag)
+    flaw(self, "expected name, got %x\n", home(self)->talk.kind);
+  *name = home(self)->talk.hash;
   chop(self);
   return type;
 }
@@ -746,13 +746,13 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
     }
     if(!at) bits(self, slot + i * t->size, NULL, type->size - i * t->size); // data is zero
   }
-  else if(t && t->size == 1 && self->talk.kind == '"') {
-    u32i n = quote(self->talk.hash, NULL);
+  else if(t && t->size == 1 && home(self)->talk.kind == '"') {
+    u32i n = quote(home(self)->talk.hash, NULL);
     if(n > type->size) flaw(self, "string too long\n");
-    if(at) quote(self->talk.hash, at);
+    if(at) quote(home(self)->talk.hash, at);
     else {
       byte b[n];
-      quote(self->talk.hash, b);
+      quote(home(self)->talk.hash, b);
       bits(self, slot, b, n);
       bits(self, slot + n, NULL, type->size - n);
     }
@@ -797,9 +797,9 @@ void  once(mode* self, meta* prev, item* name, bool own) {
 // a member is aligned to its size, the struct to its widest member
 void  bulk(mode* self) {
   meta  anon = {.kind = list}, *type = &anon, **next = &anon.type;
-  if(self->talk.kind == ttag) { // seeded first: members may point to it
-    once(self, find(self, self->unit, self->talk.hash), self->talk.hash, 0);
-    seed(self, .name=self->talk.hash, .kind=list);
+  if(home(self)->talk.kind == ttag) { // seeded first: members may point to it
+    once(self, find(self, self->unit, home(self)->talk.hash), home(self)->talk.hash, 0);
+    seed(self, .name=home(self)->talk.hash, .kind=list);
     type = self->pile + self->top - 1;
     next = &type->type;
     chop(self);
@@ -890,7 +890,7 @@ void  stmt(mode* self) {
   }
   else if(same(self, "return")) {
     chop(self);
-    if(self->talk.kind != ';') {
+    if(home(self)->talk.kind != ';') {
       meta* t = self->func->type;
       if(!wide(t) != !wide(load(self, expr(self, 1)).type)) emit(self, cast, !!wide(t));
     }
@@ -912,7 +912,7 @@ void  hire(mode* self, meta* x, meta* prev) {
   x->ext = 1;
   if(x->kind == call && prev && (prev->kind == pend || (prev->kind == call && prev->ext && !prev->lib)))
     return;
-  x->lib = self->from? self->from: rack(self, sget(self, "\"c\""));
+  x->lib = home(self)->from? home(self)->from: rack(self, sget(self, "\"c\""));
   if(!prev || !prev->ext || prev->addr || prev->kind != x->kind || prev->lib != x->lib
      || prev->type != x->type || prev->size != x->size || prev->more != x->more)
     once(self, prev, x->name, x->own);
@@ -921,8 +921,8 @@ void  hire(mode* self, meta* x, meta* prev) {
 
 // the string after link or load
 item* bond(mode* self) {
-  item* s = self->talk.hash;
-  if(self->talk.kind != '"') flaw(self, "expected a string\n");
+  item* s = home(self)->talk.hash;
+  if(home(self)->talk.kind != '"') flaw(self, "expected a string\n");
   chop(self);
   return s;
 }
@@ -932,7 +932,7 @@ void  decl(mode* self) {
   // source file are imported from it
   if(same(self, "load")) {
     chop(self);
-    self->from = rack(self, bond(self));
+    home(self)->from = rack(self, bond(self));
     skip(self, ';');
     return;
   }
@@ -975,8 +975,8 @@ void  decl(mode* self) {
       meta* type = sort(self);
       while(twin(self, '*')) type = href(self, type);
       if(!type->size && !func->size && twin(self, ')')) break; // (void)
-      if(self->talk.kind != ttag) { anon = 1; continue; } // an import may leave it out
-      seed(self, .name=self->talk.hash, .type=type, .kind=data, .slot=room(self, 8));
+      if(home(self)->talk.kind != ttag) { anon = 1; continue; } // an import may leave it out
+      seed(self, .name=home(self)->talk.hash, .type=type, .kind=data, .slot=room(self, 8));
       chop(self);
     }
     if(func->size > 6) flaw(self, "more than 6 parameters\n");
@@ -988,7 +988,7 @@ void  decl(mode* self) {
     once(self, prev, name, own);
     if(anon) flaw(self, "a parameter without a name\n");
     if(func->more) flaw(self, "only an import can be variadic\n");
-    if(self->talk.kind != '{') flaw(self, "expected function body\n");
+    if(home(self)->talk.kind != '{') flaw(self, "expected function body\n");
     func->addr = self->text->body;
     emit(self, open);
     for(u32i i = 0; i < func->size; i++) emit(self, parm, i, self->pile[top + i].slot);
@@ -1010,7 +1010,7 @@ void  decl(mode* self) {
       continue;
     }
     once(self, find(self, self->unit, name), name, own);
-    u32i off = lay(self, type->size, self->talk.kind != '=', 8);
+    u32i off = lay(self, type->size, home(self)->talk.kind != '=', 8);
     if(twin(self, '=')) seal(self, type, self->data->head + off, 0);
     seed(self, .name=name, .type=type, .kind=glob, .slot=off, .own=own);
     if(!twin(self, ',')) break;
@@ -1018,37 +1018,35 @@ void  decl(mode* self) {
   skip(self, ';');
 }
 
-// the file at path, read in code, into the pass as a unit of kind unless it
-// is in already: 1 when it was not. The unit joins the list as it starts, so
-// a cycle back into it sees what it has defined so far. An object is taken,
-// the symbol index of an archive read, a source parsed: when it ends, its
-// forward calls to functions now known are bound. Names point into code,
-// which is kept
-bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
-  for(unit* u = self->units + 1; kind != un_memb && u < self->units + self->unitn; u++)
-    if(u->kind != un_memb && alike(u->path, path, size + 1)) { free(code); return 0; }
-  file* last = self->code;
-  u64i  line = self->line;
-  word  talk = self->talk;
+// the unit at, its file read in code: an object is taken, the symbol index of
+// an archive read, a source parsed: when it ends, its forward calls to
+// functions now known are bound. The unit being parsed is back after: each
+// source keeps its own place (line, talk, from) in its unit. Names point into
+// code, which is kept
+void  feed(mode* self, u32i at) {
+  file* code = self->units[at].code; // nest may move the units
+  byte  kind = self->units[at].kind;
+  char* path = self->units[at].path;
   u32i  fixs = self->fixs, back = self->unit;
-  meta* from = self->from;
-  self->unit = nest(self, (unit){.path = path, .code = code, .kind = kind});
-  self->from = NULL;
+  self->unit = at;
   if(kind == un_arch) ario_load(self, code);
   else if(kind != un_code) {
     if(!self->form.take) fail("%s: no objects in this form\n", path);
     self->form.take(self, code);
   } else {
-    self->code = code;
-    self->line = 1;
-    for(chop(self); self->talk.kind; ) decl(self);
+    for(chop(self); home(self)->talk.kind; ) decl(self);
     tie(self, fixs, 0);
   }
   self->unit = back;
-  self->code = last;
-  self->line = line;
-  self->talk = talk;
-  self->from = from;
+}
+
+// the file at path, read in code, into the pass as a unit of kind unless it
+// is in already: 1 when it was not. The unit joins the list as it starts, so
+// a cycle back into it sees what it has defined so far
+bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
+  for(unit* u = self->units + 1; kind != un_memb && u < self->units + self->unitn; u++)
+    if(u->kind != un_memb && alike(u->path, path, size + 1)) { free(code); return 0; }
+  feed(self, nest(self, (unit){.path = path, .code = code, .kind = kind}));
   return 1;
 }
 
@@ -1077,7 +1075,6 @@ void  make(mode* self) {
   //      | variable
   //      | typedecl
 
-  self->line = 1;
   self->text = (file*)self->hold(0, TEXT);
   self->text->body = self->text->head;
   self->text->tail = (byte*)self->text + TEXT;
@@ -1088,7 +1085,7 @@ void  make(mode* self) {
 
   emit(self, boot);
 
-  self->unit = nest(self, (unit){.path = self->name, .kind = un_root});
+  self->units[0].path = self->name; // the root, made by main before the command line
   crux(self, "void", .size=0);
   crux(self, "bool", .size=1);
   crux(self, "byte", .size=1);
@@ -1098,10 +1095,13 @@ void  make(mode* self) {
   crux(self, "int",  .size=4);
   crux(self, "long", .size=8);
 
-  // objects and archives on the command line come before the source, which
-  // calls them like any function defined before it
-  for(u32i i = 0; i < self->objn; i++)
-    lead(self, self->objs[i].path, self->objs[i].code, self->objs[i].kind);
+  // objects and archives on the command line are the units after the root: they
+  // come before the source, which calls them like any function defined before it
+  for(u32i i = 1, n = self->unitn; i < n; i++) {
+    unit* u = self->units + i;
+    if(!(u->code = self->scan(u->path))) fail("cannot open: %s\n", u->path);
+    feed(self, i);
+  }
   lead(self, self->name, NULL, un_code);
   reel(self);
 

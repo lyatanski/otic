@@ -45,10 +45,21 @@ typedef struct {
   byte   head[1];
 } file;
 
+typedef struct {
+  u32i  kind;
+  union {
+    item* hash;
+    u64i  ival;
+    u64i  fval;
+  };
+} word;
+
 // each file in the pass, and the builtins (the root, unit 0): its path and
 // its own symbol table. A name is looked up in the unit being parsed, then in
 // the others in join order (find). Kinds: the root, a source, an object, an
-// archive (its table is the symbol index), a member pulled from an archive
+// archive (its table is the symbol index), a member pulled from an archive.
+// A source is parsed from where its own line, talk and from say, so another
+// source can be joined from the middle of it
 enum { un_root, un_code, un_objs, un_arch, un_memb };
 typedef struct unit unit;
 struct unit {
@@ -59,6 +70,9 @@ struct unit {
   file*  code; // the source or object, kept: names point into it
   struct meta* defs; // an archive's index, kept: pulled names leave it
   byte   kind;
+  u64i   line; // a source: the line being parsed
+  word   talk; // a source: the last token
+  struct meta* from; // a source: the library of its last load
 };
 
 // arch
@@ -118,15 +132,6 @@ typedef struct {
   void  (*take)(mode*, file*);             // load a relocatable object, named by mode.name
   osys  os;
 } form;
-
-typedef struct {
-  u32i  kind;
-  union {
-    item* hash;
-    u64i  ival;
-    u64i  fval;
-  };
-} word;
 
 // base and list (struct) are types, data a local, glob a global, call a function,
 // refs a pointer type, many an array type, pend a name in an archive's index
@@ -188,9 +193,6 @@ typedef struct {
 struct mode {
   char* name; // input
   char* outp; // output
-  file* code; // source being parsed
-  u64i  line;
-  word  talk; // last
   u32i  unit; // the unit being parsed
   u32i  unitn, unitc;
   unit* units; // in join order, the root first
@@ -226,11 +228,8 @@ struct mode {
   seat  aims[1024];
   u32i  defn;
   meta  defs[512]; // pointer, array and struct types, members, libraries
-  meta* from;      // the library of the last load in this source file
   u32i  impn;
   meta* imps[256]; // imports in use, each an 8-byte slot the loader fills
-  u32i  objn, objc;
-  unit* objs;      // objects and archives named on the command line
   u32i  askn, askc, askd;
   item** asks;     // archive names used, their members pulled up to askd
   u32i  dirn;
@@ -244,7 +243,7 @@ void  ario_pull(mode*, meta*); // the member that defines an archive name
 void  make(mode*);
 void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it, text at org
 u64i  gap(mode*); // alignment of data and of bss after it
-void  bolt(mode*, char* name, file*, byte kind); // a file named on the command line
+void  bolt(mode*, char* name, byte kind); // a file named on the command line
 bool  alike(void* x, void* y, u64i size);
 u64i  clue(char* mark, u64i size);
 item* hsee(unit*, char* mark, u64i size, u64i clue); // NULL when not in
@@ -255,7 +254,7 @@ u32i  lay(mode*, u32i size, bool zero, u32i align);
 #define home(self) ((self)->units + (self)->unit)
 // fail at the line being parsed, in the file of the unit being parsed
 #define flaw(self, fmt, ...) \
-  fail("%s:%ld: " fmt, home(self)->path, (self)->line __VA_OPT__(,) __VA_ARGS__)
+  fail("%s:%ld: " fmt, home(self)->path, home(self)->line __VA_OPT__(,) __VA_ARGS__)
 #define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
 #define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
 #define nick(x) (int)(x)->size, (x)->name

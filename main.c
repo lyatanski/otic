@@ -238,8 +238,8 @@ static void seek(mode* self, opts*, char* para) {
 // members are object files
 static void apos(mode* self, opts*, char* para) {
   u64i n = slen(para);
-  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, self->scan(para), un_objs);
-  else if(n > 2 && !scmp(para + n - 2, ".a")) bolt(self, para, self->scan(para), un_arch);
+  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, un_objs);
+  else if(n > 2 && !scmp(para + n - 2, ".a")) bolt(self, para, un_arch);
   else self->name = para;
 }
 
@@ -268,6 +268,7 @@ int   main(int argc, char** argv) {
     .arch = base,
     .form = host,
   };
+  nest(&self, (unit){.kind = un_root}); // unit 0, before the files of the command line
 
   opts args[] = {
     {"-a", "--arch", .args = 1, .desc = "cpu architecture: ia64, arm8", .call = arch},

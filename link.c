@@ -50,16 +50,25 @@ void  haul(mode* self, item* s) {
   flaw(self, "cannot find %.*s\n", nick(s));
 }
 
-// a file named on the command line, joined before the source
-void  bolt(mode* self, char* name, file* code, byte kind) {
-  self->objs = swell(self->objs, self->objn, &self->objc, sizeof(unit), 16);
-  self->objs[self->objn++] = (unit){.path = name, .code = code, .kind = kind};
+// a file named on the command line, a unit of kind after the root unless it
+// is in already. It is read and taken by make, before the source, when the
+// form, the target and the text are known
+void  bolt(mode* self, char* name, byte kind) {
+  u64i  size = slen(name);
+  char* path = malloc(size + 1);
+  if(!path) fail("out of memory\n");
+  copy((byte*)path, name, size + 1);
+  size = tidy(path, size);
+  for(unit* u = self->units + 1; u < self->units + self->unitn; u++)
+    if(alike(u->path, path, size + 1)) { free(path); return; }
+  nest(self, (unit){.path = path, .kind = kind});
 }
 
-// x added to the units: its index
+// x added to the units, at its line 1: its index
 u32i  nest(mode* self, unit x) {
   self->units = swell(self->units, self->unitn, &self->unitc, sizeof(unit), 16);
   self->units[self->unitn] = x;
+  self->units[self->unitn].line = 1;
   return self->unitn++;
 }
 
@@ -146,19 +155,19 @@ u32i  port(mode* self, meta* x) {
 // or fail when all sources are parsed (last)
 void  tie(mode* self, u32i from, bool last) {
   u32i keep = from, unit = self->unit;
-  u64i line = self->line;
+  u64i line = home(self)->line;
   for(fix* f = self->link + from; f < self->link + self->fixs; f++) {
     meta* func = find(self, f->ext? 0: f->unit, f->name);
     if(!last && (!func || func->kind != call || !func->addr)) { self->link[keep++] = *f; continue; }
     self->unit = f->unit;
-    self->line = f->line;
+    home(self)->line = f->line;
     bind(self, f->at, f->name, func, f->argc, f->ext);
     if(!f->ext && wide(func->type)) // its result was taken as an int
       flaw(self, "'%.*s' does not return an int, define it before the call\n", nick(f->name));
   }
   self->fixs = keep;
   self->unit = unit;
-  self->line = line;
+  home(self)->line = line;
 }
 
 // m is a global, or with code a function with a body, but not an import
