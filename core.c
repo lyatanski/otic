@@ -1056,7 +1056,7 @@ bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
 // Freed when the file is in already
 bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
   size = tidy(path, size);
-  if(!code && !(code = scan(path))) return 0;
+  if(!code && !(code = self->scan(path))) return 0;
   if(!join(self, path, size, code, kind)) free(path);
   return 1;
 }

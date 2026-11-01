@@ -110,6 +110,7 @@ typedef struct mode mode;
 #define VARY (~0u) // meta.size of a function from an object
 typedef void* (*poke)(void*, size_t);
 typedef void  (*pack)(mode*);
+typedef file* (*grab)(char*); // a source file, NUL terminated, NULL when it cannot be opened
 
 // container
 typedef struct {
@@ -208,6 +209,7 @@ struct mode {
   poke  hold;
   poke  drop;
   pack  show;
+  grab  scan;
 
   u32i  top;
   meta  pile[256];
@@ -238,7 +240,6 @@ struct mode {
   hook* hooks;
 };
 
-file* scan(char* name); // a source file, NUL terminated, NULL when it cannot be opened
 void  ario_load(mode*, file*); // the symbol index of an archive, its table
 void  ario_pull(mode*, meta*); // the member that defines an archive name
 void  make(mode*);

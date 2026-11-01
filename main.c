@@ -238,8 +238,8 @@ static void seek(mode* self, opts*, char* para) {
 // members are object files
 static void apos(mode* self, opts*, char* para) {
   u64i n = slen(para);
-  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, scan(para), un_objs);
-  else if(n > 2 && !scmp(para + n - 2, ".a")) bolt(self, para, scan(para), un_arch);
+  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, self->scan(para), un_objs);
+  else if(n > 2 && !scmp(para + n - 2, ".a")) bolt(self, para, self->scan(para), un_arch);
   else self->name = para;
 }
 
@@ -264,6 +264,7 @@ int   main(int argc, char** argv) {
     .hold = hold,
     .drop = drop,
     .show = exec,
+    .scan = scan,
     .arch = base,
     .form = host,
   };
