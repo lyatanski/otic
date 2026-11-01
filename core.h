@@ -130,14 +130,16 @@ typedef struct {
 
 // base and list (struct) are types, data a local, glob a global, call a function,
 // refs a pointer type, many an array type, pend a name in an archive's index
-// whose member is not pulled yet
-typedef enum { base, list, data, call, glob, refs, many, pend } what;
+// whose member is not pulled yet, dlib a shared library named by load: its name
+// is the string, its addr the handle once the run loads it
+typedef enum { base, list, data, call, glob, refs, many, pend, dlib } what;
 typedef struct meta meta;
 struct meta {
   meta* type; // data link to its type
   meta* hide; // what the name meant before
   item* name;
   byte* addr;
+  meta* lib;  // the library of an import
   u32i  size; // bytes of a type, parameters of a call
   s32i  slot; // frame offset, data offset, offset of a member
   what  kind;
@@ -145,7 +147,6 @@ struct meta {
   bool  weak; // defined by an object as weak: a strong definition replaces it
   bool  ext;  // a function from an object, or an import
   bool  more; // variadic: arguments may follow the size named ones
-  byte  lib;  // 1 + the library of an import
   u32i  unit; // the unit that defines it
 };
 
@@ -224,10 +225,8 @@ struct mode {
   u32i  seats;
   seat  aims[1024];
   u32i  defn;
-  meta  defs[512]; // pointer, array and struct types, members
-  u32i  from;      // 1 + the library of the last load in this source file
-  u32i  libn;
-  item* libs[16];  // shared libraries named by load, as string literals
+  meta  defs[512]; // pointer, array and struct types, members, libraries
+  meta* from;      // the library of the last load in this source file
   u32i  impn;
   meta* imps[256]; // imports in use, each an 8-byte slot the loader fills
   u32i  objn, objc;
@@ -262,6 +261,7 @@ u32i  lay(mode*, u32i size, bool zero, u32i align);
 #define nick(x) (int)(x)->size, (x)->name
 
 // core.c, for link.c
+meta* mint(mode*, meta x);
 u32i  wide(meta*);
 u32i  quote(item* s, byte* out);
 void  bind(mode*, byte* at, item* name, meta* func, u32i argc, bool ext);
@@ -277,7 +277,7 @@ u32i  heft(meta* x);
 meta* find(mode*, u32i at, item* name);
 u32i  ask(mode*, meta* x);
 void  reel(mode*);
-u32i  rack(mode*, item* s);
+meta* rack(mode*, item* s);
 u32i  port(mode*, meta* x);
 void  tie(mode*, u32i from, bool last);
 

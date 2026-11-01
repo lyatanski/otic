@@ -119,15 +119,16 @@ void  reel(mode* self) {
   }
 }
 
-// 1 + the index of library s, added to libs when new
-u32i  rack(mode* self, item* s) {
-  u32i i = 0;
-  for(; i < self->libn && !akin(self->libs[i], s); i++);
-  if(i == self->libn) {
-    if(self->libn == sizeof self->libs / sizeof *self->libs) flaw(self, "too many libraries\n");
-    self->libs[self->libn++] = s;
-  }
-  return i + 1;
+// the library named by the string s: one for every unit that names it, made
+// when new. It is bound to its spelling like any name, but outside the scopes
+// of the pile: the first unit to name it keeps it for the whole run
+meta* rack(mode* self, item* s) {
+  meta* x = find(self, 0, s);
+  if(x) return x;
+  if(self->defn == sizeof self->defs / sizeof *self->defs) flaw(self, "too many libraries\n");
+  x = mint(self, (meta){.name = s, .kind = dlib, .unit = self->unit});
+  s->data = x;
+  return x;
 }
 
 // the seat of the slot of import x, made when it is first used

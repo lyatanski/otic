@@ -1030,9 +1030,10 @@ bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
   file* last = self->code;
   u64i  line = self->line;
   word  talk = self->talk;
-  u32i  fixs = self->fixs, from = self->from, back = self->unit;
+  u32i  fixs = self->fixs, back = self->unit;
+  meta* from = self->from;
   self->unit = nest(self, (unit){.path = path, .code = code, .kind = kind});
-  self->from = 0;
+  self->from = NULL;
   if(kind == un_arch) ario_load(self, code);
   else if(kind != un_code) {
     if(!self->form.take) fail("%s: no objects in this form\n", path);

@@ -130,21 +130,21 @@ void* bring(item* s) {
 
 // the address of each import in its slot, from the libraries it loads
 void  plug(mode* self, u64i* slot) {
-  void* libs[sizeof self->libs / sizeof *self->libs] = {0};
   char  name[256];
   for(u32i i = 0; i < self->impn; i++) {
     meta* x = self->imps[i];
-    u32i  l = x->lib - 1;
-    if(!libs[l] && !(libs[l] = bring(self->libs[l])))
-      fail("cannot load library %.*s\n", nick(self->libs[l]));
+    meta* l = x->lib; // loaded when first used: its handle is its addr
+    if(!l->addr && !(l->addr = bring(l->name)))
+      fail("cannot load library %.*s\n", nick(l->name));
+    void* lib = l->addr;
     if(x->name->size >= sizeof name) fail("name too long: %.*s\n", nick(x->name));
     snprintf(name, sizeof name, "%.*s", nick(x->name));
 #ifdef _WIN32
-    void* at = (void*)GetProcAddress(libs[l], name);
+    void* at = (void*)GetProcAddress(lib, name);
 #else
-    void* at = dlsym(libs[l], name);
+    void* at = dlsym(lib, name);
 #endif
-    if(!at) fail("undefined: %s in %.*s\n", name, nick(self->libs[l]));
+    if(!at) fail("undefined: %s in %.*s\n", name, nick(l->name));
     slot[x->slot - 1] = (u64i)at;
   }
 }
