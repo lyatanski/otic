@@ -4,7 +4,7 @@
 // run in memory and as an executable written with `-e` (ELF, Mach-O
 // or PE). Constant operands are folded, so the cases that test generated code
 // take their operands from locals. It tests the target it is built for, which
-// must be tic's: ./check cross-builds both for arm8.
+// must be tic's: for arm8, cross-build both.
 #include "test.h"
 
 #include <fcntl.h>    /* open, O_BINARY */
