@@ -7,6 +7,8 @@ enum { tend, ttag, tnum };
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
+// a string literal in the table of the unit being parsed
+#define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
 
 void chop(mode* self) {
   s64i  ival = 0;
@@ -1017,7 +1019,7 @@ void  make(mode* self) {
 
   emit(self, boot);
 
-  self->units[0].path = self->name; // the root, made by main before the command line
+  self->units[0].path = self->name; // the root, made by main
   crux(self, "void", .size=0);
   crux(self, "bool", .size=1);
   crux(self, "byte", .size=1);
@@ -1027,13 +1029,6 @@ void  make(mode* self) {
   crux(self, "int",  .size=4);
   crux(self, "long", .size=8);
 
-  // objects and archives on the command line are the units after the root: they
-  // come before the source, which calls them like any function defined before it
-  for(u32i i = 1, n = self->unitn; i < n; i++) {
-    unit* u = self->units + i;
-    if(!(u->code = self->scan(u->path))) fail("cannot open: %s\n", u->path);
-    feed(self, i);
-  }
   lead(self, self->name, NULL, un_code);
   reel(self);
 

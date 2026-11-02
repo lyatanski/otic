@@ -208,7 +208,7 @@ struct opts {
 };
 
 static void help(mode*, opts* self, char*) {
-  printf("usage: %s [options] file [obj.o...] [lib.a...]\n", "tic");
+  printf("usage: %s [options] file\n", "tic");
   printf("options:\n");
   while(self->name) {
     printf("  %s", self->name);
@@ -248,13 +248,9 @@ static void seek(mode* self, opts*, char* para) {
   self->dirs[self->dirn++] = para;
 }
 
-// the source, an object file (name.o), or a static library (name.a), whose
-// members are object files
+// the source: its link and load lines name the objects and libraries
 static void apos(mode* self, opts*, char* para) {
-  u64i n = slen(para);
-  if(n > 2 && is(para + n - 2, ".o")) bolt(self, para, un_objs);
-  else if(n > 2 && is(para + n - 2, ".a")) bolt(self, para, un_arch);
-  else self->name = para;
+  self->name = para;
 }
 
 static void parse(mode* self, opts* opt, int argc, char** argv, move call) {
@@ -284,7 +280,7 @@ int   main(int argc, char** argv) {
     .form = host,
     .ario = {ario_load, ario_pull},
   };
-  nest(&self, (unit){.kind = un_root}); // unit 0, before the files of the command line
+  nest(&self, (unit){.kind = un_root}); // unit 0, the builtins
 
   opts args[] = {
     {"-a", "--arch", .args = 1, .desc = "cpu architecture: ia64, arm8", .call = arch},

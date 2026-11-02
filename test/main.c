@@ -50,7 +50,6 @@
 enum { bad = INT_MIN, odd }; // compile error, no result (crash, timeout, ...)
 
 static char src_at[64], exe_at[64];
-static char* lib; // an object or a static library tic gets after the case
 
 // run args[0] with stdout on fd for at most 5s: its exit status, or -1 when
 // it was killed
@@ -95,7 +94,7 @@ static char* tic(void) {
 static int  jit(void) {
   int fd[2];
   if(pipe(fd)) return odd;
-  int code = spawn(fd[1], (char*[]){tic(), src_at, lib, NULL});
+  int code = spawn(fd[1], (char*[]){tic(), src_at, NULL});
   close(fd[1]);
   char out[256], *last = out;
   int n = read(fd[0], out, sizeof out - 1);
@@ -113,7 +112,7 @@ static int  jit(void) {
 static int  exe(void) {
   int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
-  int code = spawn(null, (char*[]){tic(), "-e", exe_at, src_at, lib, NULL});
+  int code = spawn(null, (char*[]){tic(), "-e", exe_at, src_at, NULL});
   close(null);
   if(code == 1) return access(exe_at, F_OK)? bad: odd; // and no executable
   if(code || chmod(exe_at, 0755)) return odd;
@@ -601,110 +600,100 @@ spec(TAG) {
   }
 
   context("objects") { // built by cc: an object, or the members of an archive
-    elfs_it("calls a function from an object") {
-      archive("ar-obj", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
-      lib = "bins/ar-obj-0.o";
-      expect(5, "int main() { return add(2, 3); }\n");
-    }
-    elfs_it("calls a function from an archive") {
-      lib = archive("ar-add", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
-      expect(5, "int main() { return add(2, 3); }\n");
-    }
     elfs_it("calls between members") {
-      lib = archive("ar-pull", (char*[]){
+      archive("libar-pull", (char*[]){
         "int twice(int);\nint quad(int x) { return twice(twice(x)); }\n",
         "int twice(int x) { return x * 2; }\n", NULL});
-      expect(12, "int main() { return quad(3); }\n");
+      expect(12, "link \"ar-pull\";\nint main() { return quad(3); }\n");
     }
     elfs_it("reaches data, bss and the globals of other members") {
-      lib = archive("ar-data", (char*[]){
+      archive("libar-data", (char*[]){
         "static const int tab[] = {10, 20, 30, 40};\nint counter;\nextern int base;\n"
         "int get(int i) { counter += i; return tab[i] + counter + base; }\n",
         "int base = 100;\n", NULL});
-      expect(54, "int main() { return get(1) + get(2) - 200; }\n");
+      expect(54, "link \"ar-data\";\nint main() { return get(1) + get(2) - 200; }\n");
     }
     elfs_it("calls back into the program") {
-      lib = archive("ar-back", (char*[]){
+      archive("libar-back", (char*[]){
         "int tic_cb(int);\nint call_back(int x) { return tic_cb(x) + 1; }\n", NULL});
-      expect(13, "int tic_cb(int x) { return x * 3; }\nint main() { return call_back(4); }\n");
+      expect(13, "link \"ar-back\";\nint tic_cb(int x) { return x * 3; }\nint main() { return call_back(4); }\n");
     }
     elfs_it("lets a strong definition replace a weak one") {
-      lib = archive("ar-weak", (char*[]){
+      archive("libar-weak", (char*[]){
         "__attribute__((weak)) int pick(void) { return 1; }\nint use(void) { return pick(); }\n",
         "int pick(void) { return 2; }\nint other(void) { return 5; }\n", NULL});
-      expect(25, "int main() { return use() * 10 + other(); }\n");
+      expect(25, "link \"ar-weak\";\nint main() { return use() * 10 + other(); }\n");
     }
     elfs_it("aligns the stack for C code") { // pushed operands: 0, 2, then 1
-      lib = archive("ar-align", (char*[]){
+      archive("libar-align", (char*[]){
         "int aligned(void) { return ((long)__builtin_frame_address(0) & 15) == 0; }\n", NULL});
-      expect(111, "int main() { int a = 1; return aligned() * 100 + (a + 9) * aligned() + aligned(); }\n");
+      expect(111, "link \"ar-align\";\nint main() { int a = 1; return aligned() * 100 + (a + 9) * aligned() + aligned(); }\n");
     }
     elfs_it("passes variadic arguments to C code") {
-      lib = archive("ar-vary", (char*[]){"#include <stdarg.h>\n"
+      archive("libar-vary", (char*[]){"#include <stdarg.h>\n"
         "int sum(int n, ...) { va_list ap; va_start(ap, n); int a = va_arg(ap, int);\n"
         "  int b = va_arg(ap, int); int c = va_arg(ap, int); va_end(ap); return n + a + b * 2 + c * 4; }\n",
         NULL}); // no loop: cc would align its text to 32
-      expect(24, "int sum(int n, ...);\nint main() { return sum(3, 1, 2, 4); }\n");
+      expect(24, "link \"ar-vary\";\nint sum(int n, ...);\nint main() { return sum(3, 1, 2, 4); }\n");
     }
     elfs_it("cuts C results to their type") { // the asm leaves the upper bytes set
-      lib = archive("ar-cut", (char*[]){
+      archive("libar-cut", (char*[]){
         "int cut(long x) { int r; __asm__(\"mov %1, %q0\" : \"=r\"(r) : \"r\"(x)); return r; }\n"
         "char low(long x) { char r; __asm__(\"mov %1, %q0\" : \"=r\"(r) : \"r\"(x)); return r; }\n",
         NULL});
-      expect(2, "int cut(long x);\nchar low(long x);\nint main() { long b = 65536; b = b * 65536; int r = 0;\n"
+      expect(2, "link \"ar-cut\";\nint cut(long x);\nchar low(long x);\nint main() { long b = 65536; b = b * 65536; int r = 0;\n"
                 "  if(cut(b)) r = 1;\n  return r + (low(511) == 255) * 2;\n}\n");
     }
     elfs_it("takes the result type of C code from a prototype") {
-      lib = archive("ar-long", (char*[]){"long big(void) { return 1L << 40; }\n", NULL});
-      expect(1, "long big(void);\nlong big(void);\nint main() { return big() >> 40; }\n");
+      archive("libar-long", (char*[]){"long big(void) { return 1L << 40; }\n", NULL});
+      expect(1, "link \"ar-long\";\nlong big(void);\nlong big(void);\nint main() { return big() >> 40; }\n");
     }
     elfs_it("pulls only the members it uses") { // the second one would be undefined
-      lib = archive("ar-lazy", (char*[]){"int add(int a, int b) { return a + b; }\n",
+      archive("libar-lazy", (char*[]){"int add(int a, int b) { return a + b; }\n",
         "int nowhere(void);\nint broken(void) { return nowhere(); }\n", NULL});
-      expect(5, "int main() { return add(2, 3); }\n");
+      expect(5, "link \"ar-lazy\";\nint main() { return add(2, 3); }\n");
     }
     elfs_it("keeps a weak definition when no strong one is pulled") {
-      lib = archive("ar-keep", (char*[]){
+      archive("libar-keep", (char*[]){
         "__attribute__((weak)) int pick(void) { return 1; }\nint use(void) { return pick(); }\n",
         "int pick(void) { return 2; }\n", NULL});
-      expect(1, "int main() { return use(); }\n");
+      expect(1, "link \"ar-keep\";\nint main() { return use(); }\n");
     }
     elfs_it("reads data of a member") {
-      lib = archive("ar-glob", (char*[]){"int seven = 7;\n", NULL});
-      expect(9, "int main() { return seven + 2; }\n");
+      archive("libar-glob", (char*[]){"int seven = 7;\n", NULL});
+      expect(9, "link \"ar-glob\";\nint main() { return seven + 2; }\n");
     }
     elfs_it("aligns code, data and bss over 16") {
-      lib = archive("ar-wide", (char*[]){
+      archive("libar-wide", (char*[]){
         "_Alignas(64) int tab[4] = {1, 2, 3, 4};\n_Alignas(128) char buf[8];\n"
         "__attribute__((aligned(64))) int wide(void) { return tab[3]; }\n"
         "long at[3] = {(long)tab, (long)buf, (long)wide};\n" // not folded by cc
         "int ok(void) { return !(at[0] & 63) + !(at[1] & 127) + !(at[2] & 63) + wide(); }\n", NULL});
-      expect(7, "int main() { return ok(); }\n");
+      expect(7, "link \"ar-wide\";\nint main() { return ok(); }\n");
     }
     elfs_it("fills pointers in data") {
-      lib = archive("ar-addr", (char*[]){
+      archive("libar-addr", (char*[]){
         "static int v[2] = {3, 4};\nint* p = &v[1];\nint two(void) { return 2; }\n"
         "int (*fp)(void) = two;\nint deref(void) { return *p * 10 + fp(); }\n", NULL});
-      expect(42, "int main() { return deref(); }\n");
+      expect(42, "link \"ar-addr\";\nint main() { return deref(); }\n");
     }
     elfs_it("puts a weak undefined name at address 0") {
-      lib = archive("ar-null", (char*[]){
+      archive("libar-null", (char*[]){
         "extern __attribute__((weak)) int missing(void);\nextern __attribute__((weak)) char gone[];\n"
         "int has(void) { char* volatile a = (char*)missing; char* volatile b = gone;\n" // GOT loads
         "  return 7 + (a != 0) + (b != 0); }\n", NULL});
-      expect(7, "int main() { return has(); }\n");
+      expect(7, "link \"ar-null\";\nint main() { return has(); }\n");
     }
     elfs_it("rejects an undefined symbol") {
-      lib = archive("ar-undef", (char*[]){
+      archive("libar-undef", (char*[]){
         "int nowhere(void);\nint broken(void) { return nowhere(); }\n", NULL});
-      expect(bad, "int main() { return broken(); }\n");
+      expect(bad, "link \"ar-undef\";\nint main() { return broken(); }\n");
     }
     elfs_it("rejects a function defined twice") {
-      lib = archive("ar-twice", (char*[]){
+      archive("libar-twice", (char*[]){
         "int add(int a, int b) { return a + b; }\nint sub(int a, int b) { return a - b; }\n", NULL});
-      expect(bad, "int add(int a, int b) { return 0; }\nint main() { return sub(3, 1); }\n");
+      expect(bad, "link \"ar-twice\";\nint add(int a, int b) { return 0; }\nint main() { return sub(3, 1); }\n");
     }
-    lib = NULL;
     elfs_it("links an object beside the source") {
       archive("lk-obj", (char*[]){"int add(int a, int b) { return a + b; }\n", NULL});
       expect(5, "link \"lk-obj-0\";\nint main() { return add(2, 3); }\n");

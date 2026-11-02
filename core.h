@@ -271,7 +271,6 @@ struct mode {
 void  make(mode*);
 void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it, text at org
 u64i  gap(mode*); // alignment of data and of bss after it
-void  bolt(mode*, char* name, byte kind); // a file named on the command line
 bool  alike(void* x, void* y, u64i size);
 u32i  lay(mode*, u32i size, bool zero, u32i align);
 
@@ -280,7 +279,6 @@ u32i  lay(mode*, u32i size, bool zero, u32i align);
 // fail at the line being parsed, in the file of the unit being parsed
 #define flaw(self, fmt, ...) \
   fail("%s:%llu: " fmt, home(self)->path, (unsigned long long)home(self)->line __VA_OPT__(,) __VA_ARGS__)
-#define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
 #define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
 #define nick(x) (int)(x)->size, (x)->name
 

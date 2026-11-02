@@ -52,20 +52,6 @@ void  haul(mode* self, item* s) {
   flaw(self, "cannot find %.*s\n", nick(s));
 }
 
-// a file named on the command line, a unit of kind after the root unless it
-// is in already. It is read and taken by make, before the source, when the
-// form, the target and the text are known
-void  bolt(mode* self, char* name, byte kind) {
-  u64i  size = slen(name);
-  char* path = malloc(size + 1);
-  if(!path) fail("out of memory\n");
-  copy((byte*)path, name, size + 1);
-  size = tidy(path, size);
-  for(unit* u = self->units + 1; u < self->units + self->unitn; u++)
-    if(alike(u->path, path, size + 1)) { free(path); return; }
-  nest(self, (unit){.path = path, .kind = kind});
-}
-
 // x added to the units, at its line 1: its index
 u32i  nest(mode* self, unit x) {
   self->units = swell(self->units, self->unitn, &self->unitc, sizeof(unit), 16);
