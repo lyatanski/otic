@@ -405,11 +405,11 @@ void arm8_mend(file* data, byte* prev) {
   uint32_t* inst = (uint32_t*)prev - 1;
   s64i dist = (data->body - (byte*)inst) >> 2;
   if((*inst & 0xfc000000) == I3206_B) {
-    if(dist >= 1 << 25) fail("jump too far: %lu words\n", dist);
+    if(dist >= 1 << 25) fail("jump too far: %llu words\n", dist);
     *inst |= dist & 0x3ffffff;
   }
   else {
-    if(dist >= 1 << 18) fail("jump too far: %lu words\n", dist);
+    if(dist >= 1 << 18) fail("jump too far: %llu words\n", dist);
     *inst |= (dist & 0x7ffff) << 5;
   }
 }
@@ -428,7 +428,7 @@ void arm8_link(file*, byte* boot, byte* main) {
 // called by boot, which leaves sp as it was: [sp] is argc, argv follows it
 void arm8_crt(file* data, byte* main, byte* start) {
   s64i d = main - data->body - 8;
-  if(d < -(1 << 20)) fail("main too far: %lu bytes\n", d);
+  if(d < -(1 << 20)) fail("main too far: %llu bytes\n", d);
   arm8_put(data, 0xf94003e1);                                       // ldr x1, [sp]
   arm8_put(data, 0x910023e2);                                       // add x2, sp, #8
   arm8_put(data, I3406_ADR | (d & 3) << 29 | ((d >> 2) & 0x7ffff) << 5 | r0); // adr x0, main

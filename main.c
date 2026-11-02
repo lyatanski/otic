@@ -146,8 +146,13 @@ void  plug(mode* self, u64i* slot) {
     void* lib = l->addr;
     if(x->name->size >= sizeof name) fail("name too long: %.*s\n", nick(x->name));
     snprintf(name, sizeof name, "%.*s", nick(x->name));
-#ifdef _WIN32
+#ifdef _WIN32 // msvcrt has POSIX names behind an underscore: environ is _environ
     void* at = (void*)GetProcAddress(lib, name);
+    if(!at && x->name->size + 1 < sizeof name) {
+      snprintf(name, sizeof name, "_%.*s", nick(x->name));
+      at = (void*)GetProcAddress(lib, name);
+      snprintf(name, sizeof name, "%.*s", nick(x->name)); // the failure names it as written
+    }
 #else
     void* at = dlsym(lib, name);
 #endif
