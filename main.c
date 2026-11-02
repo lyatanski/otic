@@ -12,6 +12,7 @@
 // after the system headers: macros of the parts (arm8.c X) clash with them
 #ifndef part
 #include "core.c"
+#include "hash.c"
 #include "link.c"
 #include "ia64.c"
 #include "arm8.c"

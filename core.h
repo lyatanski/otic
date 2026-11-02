@@ -29,15 +29,7 @@ u64i  slen(char* s); // bytes before the NUL
 // more: it grows to twice its size plus least
 void* swell(void* p, u32i n, u32i* cap, u64i size, u32i least);
 
-// a name in the table of a unit, and what it means there
-typedef struct item item;
-struct item {
-  u64i  size;
-  char* name;
-  void* data;
-  item* next; // the same spelling in the table of a later unit (mode.names)
-  u32i  unit; // the unit whose table it is in
-};
+#include "hash.h"
 
 typedef struct {
   byte*  body;
@@ -61,7 +53,6 @@ typedef struct {
 // A source is parsed from where its own line, talk and from say, so another
 // source can be joined from the middle of it
 enum { un_root, un_code, un_objs, un_arch, un_memb };
-typedef struct unit unit;
 struct unit {
   char*  path; // tidy'd, one name per file
   item** pool; // its symbol table, small and growable: the items stay put
@@ -120,7 +111,6 @@ typedef struct {
 } emit;
 
 // core
-typedef struct mode mode;
 #define VARY (~0u) // meta.size of a function from an object
 typedef void* (*poke)(void*, size_t);
 typedef void  (*pack)(mode*);
@@ -246,9 +236,6 @@ void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it
 u64i  gap(mode*); // alignment of data and of bss after it
 void  bolt(mode*, char* name, byte kind); // a file named on the command line
 bool  alike(void* x, void* y, u64i size);
-u64i  clue(char* mark, u64i size);
-item* hsee(unit*, char* mark, u64i size, u64i clue); // NULL when not in
-item* hget(mode*, u32i at, char* mark, u64i size);   // in unit at, made when not in
 u32i  lay(mode*, u32i size, bool zero, u32i align);
 
 // the unit being parsed
