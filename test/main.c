@@ -382,6 +382,9 @@ spec(TAG) {
     it("sign extends int arguments to long parameters")
       expect(3, "long f(long a) { return a < 0; }\n"
                 "int main() { int n = -1; return f(n) + f(-1) * 2; }\n");
+    it("sign extends an int parameter where the callee widens it")
+      expect(3, "int f(int a) { long x = a; return (x < 0) + (x == -1) * 2; }\n"
+                "int main() { int n = -1; return f(n); }\n");
     it("sign extends int arguments in a forward call")
       expect(1, "int main() { int n = -1; return f(n); }\nint f(long a) { return a < 0; }\n");
     it("converts the returned value to the return type")

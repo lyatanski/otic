@@ -160,6 +160,7 @@ struct meta {
   bool  weak; // defined by an object as weak: a strong definition replaces it
   bool  ext;  // a function from an object, or an import
   bool  more; // variadic: arguments may follow the size named ones
+  byte  longs; // a function of the source: bit i when parameter i is 64 bits
   u32i  unit; // the unit that defines it
 };
 

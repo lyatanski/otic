@@ -225,11 +225,25 @@ spec("core") {
     }
     it("calls one defined before, linking it at once") {
       check(compiles("int f(int a) { return a; } int main() { return f(3); }"));
-      check(has("move 3, cast long, pass 0, dial, link dial open"));
+      check(has("move 3, pass 0, dial, link dial open"));
     }
     it("passes the last argument from acc, pops the others") {
       check(compiles("int f(int a, int b) { return a; } int main() { return f(1, 2); }"));
-      check(has("move 1, cast long, push, move 2, cast long, pass 1, args 0, dial"));
+      check(has("move 1, push, move 2, pass 1, args 0, dial"));
+    }
+    it("sign extends an int argument only for a long parameter") {
+      check(compiles("int f(int a, long b) { return a; } int main() { int n = -1; return f(n, n); }"));
+      check(has("load -8:4, push, load -8:4, cast long, pass 1") && calls[op_cast] == 1);
+    }
+    it("sign extends each int argument of a call not defined yet") {
+      check(compiles("int main() { int n = -1; return f(n); } int f(int a) { return a; }"));
+      check(has("load -8:4, cast long, pass 0"));
+    }
+    it("leaves a constant not below 0 as its move zero extends it") {
+      check(compiles("int f(long a) { return 0; } int main() { long x = 5; x = x + 1; return f(2); }"));
+      check(calls[op_cast] == 0);
+      check(compiles("int f(long a) { return 0; } int main() { return f(-2); }"));
+      check(has("move -2, cast long, pass 0"));
     }
     it("calls one defined later, linking it when the pass ends") {
       check(compiles("int main() { return f(); } int f() { return 1; }"));

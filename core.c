@@ -319,6 +319,12 @@ oper  cabi(mode* self, item* name, meta* func, u32i argc) {
   return acc(func->type);
 }
 
+// acc, the int x as load left it, sign extended to 64 bits: a constant not
+// below 0 is already, its move zero extends
+void  sext(mode* self, oper x) {
+  if(x.kind != vnum || x.ival < 0) emit(self, cast, 1);
+}
+
 // name(args): each argument is pushed on 64 bits, then popped into its
 // register, the last one moved there from acc; syscall(number, args) goes to
 // the kernel
@@ -330,7 +336,9 @@ oper  dial(mode* self, item* name) {
   for(; !twin(self, ')'); argc++) {
     if(argc) { skip(self, ','); emit(self, push); } // the one before
     if(argc == 6u + trap) flaw(self, "more than 6 arguments\n");
-    if(!wide(load(self, expr(self, 1)).type)) emit(self, cast, 1); // a long parameter
+    oper  x = expr(self, 1);
+    if(!wide(load(self, x).type) && (!func || func->kind != call || func->ext || func->longs >> argc & 1))
+      sext(self, x); // for a long parameter, or one not known yet
   }
   bool  ffi = func && (func->kind == pend || (func->kind == call && func->ext));
   if(argc && (trap || ffi)) emit(self, push); // they pop all of them
@@ -447,10 +455,10 @@ oper  both(mode* self, u32i op, oper x, int r) {
   return acc(NULL);
 }
 
-// an int in acc on 64 bits for a WIDE op, times scale
+// the int x, loaded in acc, on 64 bits for a WIDE op, times scale
 void  grow(mode* self, oper x, s32i scale, u32i w) {
   if(!w || wide(x.type)) return;
-  emit(self, cast, 1);
+  sext(self, x);
   if(scale != 1) emit(self, calc, '*' | WIDE, 1, scale);
 }
 
@@ -482,18 +490,20 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
 
   if(y.kind == vnum || (y.kind == vloc && (y.type->kind == base || y.type->kind == refs) && (!w || wide(y.type)))) {
     self->text->body = mark.at; // y emitted nothing: drop the keep
-    grow(self, load(self, x), sx, w);
+    load(self, x);
+    grow(self, x, sx, w);
     if(y.kind == vnum) emit(self, calc, c, 1, y.ival);
     else { emit(self, peek, y.ival, span(y.type)); emit(self, calc, c, 0, 0); }
   }
   else {
-    grow(self, load(self, y), sy, w);
+    load(self, y);
+    grow(self, y, sy, w);
     if(x.kind == vacc && k < HELD && self->dials == mark.dials) {
       emit(self, lift, mark.at, k);
       emit(self, take, k);
     }
     else if(x.kind == vacc) emit(self, pull);
-    else { emit(self, swap); x = load(self, x); }
+    else { emit(self, swap); load(self, x); }
     grow(self, x, sx, w);
     emit(self, calc, c, 0, 0);
   }
@@ -524,8 +534,8 @@ oper  give(mode* self, u32i op, oper x) {
   if(x.kind == vmem) emit(self, push); // the address, op= reads through it
   kept  mark = op == '='? (kept){0}: keep(self, &x);
   oper  y = expr(self, 1);
-  y = load(self, op == '='? y: pair(self, op, x, y, mark));
-  if(!wide(t) != !wide(y.type)) emit(self, cast, !!wide(t));
+  if(op != '=') y = pair(self, op, x, y, mark);
+  if(!wide(t) != !wide(load(self, y).type)) { if(wide(t)) sext(self, y); else emit(self, cast, 0); }
   if(x.kind == vloc) emit(self, stor, x.ival, span(t));
   else { emit(self, pull); emit(self, fill, span(t)); }
   if(span(t) < 4) emit(self, calc, '&', 1, (1 << span(t) * 8) - 1); // as it was stored
@@ -808,7 +818,8 @@ void  stmt(mode* self) {
     chop(self);
     if(home(self)->talk.kind != ';') {
       meta* t = self->func->type;
-      if(!wide(t) != !wide(load(self, expr(self, 1)).type)) emit(self, cast, !!wide(t));
+      oper  x = expr(self, 1);
+      if(!wide(t) != !wide(load(self, x).type)) { if(wide(t)) sext(self, x); else emit(self, cast, 0); }
     }
     skip(self, ';');
     emit(self, done);
@@ -892,6 +903,7 @@ void  decl(mode* self) {
       while(twin(self, '*')) type = href(self, type);
       if(!type->size && !func->size && twin(self, ')')) break; // (void)
       if(home(self)->talk.kind != ttag) { anon = 1; continue; } // an import may leave it out
+      if(wide(type)) func->longs |= 1 << func->size;
       seed(self, .name=home(self)->talk.hash, .type=type, .kind=data, .slot=room(self, 8));
       chop(self);
     }
