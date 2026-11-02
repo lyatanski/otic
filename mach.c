@@ -119,8 +119,7 @@ file* mach_pack(mode* self) {
     .sign = {lc_signature, sizeof(h.sign), link, sign},
   };
 
-  file* out = calloc(1, sizeof(file) + all);
-  if(!out) fail("out of memory\n");
+  file* out = zero(self, sizeof(file) + all);
   out->body = out->head + all;
   out->tail = out->head + all;
   copy(copy(out->head, &h, top), self->text->head, code);

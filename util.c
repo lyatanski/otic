@@ -13,10 +13,15 @@ u64i  slen(char* s) {
   return n;
 }
 
-void* swell(void* p, u32i n, u32i* cap, u64i size, u32i least) {
+void* swell(mode* self, void* p, u32i n, u32i* cap, u64i size, u32i least) {
   if(n < *cap) return p;
   *cap = *cap * 2 + least;
-  if(!(p = realloc(p, *cap * size))) fail("out of memory\n");
+  return self->heap(p, *cap * size);
+}
+
+void* zero(mode* self, u64i size) {
+  byte* p = self->heap(NULL, size);
+  for(u64i i = 0; i < size; p[i++] = 0);
   return p;
 }
 

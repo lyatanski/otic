@@ -978,18 +978,18 @@ void  feed(mode* self, u32i at) {
 // a cycle back into it sees what it has defined so far
 bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
   for(unit* u = self->units + 1; kind != un_memb && u < self->units + self->unitn; u++)
-    if(u->kind != un_memb && alike(u->path, path, size + 1)) { free(code); return 0; }
+    if(u->kind != un_memb && alike(u->path, path, size + 1)) { self->heap(code, 0); return 0; }
   feed(self, nest(self, (unit){.path = path, .code = code, .kind = kind}));
   return 1;
 }
 
-// path, size bytes from malloc, tidy'd and joined as a unit of kind with
+// path, size bytes from mode.heap, tidy'd and joined as a unit of kind with
 // code, read when NULL: 0, path still the caller's, when it cannot be read.
 // Freed when the file is in already
 bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
   size = tidy(path, size);
   if(!code && !(code = self->scan(path))) return 0;
-  if(!join(self, path, size, code, kind)) free(path);
+  if(!join(self, path, size, code, kind)) self->heap(path, 0);
   return 1;
 }
 
@@ -997,8 +997,7 @@ bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
 // code is NULL, fatal when it cannot be
 void  lead(mode* self, char* name, file* code, byte kind) {
   u64i  size = slen(name);
-  char* path = malloc(size + 1);
-  if(!path) fail("out of memory\n");
+  char* path = self->heap(NULL, size + 1);
   copy((byte*)path, name, size + 1);
   if(!land(self, path, size, code, kind)) fail("cannot open: %s\n", name);
 }
@@ -1012,8 +1011,7 @@ void  make(mode* self) {
   self->text = (file*)self->hold(0, CODE);
   self->text->body = self->text->head;
   self->text->tail = (byte*)self->text + CODE;
-  self->data = calloc(1, sizeof(file) + DATA);
-  if(!self->data) fail("out of memory\n");
+  self->data = zero(self, sizeof(file) + DATA);
   self->data->body = self->data->head;
   self->data->tail = self->data->head + DATA;
 
@@ -1053,5 +1051,5 @@ void  make(mode* self) {
 
   self->show(self);
   self->drop(self->text, CODE);
-  free(self->data);
+  self->heap(self->data, 0);
 }

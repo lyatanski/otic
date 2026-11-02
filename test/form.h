@@ -71,6 +71,8 @@ static inline void define(char* name, meta x) {
   elsewhere[s - items] = defs + defn++;
 }
 
+static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
+
 // a fresh mode for cpu: code and data as given, main at main bytes into code
 static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i main) {
   static file* text = (file*)texts;
@@ -92,6 +94,7 @@ static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i
     .text = text, .data = data_, .main = text->head + main,
     .units = units, .unit = 1, .unitn = 2,
     .arch = {.cpu = cpu},
+    .heap = mock_heap,
     .core = {mock_dock, mock_gap, mock_lay, mock_name, mock_find, mock_heft, mock_ask},
   };
 }

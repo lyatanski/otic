@@ -125,8 +125,7 @@ file* pe32_pack(mode* self) {
   };
 #undef up
 
-  file* out = calloc(1, sizeof(file) + all);
-  if(!out) fail("out of memory\n");
+  file* out = zero(self, sizeof(file) + all);
   out->body = out->head + all;
   out->tail = out->head + all;
   copy(out->head, &h, sizeof(h));

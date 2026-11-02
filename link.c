@@ -34,8 +34,7 @@ void  haul(mode* self, item* s) {
   for(u32i k = 0; k < 3 + self->dirn; k++) {
     char* at = k < 3? from: self->dirs[k - 3];
     u32i  d = k < 3? dir: slen(at), b = 0, lib = k > 1? 3: 0;
-    char* path = malloc(d + n + 8); // '/', "lib", the end and its NUL
-    if(!path) fail("out of memory\n");
+    char* path = self->heap(NULL, d + n + 8); // '/', "lib", the end and its NUL
     byte* p = copy((byte*)path, at, d);
     if(k > 2 && d && at[d - 1] != '/') { *p++ = '/'; d++; } // -L dir
     quote(s, p);
@@ -46,7 +45,7 @@ void  haul(mode* self, item* s) {
     }
     copy(p + n + lib, ends[k < 3? k: 2], 3);
     if(land(self, path, d + n + lib + 2, NULL, un_code + (k < 3? k: 2))) return;
-    free(path);
+    self->heap(path, 0);
     if(k == 2 && self->have && self->have(s)) { home(self)->from = rack(self, s); return; }
   }
   flaw(self, "cannot find %.*s\n", nick(s));
@@ -54,7 +53,7 @@ void  haul(mode* self, item* s) {
 
 // x added to the units, at its line 1: its index
 u32i  nest(mode* self, unit x) {
-  self->units = swell(self->units, self->unitn, &self->unitc, sizeof(unit), 16);
+  self->units = swell(self, self->units, self->unitn, &self->unitc, sizeof(unit), 16);
   self->units[self->unitn] = x;
   self->units[self->unitn].line = 1;
   return self->unitn++;
@@ -102,7 +101,7 @@ u32i  ask(mode* self, meta* x) {
   u32i i = 0;
   for(; i < self->askn && self->asks[i] != x->name; i++);
   if(i < self->askn) return i;
-  self->asks = swell(self->asks, self->askn, &self->askc, sizeof(item*), 64);
+  self->asks = swell(self, self->asks, self->askn, &self->askc, sizeof(item*), 64);
   self->asks[self->askn] = x->name;
   return self->askn++;
 }

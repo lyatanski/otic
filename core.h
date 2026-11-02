@@ -25,11 +25,13 @@ typedef  uint8_t byte;
 
 byte* copy(byte* dst, void* src, u64i size); // returns dst + size
 u64i  slen(char* s); // bytes before the NUL
-// p, an array of *cap elements of size bytes with n in use, with room for one
-// more: it grows to twice its size plus least
-void* swell(void* p, u32i n, u32i* cap, u64i size, u32i least);
 
 #include "hash.h"
+
+// p, an array of *cap elements of size bytes with n in use, with room for one
+// more: it grows to twice its size plus least
+void* swell(mode*, void* p, u32i n, u32i* cap, u64i size, u32i least);
+void* zero(mode*, u64i size); // size zeroed bytes from mode.heap
 
 typedef struct {
   byte*  body;
@@ -238,6 +240,9 @@ struct mode {
 
   poke  hold;
   poke  drop;
+  // the host's heap, as realloc: p resized to size bytes, a new block when p
+  // is NULL, freed when size is 0 (then NULL). It fails rather than return NULL
+  poke  heap;
   pack  show;
   grab  scan;
   bool  (*have)(item*); // running: whether the host has shared library s

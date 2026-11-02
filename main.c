@@ -43,6 +43,13 @@ void  ario_pull(mode*, meta*);
 #define host elfs
 #endif
 
+// realloc, failing instead of NULL; free when size is 0
+void* heap(void* memory, size_t size) {
+  if(!size) { free(memory); return NULL; }
+  if(!(memory = realloc(memory, size))) fail("out of memory\n");
+  return memory;
+}
+
 file* scan(char* name) {
   FILE* fp = fopen(name, "rb");
   if(!fp) return NULL;
@@ -50,18 +57,13 @@ file* scan(char* name) {
   size_t size = ftell(fp);
   rewind(fp);
 
-  file* f = malloc(sizeof(file)+size);
-  if(!f) fail("out of memory\n");
+  file* f = heap(NULL, sizeof(file)+size);
   f->body = f->head;
   f->tail = f->head + size;
   f->head[size] = 0; // lexer stops at NUL
   if(fread(f->head, 1, size, fp) != size) fail("read error: %s\n", name);
   fclose(fp);
   return f;
-}
-
-void shed(file* data) {
-  free(data);
 }
 
 void* hold(void* memory, size_t size) {
@@ -193,7 +195,7 @@ void  save(mode* self) {
   if(!fp) fail("cannot write: %s\n", self->outp);
   fwrite(out->head, 1, out->body - out->head, fp);
   if(ferror(fp) | fclose(fp)) fail("write error: %s\n", self->outp);
-  shed(out);
+  self->heap(out, 0);
 }
 
 typedef struct opts opts;
@@ -274,6 +276,7 @@ int   main(int argc, char** argv) {
   mode self = {
     .hold = hold,
     .drop = drop,
+    .heap = heap,
     .show = exec,
     .scan = scan,
     .arch = base,

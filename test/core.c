@@ -138,6 +138,7 @@ static file* mock_scan(char* path) {
 }
 static void* mock_hold(void*, size_t size)    { return malloc(size); }
 static void* mock_drop(void*, size_t)         { return NULL; } // text: freed by the next make_
+static void* mock_heap(void* p, size_t size)  { if(size) return realloc(p, size); free(p); return NULL; }
 static void  mock_show(mode* m)               { shows++; laid = m->data->body - m->data->head; }
 
 static mode self;
@@ -156,7 +157,7 @@ static int  make_(char* src) {
   trace[0] = said[0] = 0;
   self = (mode){
     .name = "main.c",
-    .hold = mock_hold, .drop = mock_drop, .show = mock_show, .scan = mock_scan,
+    .hold = mock_hold, .drop = mock_drop, .heap = mock_heap, .show = mock_show, .scan = mock_scan,
     .arch = mock, .form = {mock_pack, mock_take, os_linux},
   };
   source("main.c", src);

@@ -89,9 +89,8 @@ static int ario_cmp(const void* x, const void* y) {
 
 // the names of each member, of the n in defs, linked in a ring (meta.hide):
 // ario_pull takes them out of the table without a scan of it
-static void ario_ring(meta* defs, u64i n) {
-  meta** by = malloc(n * sizeof(meta*) + 1);
-  if(!by) fail("out of memory\n");
+static void ario_ring(mode* self, meta* defs, u64i n) {
+  meta** by = self->heap(NULL, n * sizeof(meta*) + 1);
   u64i k = 0;
   for(u64i i = 0; i < n; i++) if(defs[i].kind == pend) by[k++] = defs + i;
   qsort(by, k, sizeof(meta*), ario_cmp);
@@ -99,7 +98,7 @@ static void ario_ring(meta* defs, u64i n) {
     for(j = i + 1; j < k && by[j]->slot == by[i]->slot; j++) by[j - 1]->hide = by[j];
     by[j - 1]->hide = by[i];
   }
-  free(by);
+  self->heap(by, 0);
 }
 
 // the symbol index of the archive f, the unit being joined, into its table.
@@ -123,8 +122,7 @@ void ario_load(mode* self, file* f) {
     if(n > (size - w) / (w + 1)) fail("bad archive index: %s\n", path);
     char* name = (char*)b + w + n * w;
     char* end  = (char*)b + size;
-    meta* defs = home(self)->defs = calloc(n + 1, sizeof(meta));
-    if(!defs) fail("out of memory\n");
+    meta* defs = home(self)->defs = zero(self, (n + 1) * sizeof(meta));
     for(u64i i = 0; i < n; i++) {
       u64i len = 0;
       while(name + len < end && name[len]) len++;
@@ -132,7 +130,7 @@ void ario_load(mode* self, file* f) {
       ario_name(self, defs + i, name, len, ario_word(b + w + i * w, w, 1));
       name += len + 1;
     }
-    ario_ring(defs, n);
+    ario_ring(self, defs, n);
     return;
   }
   u64i pairs = ario_word(b, w, 0); // bytes of (name, offset) pairs, names
@@ -141,15 +139,14 @@ void ario_load(mode* self, file* f) {
   if(strs > size - 2 * w - pairs) fail("bad archive index: %s\n", path);
   char* name = (char*)b + 2 * w + pairs;
   n = pairs / (2 * w);
-  meta* defs = home(self)->defs = calloc(n + 1, sizeof(meta));
-  if(!defs) fail("out of memory\n");
+  meta* defs = home(self)->defs = zero(self, (n + 1) * sizeof(meta));
   for(u64i i = 0; i < n; i++) {
     u64i at = ario_word(b + w + 2 * w * i, w, 0), len = 0;
     if(at >= strs) fail("bad archive index: %s\n", path);
     while(at + len < strs && name[at + len]) len++;
     ario_name(self, defs + i, name + at, len, ario_word(b + 2 * w + 2 * w * i, w, 0));
   }
-  ario_ring(defs, n);
+  ario_ring(self, defs, n);
 }
 
 // take the member that defines archive name x, as a unit named
@@ -161,9 +158,8 @@ void ario_pull(mode* self, meta* x) {
   meta*     m = x;
   do m->name->data = NULL; while((m = m->hide) != x);
   u64i  plen = slen(a->path);
-  file* o = malloc(sizeof(file) + p.size);
-  char* n = malloc(plen + p.nlen + 3);
-  if(!o || !n) fail("out of memory\n");
+  file* o = self->heap(NULL, sizeof(file) + p.size);
+  char* n = self->heap(NULL, plen + p.nlen + 3);
   o->body = o->head;
   o->tail = copy(o->head, p.body, p.size);
   *o->tail = 0;

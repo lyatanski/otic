@@ -106,8 +106,7 @@ file* elfs_pack(mode* self) {
     .align  = 0x10000,
   }};
 
-  file* out = calloc(1, sizeof(file) + all);
-  if(!out) fail("out of memory\n");
+  file* out = zero(self, sizeof(file) + all);
   out->body = out->head + all;
   out->tail = out->head + all;
   byte* at = copy(copy(out->head, &id, sizeof(id)), &eh, sizeof(eh));
@@ -172,8 +171,7 @@ void elfs_take(mode* self, file* f) {
       flop("bad section\n");
 
   // sections: code after text, the rest in data or bss
-  seat* put = malloc(n * sizeof(seat) + 1);
-  if(!put) fail("out of memory\n");
+  seat* put = self->heap(NULL, n * sizeof(seat) + 1);
   for(u32i i = 0; i < n; i++) {
     sh64* s = sh + i;
     u64i  a = s->align? s->align: 1;
@@ -212,8 +210,7 @@ void elfs_take(mode* self, file* f) {
     str  = sh + sh[i].link;
     syms = i;
   }
-  meta* defs = calloc(nsym + 1, sizeof(meta));
-  if(!defs) fail("out of memory\n");
+  meta* defs = zero(self, (nsym + 1) * sizeof(meta));
   for(u64i i = 1; i < nsym; i++) {
     sym64* s = sym + i;
     if(s->bind == STB_LOCAL || s->shidx == SHN_UNDEF || s->shidx == SHN_ABS) continue;
@@ -291,11 +288,11 @@ void elfs_take(mode* self, file* f) {
         seat q = put[s->shidx];
         h.aim = q.at? (seat){q.at + s->value, 0}: (seat){NULL, q.off + (u32i)s->value};
       }
-      self->hooks = swell(self->hooks, self->hookn, &self->hookc, sizeof(hook), 256);
+      self->hooks = swell(self, self->hooks, self->hookn, &self->hookc, sizeof(hook), 256);
       self->hooks[self->hookn++] = h;
     }
   }
-  free(put);
+  self->heap(put, 0);
 }
 #undef flop
 
