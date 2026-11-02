@@ -189,7 +189,7 @@ void  exec(mode* self) {
 }
 
 void  save(mode* self) {
-  if(self->impn) fail("cannot call a library from this form yet\n");
+  if(self->impn && self->main) fail("cannot call a library from this form yet\n");
   file* out = self->form.pack(self);
   FILE* fp = fopen(self->outp, "wb");
   if(!fp) fail("cannot write: %s\n", self->outp);
@@ -243,6 +243,11 @@ static void wrap(mode* self, opts*, char* para) {
 static void dest(mode* self, opts*, char* para) {
   self->outp = para;
   self->show = save;
+  if(!self->libs) self->libs = lb_dyno;
+}
+
+static void flat(mode* self, opts*, char*) {
+  self->libs = lb_relo;
 }
 
 static void seek(mode* self, opts*, char* para) {
@@ -289,6 +294,7 @@ int   main(int argc, char** argv) {
     {"-a", "--arch", .args = 1, .desc = "cpu architecture: ia64, arm8", .call = arch},
     {"-f", "--form", .args = 1, .desc = "binary format: elfs, mach, pe32", .call = wrap},
     {"-e", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
+    {"-s", "--static", .desc = "without main, write an object instead of a shared library", .call = flat},
     {"-p", "--path", .args = 1, .desc = "specify path to look for library", .call = seek},
     {"-h", "--help", .desc = "display help", .call = help}, {},
   };
@@ -296,7 +302,7 @@ int   main(int argc, char** argv) {
   if(!self.name) fail("no input file\n");
   if(self.show == exec && self.arch.cpu != base.cpu)
     fail("cannot run foreign code, write it with -e\n");
-  if(self.show == exec) self.have = have;
+  if(self.show == exec) self.have = have, self.libs = lb_none; // running needs main
 
   make(&self);
 

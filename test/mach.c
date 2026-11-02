@@ -20,6 +20,60 @@ static bool  hashes(char* msg, u64i size, char* want) {
 
 static u32i  be(byte* at) { return (u32i)at[0] << 24 | at[1] << 16 | at[2] << 8 | at[3]; }
 
+// a library of the image start lays out: CODE, then a lea at 12; 16 bytes of
+// data; 32 of bss. It defines lf at 0 in text, lv at 4 in data and lz, weak,
+// at 8 in bss
+static meta  lf, lv, lz;
+static void  library(chip cpu, byte libs) {
+  start(cpu, CODE "\x48\x8d\x05\x00\x00\x00\x00", 19, "abcdefghijklmnop", 16, 0);
+  self.main = NULL;
+  self.libs = libs;
+  self.zero = 32;
+  lf = (meta){.name = named("lf"), .kind = call, .addr = self.text->head};
+  lv = (meta){.name = named("lv"), .kind = glob, .slot = 4};
+  lz = (meta){.name = named("lz"), .kind = glob, .slot = 8 | ZERO, .weak = 1};
+  signs[0] = &lf; signs[1] = &lv; signs[2] = &lz;
+  signn = 3;
+}
+static void  cord_(cord c) { cords[cordn++] = c; }
+static void  import(char* name) {
+  static meta imps[4];
+  imps[self.impn] = (meta){.name = named(name), .kind = call};
+  self.imps[self.impn] = imps + self.impn;
+  self.impn++;
+}
+
+// the first load command cmd of an image, section i of the segment seg, symbol
+// i and its name
+#define HEAD(out) ((mach_mh*)(out)->head)
+static void*  cmd_(file* out, u32i cmd) {
+  byte* at = out->head + sizeof(mach_mh);
+  for(u32i i = 0; i < HEAD(out)->ncmds; i++, at += ((u32i*)at)[1])
+    if(*(u32i*)at == cmd) return at;
+  return NULL;
+}
+static sec64* sec_(seg64* seg, u32i i) { return (sec64*)(seg + 1) + i; }
+static nl64*  sym_(file* out, u32i i) {
+  return (nl64*)(out->head + ((mach_symtab*)cmd_(out, lc_symtab))->symoff) + i;
+}
+static char*  name_(file* out, nl64* s) {
+  return (char*)out->head + ((mach_symtab*)cmd_(out, lc_symtab))->stroff + s->strx;
+}
+static u64i   uleb_(byte* at) { // a ULEB128 number
+  u64i v = 0;
+  for(u32i k = 0; k == 0 || at[-1] & 0x80; k += 7) v |= (u64i)(*at++ & 0x7f) << k;
+  return v;
+}
+static mrel*  rel_(file* out, sec64* sec, u32i i) { return (mrel*)(out->head + sec->reloff) + i; }
+// relocation r: at addr, to symbol or section sym, pc-relative, of 2^len bytes,
+// external, of type
+static bool   rel_is(mrel* r, s32i addr, u32i sym, bool pcrel, u32i len, bool ext, u32i type) {
+  u32i want = sym | pcrel << 24 | len << 25 | ext << 27 | type << 28;
+  if(r->addr == addr && r->info == want) return 1;
+  printf("    want %x %08x\n    got  %x %08x\n", addr, want, r->addr, r->info);
+  return 0;
+}
+
 spec("mach") {
   context("pack") {
     file*      out;
@@ -65,6 +119,126 @@ spec("mach") {
         sha256(out->head + i * 4096, 4096, want);
         check(!memcmp(hash + 32 * i, want, 32));
       }
+    }
+  }
+
+  context("static library") { // x86-64: one segment, sections text, data, bss
+    file*  out;
+    seg64* seg;
+    it("writes one object without main, with -s") {
+      library(cpu_ia64, lb_relo);
+      check((out = packed(mach)) && HEAD(out)->type == mh_object && HEAD(out)->ncmds == 4);
+      check(docked.calls == 0 && (seg = cmd_(out, lc_segment)) && seg->nsec == 3);
+      sec64* s = sec_(seg, 0);
+      check(!strcmp(s[0].name, "__text") && s[0].addr == 0 && s[0].size == 19 && s[0].flags == s_code);
+      check(bytes(out->head + s[0].off, "b8 07 00 00 00 c3"));
+      check(s[1].addr == 32 && s[1].size == 16 && s[1].off == s[0].off + 32);
+      check(bytes(out->head + s[1].off, "61 62 63 64"));
+      check(s[2].addr == 48 && s[2].size == 32 && s[2].flags == s_zerofill);
+    }
+    it("refuses arm64, so far") {
+      library(cpu_arm8, lb_relo);
+      check(!packed(mach) && strstr(said, "an arm64 object is not supported"));
+    }
+    it("names the public definitions as C does, with an underscore") {
+      library(cpu_ia64, lb_relo);
+      check((out = packed(mach)));
+      mach_dysym* d = cmd_(out, lc_dysymtab);
+      check(d->iext == 0 && d->next == 3 && d->iund == 3 && d->nund == 0);
+      nl64* s = sym_(out, 0);
+      check(!strcmp(name_(out, s), "_lf") && s[0].type == (n_sect | n_ext) && s[0].sect == 1 && s[0].value == 0);
+      check(!strcmp(name_(out, s + 1), "_lv") && s[1].sect == 2 && s[1].value == 32 + 4);
+      check(s[2].sect == 3 && s[2].value == 48 + 8 && s[2].desc == n_weak_def);
+    }
+    it("relocates a global by its section, the distance in place") {
+      library(cpu_ia64, lb_relo);
+      cord_((cord){.site = {self.text->head + 12, 0}, .aim = {NULL, 4}, .kind = cd_glob});
+      cord_((cord){.site = {self.text->head + 12, 0}, .aim = {NULL, 8 | ZERO}, .kind = cd_glob});
+      check((out = packed(mach)) && (seg = cmd_(out, lc_segment)) && sec_(seg, 0)->nrel == 2);
+      check(rel_is(rel_(out, sec_(seg, 0), 0), 15, 2, 1, 2, 0, x64_signed));
+      check(rel_is(rel_(out, sec_(seg, 0), 1), 15, 3, 1, 2, 0, x64_signed));
+      check(bytes(out->head + sec_(seg, 0)->off + 15, "25 00 00 00")); // 48 + 8 - 19
+    }
+    it("relocates a global nothing defines by its name") {
+      library(cpu_ia64, lb_relo);
+      cord_((cord){.site = {self.text->head + 12, 0}, .name = named("ext"), .kind = cd_glob, .weak = 1});
+      check((out = packed(mach)) && (seg = cmd_(out, lc_segment)));
+      check(rel_is(rel_(out, sec_(seg, 0), 0), 15, 3, 1, 2, 1, x64_signed));
+      check(bytes(out->head + sec_(seg, 0)->off + 15, "00 00 00 00"));
+      nl64* s = sym_(out, 3);
+      check(!strcmp(name_(out, s), "_ext") && s->type == n_ext && s->desc == n_weak_ref);
+    }
+    it("puts the import slots after data, each relocated by its name") {
+      library(cpu_ia64, lb_relo);
+      import("puts");
+      cord_((cord){.site = {self.text->head + 12, 0}, .aim = {NULL, SLOT}, .kind = cd_glob});
+      check((out = packed(mach)) && (seg = cmd_(out, lc_segment)) && sec_(seg, 1)->size == 24);
+      check(rel_is(rel_(out, sec_(seg, 0), 0), 15, 2, 1, 2, 0, x64_signed));
+      check(bytes(out->head + sec_(seg, 0)->off + 15, "1d 00 00 00")); // 32 + 16 - 19
+      check(sec_(seg, 1)->nrel == 1 && rel_is(rel_(out, sec_(seg, 1), 0), 16, 3, 0, 3, 1, x64_unsigned));
+      check(!strcmp(name_(out, sym_(out, 3)), "_puts") && sym_(out, 3)->type == n_ext);
+    }
+  }
+
+  context("dylib") { // segments __TEXT, __DATA, __LINKEDIT
+    file*  out;
+    seg64* seg;
+    it("writes one without main by default") {
+      library(cpu_ia64, lb_dyno);
+      check((out = packed(mach)) && HEAD(out)->type == mh_dylib && HEAD(out)->ncmds == 10);
+      check(HEAD(out)->flags == (mh_noundefs | mh_dyldlink | mh_twolevel | mh_noreexport));
+      check((seg = cmd_(out, lc_segment)) && seg->addr == 0 && seg->off == 0 && seg->fsz == PAGE);
+      sec64* s = sec_(seg, 0);
+      check(s->addr == s->off && bytes(out->head + s->off, "b8 07 00 00 00 c3"));
+      seg64* data = (seg64*)((byte*)seg + seg->size);
+      check(!strcmp(data->name, "__DATA") && data->addr == PAGE && data->off == PAGE && data->fsz == 16);
+      check(sec_(data, 1)->addr == PAGE + 16 && sec_(data, 1)->size == 32);
+    }
+    it("docks once, text at its address, data on the page after it") {
+      library(cpu_ia64, lb_dyno);
+      check((out = packed(mach)) && (seg = cmd_(out, lc_segment)));
+      check(docked.calls == 1 && docked.org == sec_(seg, 0)->addr && docked.at == PAGE - docked.org);
+    }
+    it("names itself @rpath/ and its file name") {
+      library(cpu_ia64, lb_dyno);
+      self.outp = "bins/libq.dylib";
+      mach_dylib* id;
+      check((out = packed(mach)) && (id = cmd_(out, lc_id_dylib)));
+      check(!strcmp((char*)id + id->name, "@rpath/libq.dylib") && id->size % 8 == 0);
+    }
+    it("exports the public names, a name before its prefixes") {
+      library(cpu_ia64, lb_dyno);
+      lv.name = named("lff");
+      mach_info* info;
+      check((out = packed(mach)) && (info = cmd_(out, lc_dyld_info)) && (seg = cmd_(out, lc_segment)));
+      byte* t = out->head + info->trie;
+      check(t[0] == 0 && t[1] == 3 && !strcmp((char*)t + 2, "_lz") && !strcmp((char*)t + 10, "_lff"));
+      check(!strcmp((char*)t + 19, "_lf"));
+      byte* n = t + uleb_(t + 23); // _lf: its size, flags (not weak), address, no edges
+      check(n[0] == 3 && n[1] == 0 && uleb_(n + 2) == sec_(seg, 0)->addr && n[4] == 0);
+      n = t + uleb_(t + 6); // _lz: weak
+      check(n[1] == 4 && uleb_(n + 2) == PAGE + 16 + 8);
+    }
+    it("binds the imports through their slots after bss, in any image") {
+      library(cpu_arm8, lb_dyno);
+      import("puts");
+      mach_info* info;
+      check((out = packed(mach)) && (info = cmd_(out, lc_dyld_info)));
+      check(!(HEAD(out)->flags & mh_noundefs) && HEAD(out)->cpu == 0x0100000c);
+      check(info->nbind == 13 && bytes(out->head + info->bind, "3e 51 40 5f 70 75 74 73 00 71 30 90 00"));
+      check(sym_(out, 3)->type == n_ext && sym_(out, 3)->desc == n_flat);
+    }
+    it("ends with a signature of its pages, the last up to it") {
+      library(cpu_ia64, lb_dyno);
+      mach_blob* sign;
+      check((out = packed(mach)) && (sign = cmd_(out, lc_signature)) && sign->off % 16 == 0);
+      check(sign->off + sign->fsz == out->body - out->head && sign->off % 4096);
+      byte* blob = out->head + sign->off;
+      u32i  n = (sign->off + 4095) >> 12;
+      check(be(blob + 20 + 28) == n && be(blob + 20 + 32) == sign->off && be(blob + 20 + 84) == 0);
+      byte want[32];
+      sha256(out->head + (n - 1) * 4096, sign->off % 4096, want);
+      check(!memcmp(blob + 20 + 88 + sizeof(mach_name) + 32 * (n - 1), want, 32));
     }
   }
 

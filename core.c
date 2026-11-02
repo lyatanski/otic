@@ -1007,7 +1007,7 @@ void  make(mode* self) {
   //      | variable
   //      | typedecl
 
-  self->core = (core){dock, gap, lay, hget, find, heft, ask};
+  self->core = (core){dock, gap, lay, hget, find, heft, ask, sign, knit};
   self->text = (file*)self->hold(0, CODE);
   self->text->body = self->text->head;
   self->text->tail = (byte*)self->text + CODE;
@@ -1040,14 +1040,17 @@ void  make(mode* self) {
   }
   tie(self, 0, 1);
 
+  // without main, a library: the boot stub stays unused at the start of text
   meta* func = find(self, 0, sget(self, "main"));
-  if(!func || func->kind != call || !func->addr) fail("no main function\n");
-  self->main = self->boot = func->addr;
-  if(libc && libc->kind == call && libc->ext && libc->addr) {
-    self->boot = self->text->body;
-    emit(self, crt, self->main, libc->addr);
+  if(func && func->kind == call && func->addr) {
+    self->main = self->boot = func->addr;
+    if(libc && libc->kind == call && libc->ext && libc->addr) {
+      self->boot = self->text->body;
+      emit(self, crt, self->main, libc->addr);
+    }
+    emit(self, link, self->text->head, self->boot);
   }
-  emit(self, link, self->text->head, self->boot);
+  else if(!self->libs) fail("no main function\n");
 
   self->show(self);
   self->drop(self->text, CODE);

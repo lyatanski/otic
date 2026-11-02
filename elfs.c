@@ -56,10 +56,10 @@ typedef struct {
   u32i type, flags; u64i offset, vaddr, paddr, filesz, memsz, align;
 } ph64;
 
-// text, then data and bss in a second, writable segment: 64 KB apart in
-// memory so both segments start on their own page with any page size. Text
-// starts at the alignment objects ask for, data and bss at gap
-file* elfs_pack(mode* self) {
+// an executable: text, then data and bss in a second, writable segment: 64 KB
+// apart in memory so both segments start on their own page with any page
+// size. Text starts at the alignment objects ask for, data and bss at gap
+static file* elfs_exec(mode* self) {
   const u64i org  = 0x400000;
   const u64i step = self->core.gap(self);
   const u64i code = self->text->body - self->text->head;
@@ -117,11 +117,12 @@ file* elfs_pack(mode* self) {
 }
 
 enum { SHT_INIT_ARRAY = 14, SHT_FINI_ARRAY, SHT_PREINIT_ARRAY, SHT_X86_64_UNWIND = 0x70000001 };
-enum { SHF_ALLOC = 0x2, SHF_EXECINSTR = 0x4, SHF_TLS = 0x400 };
+enum { SHF_WRITE = 0x1, SHF_ALLOC = 0x2, SHF_EXECINSTR = 0x4, SHF_INFO_LINK = 0x40, SHF_TLS = 0x400 };
 enum { STB_LOCAL, STB_GLOBAL, STB_WEAK };
 enum { SHN_UNDEF, SHN_ABS = 0xfff1, SHN_COMMON };
 enum {
-  R_X86_64_NONE, R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32 = 4, R_X86_64_GOTPCREL = 9,
+  R_X86_64_NONE, R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32 = 4, R_X86_64_GLOB_DAT = 6,
+  R_X86_64_RELATIVE = 8, R_X86_64_GOTPCREL = 9,
   R_X86_64_GOTPCRELX = 41, R_X86_64_REX_GOTPCRELX,
 };
 
@@ -260,13 +261,14 @@ void elfs_take(mode* self, file* f) {
       if(r->offset > t->size || t->size - r->offset < w || r->sym >= nsym)
         flop("bad relocation\n");
       byte* at = p.at? p.at + r->offset: self->data->head + p.off + r->offset;
-      bool  load = 0;
+      bool  load = 0, got = 0;
       switch(r->type) {
       case R_X86_64_GOTPCREL: case R_X86_64_GOTPCRELX: case R_X86_64_REX_GOTPCRELX:
         // no GOT: its loads become the address itself
         if(r->offset < 2) flop("bad relocation\n");
         if(at[-2] == 0x8b) { // mov reg -> lea reg
           at[-2] = 0x8d;
+          got = 1;
           load = r->type == R_X86_64_REX_GOTPCRELX && r->offset > 2;
         }
         else if(at[-2] == 0xff && at[-1] == 0x15) at[-2] = 0x67, at[-1] = 0xe8; // call * -> addr32 call
@@ -279,7 +281,7 @@ void elfs_take(mode* self, file* f) {
       sym64* s = sym + r->sym;
       hook   h = {.site = p.at? (seat){at, 0}: (seat){NULL, p.off + (u32i)r->offset},
                   .unit = self->unit, .add = r->addend, .wide = w == 8,
-                  .weak = s->bind == STB_WEAK && s->shidx == SHN_UNDEF, .load = load};
+                  .weak = s->bind == STB_WEAK && s->shidx == SHN_UNDEF, .load = load, .got = got};
       if(s->bind != STB_LOCAL) {
         if(!(h.name = elfs_name(self, o, str, s))) flop("a reference to a symbol without a name\n");
       } else if(s->shidx >= n || put[s->shidx].off == GONE.off) {
@@ -295,6 +297,339 @@ void elfs_take(mode* self, file* f) {
   self->heap(put, 0);
 }
 #undef flop
+
+enum { STT_NOTYPE, STT_OBJECT, STT_FUNC, STT_SECTION };
+enum { STV_PROTECTED = 3 };
+enum {
+  R_AARCH64_ABS64 = 257, R_AARCH64_MOVW_PREL_G0_NC = 288, R_AARCH64_MOVW_PREL_G1_NC = 290,
+  R_AARCH64_GLOB_DAT = 1025, R_AARCH64_RELATIVE = 1027,
+};
+enum { DT_NULL, DT_HASH = 4, DT_STRTAB, DT_SYMTAB, DT_RELA, DT_RELASZ, DT_RELAENT, DT_STRSZ,
+       DT_SYMENT, DT_SONAME = 14 };
+enum { PT_LOAD = 1, PT_DYNAMIC, PT_GNU_STACK = 0x6474e551 };
+
+typedef struct { s64i tag; u64i val; } dyn64;
+
+// a name a library leaves undefined: weak when every reference to it is
+typedef struct { item* name; bool weak; byte type; } elfs_und;
+
+// the symbols of a library: its public definitions, then the names it leaves
+// undefined, each once (the imports first, in slot order), and the bytes of
+// their names with a NUL after each
+typedef struct {
+  meta**    defs;
+  elfs_und* unds;
+  u32i      ndef, nund, cund;
+  u64i      strs;
+} elfs_syms;
+
+// the index of name among the undefined ones, added when new
+static u32i  elfs_need(mode* self, elfs_syms* t, item* name, bool weak, byte type) {
+  u32i i = 0;
+  for(; i < t->nund && !(t->unds[i].name->size == name->size
+                         && alike(t->unds[i].name->name, name->name, name->size)); i++);
+  if(i < t->nund) { t->unds[i].weak &= weak; return i; }
+  t->unds = swell(self, t->unds, t->nund, &t->cund, sizeof(elfs_und), 16);
+  t->unds[t->nund++] = (elfs_und){name, weak, type};
+  t->strs += name->size + 1;
+  return i;
+}
+
+// the definitions, and the imports as undefined names
+static void  elfs_sign(mode* self, elfs_syms* t) {
+  *t = (elfs_syms){.strs = 1};
+  t->ndef = self->core.sign(self, &t->defs);
+  for(u32i i = 0; i < t->ndef; i++) t->strs += t->defs[i]->name->size + 1;
+  for(u32i i = 0; i < self->impn; i++)
+    elfs_need(self, t, self->imps[i]->name, 0, self->imps[i]->kind == call? STT_FUNC: STT_OBJECT);
+}
+
+// the name of s at str + *at, NUL ended: its offset
+static u32i  elfs_word(byte* str, u64i* at, item* s) {
+  u32i o = *at;
+  str[o + s->size] = 0;
+  copy(str + o, s->name, s->size);
+  *at += s->size + 1;
+  return o;
+}
+
+// sym, the symbols of t from first on, their names in str past its NUL, a
+// definition in text, data or bss at its address there and in section tsec,
+// dsec or bsec. A shared library (dyno) reaches its globals directly: they
+// are protected, so that no program copies them away from it
+static void  elfs_syms_put(mode* self, elfs_syms* t, sym64* sym, byte* str, bool dyno,
+                           u64i text, u64i data, u64i bss, u16i tsec, u16i dsec, u16i bsec) {
+  u64i at = 1;
+  for(u32i i = 0; i < t->ndef; i++, sym++) {
+    meta* m = t->defs[i];
+    bool  f = m->kind == call, z = !f && m->slot & ZERO;
+    *sym = (sym64){
+      .name  = elfs_word(str, &at, m->name),
+      .type  = f? STT_FUNC: STT_OBJECT,
+      .bind  = m->weak? STB_WEAK: STB_GLOBAL,
+      .other = dyno && !f? STV_PROTECTED: 0,
+      .shidx = f? tsec: z? bsec: dsec,
+      .value = f? text + (m->addr - self->text->head): (z? bss: data) + (m->slot & ~ZERO),
+      .size  = !f && m->type? m->type->size: 0,
+    };
+  }
+  for(u32i i = 0; i < t->nund; i++, sym++)
+    *sym = (sym64){.name = elfs_word(str, &at, t->unds[i].name), .type = t->unds[i].type,
+                   .bind = t->unds[i].weak? STB_WEAK: STB_GLOBAL};
+}
+
+// the offset of the k-th name in a string table of NUL separated names
+static u32i  elfs_nth(char* s, u32i k) {
+  u32i i = 1;
+  while(k--) i += slen(s + i) + 1;
+  return i;
+}
+
+// the section of seat s in a library object, 1 text, 2 data or 3 bss, and
+// its offset there. The import slots follow data at slots
+static u16i  elfs_part(mode* self, seat s, u64i slots, u64i* off) {
+  if(s.at) { *off = s.at - self->text->head; return 1; }
+  if(s.off & ZERO) { *off = s.off & ~ZERO; return 3; }
+  *off = s.off & SLOT? slots + 8 * (s.off & ~SLOT): s.off;
+  return 2;
+}
+
+// a static library: the image as one relocatable object, text, data (then the
+// import slots) and bss its sections. Symbols: the three sections, the public
+// definitions, then the names left undefined. A reference within a section is
+// patched, one across sections or to a name nothing defines is relocated
+static file* elfs_relo(mode* self) {
+  static char names[] = "\0.text\0.data\0.bss\0.symtab\0.strtab\0.rela.text\0.rela.data\0.shstrtab";
+  enum { s_text = 1, s_data, s_bss, s_sym, s_str, s_rtext, s_rdata, s_names, s_all };
+  const bool arm  = self->arch.cpu == cpu_arm8;
+  const u64i step = self->core.gap(self);
+  const u64i code = self->text->body - self->text->head;
+  const u64i size = self->data->body - self->data->head;
+  const u64i slots = (size + 7) & -8;
+  elfs_syms t;
+  elfs_sign(self, &t);
+  cord* cords;
+  u32i  ncord = self->core.knit(self, &cords);
+  for(cord* c = cords; c < cords + ncord; c++)
+    if(c->name) elfs_need(self, &t, c->name, c->weak, STT_NOTYPE);
+  const u32i first = 1 + s_bss; // past the null symbol and those of the sections
+  const u32i nsym = first + t.ndef + t.nund;
+
+  // relocations, of text and of data: two per glob on arm8, one per slot
+  u32i    nrel[2] = {0};
+  rela64* rel[2];
+  for(u32i k = 0; k < 2; k++) rel[k] = self->heap(NULL, (2 * ncord + self->impn) * sizeof(rela64) + 1);
+#define RELA(sec, ...) (rel[(sec) - s_text][nrel[(sec) - s_text]++] = (rela64){__VA_ARGS__})
+  for(cord* c = cords; c < cords + ncord; c++) {
+    u64i so, to = 0;
+    u16i ss = elfs_part(self, c->site, slots, &so), ts = 0;
+    u32i sym = c->name? first + t.ndef + elfs_need(self, &t, c->name, c->weak, 0)
+                      : (ts = elfs_part(self, c->aim, slots, &to));
+    byte* at = c->site.at? c->site.at: self->data->head + c->site.off;
+    if(c->kind == cd_glob && arm) {
+      RELA(ss, so + 4, R_AARCH64_MOVW_PREL_G0_NC, sym, to + 4);
+      RELA(ss, so + 8, R_AARCH64_MOVW_PREL_G1_NC, sym, to + 8);
+    }
+    else if(c->kind == cd_glob) RELA(ss, so + 3, R_X86_64_PC32, sym, to - 4);
+    else if(c->kind == cd_wide) RELA(ss, so, R_X86_64_64, sym, to + c->add);
+    else if(ts == ss) { // within a section: the distance is known
+      s64i d = (s64i)to + c->add - (s64i)so;
+      s32i r = d;
+      if(r != d) fail("object reference too far\n");
+      copy(at, &r, sizeof(r));
+    }
+    else if(c->name && c->got) { // the lea a GOT load: back to the load
+      at[-2] = 0x8b;
+      RELA(ss, so, R_X86_64_GOTPCREL, sym, c->add);
+    }
+    else RELA(ss, so, c->name && ss == s_text && (at[-1] == 0xe8 || at[-1] == 0xe9)?
+                      R_X86_64_PLT32: R_X86_64_PC32, sym, to + c->add);
+  }
+  for(u32i i = 0; i < self->impn; i++)
+    RELA(s_data, slots + 8 * i, arm? R_AARCH64_ABS64: R_X86_64_64,
+         first + t.ndef + elfs_need(self, &t, self->imps[i]->name, 0, 0), 0);
+#undef RELA
+  self->heap(cords, 0);
+
+  // the file: header, text, data, symbols, their names, relocations, the
+  // section names and headers
+  sh64 sh[s_all] = {{0},
+    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_EXECINSTR, .size = code, .align = step},
+    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_WRITE, .size = slots + 8 * self->impn, .align = step},
+    {.type = SHT_NOBITS, .flags = SHF_ALLOC | SHF_WRITE, .size = self->zero, .align = step},
+    {.type = SHT_SYMTAB, .size = nsym * sizeof(sym64), .link = s_str, .info = first,
+     .align = 8, .entsize = sizeof(sym64)},
+    {.type = SHT_STRTAB, .size = t.strs, .align = 1},
+    {.type = SHT_RELA, .flags = SHF_INFO_LINK, .size = nrel[0] * sizeof(rela64), .link = s_sym,
+     .info = s_text, .align = 8, .entsize = sizeof(rela64)},
+    {.type = SHT_RELA, .flags = SHF_INFO_LINK, .size = nrel[1] * sizeof(rela64), .link = s_sym,
+     .info = s_data, .align = 8, .entsize = sizeof(rela64)},
+    {.type = SHT_STRTAB, .size = sizeof names, .align = 1},
+  };
+  u64i at = sizeof(elfs_id) + sizeof(eh64);
+  for(u32i i = 1; i < s_all; i++) {
+    sh[i].name = elfs_nth(names, i - 1);
+    at = (at + sh[i].align - 1) & -sh[i].align;
+    sh[i].offset = at;
+    if(sh[i].type != SHT_NOBITS) at += sh[i].size;
+  }
+  const u64i shoff = (at + 7) & -8, all = shoff + sizeof sh;
+
+  elfs_id id = {.seal = {0x7f, 'E', 'L', 'F'}, .bits = eb_cl64, .data = ed_2lsb, .issue = ev_curr};
+  eh64 eh = {
+    .type   = et_relo,
+    .arch   = elfs_mach[self->arch.cpu],
+    .issue  = ev_curr,
+    .shoff  = shoff,
+    .ehsize = sizeof(id) + sizeof(eh),
+    .shsize = sizeof(sh64),
+    .shnum  = s_all,
+    .shstr  = s_names,
+  };
+  file* out = zero(self, sizeof(file) + all);
+  byte* o = out->head;
+  out->body = out->tail = o + all;
+  copy(copy(o, &id, sizeof(id)), &eh, sizeof(eh));
+  copy(o + sh[s_text].offset, self->text->head, code);
+  copy(o + sh[s_data].offset, self->data->head, size);
+  sym64* sym = (sym64*)(o + sh[s_sym].offset);
+  for(u16i i = s_text; i <= s_bss; i++) sym[i] = (sym64){.type = STT_SECTION, .shidx = i};
+  elfs_syms_put(self, &t, sym + first, o + sh[s_str].offset, 0, 0, 0, 0, s_text, s_data, s_bss);
+  copy(o + sh[s_rtext].offset, rel[0], sh[s_rtext].size);
+  copy(o + sh[s_rdata].offset, rel[1], sh[s_rdata].size);
+  copy(o + sh[s_names].offset, names, sizeof names);
+  copy(o + shoff, sh, sizeof sh);
+  for(u32i k = 0; k < 2; k++) self->heap(rel[k], 0);
+  self->heap(t.defs, 0);
+  self->heap(t.unds, 0);
+  return out;
+}
+
+// a shared library, position independent: its dynamic tables, then text, in
+// the first segment, the dynamic section, data, bss and the import slots in a
+// second, writable one, 64 KB further in memory as in an executable. The
+// public definitions are exported, the imports bound by the loader through
+// their slots, and the addresses in data relocated by the load address
+static file* elfs_dyno(mode* self) {
+  static char names[] = "\0.hash\0.dynsym\0.dynstr\0.rela.dyn\0.text\0.dynamic\0.data\0.bss\0.shstrtab";
+  enum { s_hash = 1, s_sym, s_str, s_rel, s_text, s_dyn, s_data, s_bss, s_names, s_all };
+  const bool arm  = self->arch.cpu == cpu_arm8;
+  const u64i step = self->core.gap(self);
+  const u64i code = self->text->body - self->text->head;
+  const u64i size = self->data->body - self->data->head;
+  const u64i nph  = 4;
+  elfs_syms t;
+  elfs_sign(self, &t);
+  cord* cords;
+  u32i  ncord = self->core.knit(self, &cords), nrel = self->impn;
+  for(cord* c = cords; c < cords + ncord; c++) {
+    if(c->kind != cd_wide || c->name) continue; // a weak name nothing defines is 0
+    if(c->site.at) fail("an address in code: a shared library cannot have it\n");
+    nrel++;
+  }
+  char* soname = self->outp? self->outp: "";
+  for(char* c = soname; *c; c++) if(*c == '/') soname = c + 1;
+  const u64i nsym = 1 + t.ndef + t.nund, sonamen = slen(soname);
+  const u64i strs = t.strs + sonamen + 1, ndyn = 10; // the entries of dyn
+
+  // the first segment, then the second at rw in the file, data at dat
+  const u64i hash = sizeof(elfs_id) + sizeof(eh64) + nph * sizeof(ph64);
+  const u64i dsym = (hash + 4 * (3 + nsym) + 7) & -8;
+  const u64i dstr = dsym + nsym * sizeof(sym64);
+  const u64i drel = (dstr + strs + 7) & -8;
+  const u64i top  = (drel + nrel * sizeof(rela64) + step - 1) & -step;
+  const u64i rw   = (top + code + 7) & -8;
+  const u64i dat  = (rw + ndyn * sizeof(dyn64) + step - 1) & -step;
+  const u64i bss  = ((size + step - 1) & -step), slots = bss + ((self->zero + 7) & -8);
+  const u64i far  = 0x10000;
+  const u64i shoff = (dat + size + sizeof names + 7) & -8, all = shoff + s_all * sizeof(sh64);
+  self->core.dock(self, dat + far - top, top);
+
+  elfs_id id = {.seal = {0x7f, 'E', 'L', 'F'}, .bits = eb_cl64, .data = ed_2lsb, .issue = ev_curr};
+  eh64 eh = {
+    .type   = et_dyno,
+    .arch   = elfs_mach[self->arch.cpu],
+    .issue  = ev_curr,
+    .phoff  = sizeof(id) + sizeof(eh),
+    .shoff  = shoff,
+    .ehsize = sizeof(id) + sizeof(eh),
+    .phsize = sizeof(ph64),
+    .phnum  = nph,
+    .shsize = sizeof(sh64),
+    .shnum  = s_all,
+    .shstr  = s_names,
+  };
+  ph64 ph[] = {
+    {.type = PT_LOAD, .flags = 5, .filesz = top + code, .memsz = top + code, .align = 0x1000},
+    {.type = PT_LOAD, .flags = 6, .offset = rw, .vaddr = rw + far, .paddr = rw + far,
+     .filesz = dat + size - rw, .memsz = dat - rw + slots + 8 * self->impn, .align = far},
+    {.type = PT_DYNAMIC, .flags = 6, .offset = rw, .vaddr = rw + far, .paddr = rw + far,
+     .filesz = ndyn * sizeof(dyn64), .memsz = ndyn * sizeof(dyn64), .align = 8},
+    {.type = PT_GNU_STACK, .flags = 6, .align = 16},
+  };
+  dyn64 dyn[] = {
+    {DT_SONAME, t.strs}, {DT_HASH, hash}, {DT_STRTAB, dstr}, {DT_SYMTAB, dsym},
+    {DT_STRSZ, strs}, {DT_SYMENT, sizeof(sym64)}, {DT_RELA, drel},
+    {DT_RELASZ, nrel * sizeof(rela64)}, {DT_RELAENT, sizeof(rela64)}, {DT_NULL, 0},
+  };
+  sh64 sh[s_all] = {{0},
+    {.type = SHT_HASH, .flags = SHF_ALLOC, .addr = hash, .offset = hash, .size = 4 * (2 + nsym + 1),
+     .link = s_sym, .align = 8, .entsize = 4},
+    {.type = SHT_DYNSYM, .flags = SHF_ALLOC, .addr = dsym, .offset = dsym, .size = nsym * sizeof(sym64),
+     .link = s_str, .info = 1, .align = 8, .entsize = sizeof(sym64)},
+    {.type = SHT_STRTAB, .flags = SHF_ALLOC, .addr = dstr, .offset = dstr, .size = strs, .align = 1},
+    {.type = SHT_RELA, .flags = SHF_ALLOC, .addr = drel, .offset = drel, .size = nrel * sizeof(rela64),
+     .link = s_sym, .align = 8, .entsize = sizeof(rela64)},
+    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_EXECINSTR, .addr = top, .offset = top, .size = code,
+     .align = step},
+    {.type = SHT_DYNAMIC, .flags = SHF_ALLOC | SHF_WRITE, .addr = rw + far, .offset = rw,
+     .size = sizeof dyn, .link = s_str, .align = 8, .entsize = sizeof(dyn64)},
+    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + far, .offset = dat, .size = size,
+     .align = step},
+    {.type = SHT_NOBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + far + bss, .offset = dat + size,
+     .size = slots - bss + 8 * self->impn, .align = step},
+    {.type = SHT_STRTAB, .offset = dat + size, .size = sizeof names, .align = 1},
+  };
+  for(u32i i = 1; i < s_all; i++) sh[i].name = elfs_nth(names, i - 1);
+
+  file* out = zero(self, sizeof(file) + all);
+  byte* o = out->head;
+  out->body = out->tail = o + all;
+  copy(copy(copy(o, &id, sizeof(id)), &eh, sizeof(eh)), ph, sizeof ph);
+  u32i* h = (u32i*)(o + hash); // one bucket: a chain through every symbol
+  h[0] = 1;
+  h[1] = nsym;
+  h[2] = nsym > 1;
+  for(u32i i = 1; i + 1 < nsym; i++) h[3 + i] = i + 1;
+  elfs_syms_put(self, &t, (sym64*)(o + dsym) + 1, o + dstr, 1, top, dat + far, dat + far + bss,
+                s_text, s_data, s_bss);
+  copy(o + dstr + t.strs, soname, sonamen);
+  rela64* r = (rela64*)(o + drel);
+  for(cord* c = cords; c < cords + ncord; c++) { // dock put the address at base 0 there
+    if(c->kind != cd_wide || c->name) continue;
+    u64i a;
+    copy((byte*)&a, self->data->head + c->site.off, sizeof(a));
+    *r++ = (rela64){dat + far + c->site.off, arm? R_AARCH64_RELATIVE: R_X86_64_RELATIVE, 0, a};
+  }
+  for(u32i i = 0; i < self->impn; i++)
+    *r++ = (rela64){dat + far + slots + 8 * i, arm? R_AARCH64_GLOB_DAT: R_X86_64_GLOB_DAT,
+                    1 + t.ndef + elfs_need(self, &t, self->imps[i]->name, 0, 0), 0};
+  copy(o + top, self->text->head, code);
+  copy(o + rw, dyn, sizeof dyn);
+  copy(o + dat, self->data->head, size);
+  copy(o + dat + size, names, sizeof names);
+  copy(o + shoff, sh, sizeof sh);
+  self->heap(cords, 0);
+  self->heap(t.defs, 0);
+  self->heap(t.unds, 0);
+  return out;
+}
+
+// an executable, or without main a library: shared, or static as an object
+file* elfs_pack(mode* self) {
+  if(self->main) return elfs_exec(self);
+  return self->libs == lb_relo? elfs_relo(self): elfs_dyno(self);
+}
 
 const form elfs = {
   .pack = elfs_pack,

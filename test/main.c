@@ -191,6 +191,82 @@ static char* archive(char* name, char** src) {
   return system(cmd)? NULL: at;
 }
 
+// src as a library written by tic, bins/libname.so, or with -s (stat)
+// bins/name.o, then the C program drv built with it by the host's cc (with
+// cflags) and run: its exit code, bad when tic failed, odd when cc did
+static int  library(char* name, char* src, bool stat, char* cflags, char* drv) {
+  char at[64], out[64], cmd[512];
+  snprintf(at, sizeof at, "bins/%s.c", name);
+  snprintf(out, sizeof out, stat? "bins/%s.o": "bins/lib%s.so", name);
+  FILE* fp = fopen(at, "wb");
+  if(!fp) return odd;
+  fputs(src, fp);
+  fclose(fp);
+  unlink(out);
+  int null = open(NULL_DEV, O_WRONLY);
+  int code = spawn(null, stat? (char*[]){tic(), "-s", "-e", out, at, NULL}
+                             : (char*[]){tic(), "-e", out, at, NULL});
+  close(null);
+  if(code) return bad;
+  snprintf(at, sizeof at, "bins/%s-drv.cin", name);
+  if(!(fp = fopen(at, "wb"))) return odd;
+  fputs(drv, fp);
+  fclose(fp);
+  snprintf(cmd, sizeof cmd, "cc %s -o bins/%s-drv -x c %s -x none %s -ldl -Wl,-rpath,'$ORIGIN' 2>" NULL_DEV,
+           cflags, name, at, out);
+  if(system(cmd)) return odd;
+  snprintf(at, sizeof at, "bins/%s-drv", name);
+  code = spawn(1, (char*[]){at, out, NULL});
+  return code < 0? odd: code;
+}
+
+// 1 when clang and ld64.lld can build Mach-O programs here, else 0: its cases
+// are skipped. x86-64 hosts only, so it runs once
+static int  apple(void) {
+  static int ok = -1;
+#ifdef __x86_64__
+  if(ok < 0) ok = !system("clang --version >" NULL_DEV " 2>&1 && ld64.lld --version >" NULL_DEV " 2>&1");
+#else
+  ok = 0;
+#endif
+  return ok;
+}
+
+// src as a Mach-O library written by tic for arch (ia64 or arm8),
+// bins/libname.dylib, or with -s (stat) bins/name.o, then the C program drv
+// compiled by clang and linked with it by ld64.lld against a stub of
+// libSystem: 0 when it links, bad when tic failed, odd when the build did.
+// Nothing here runs macOS code
+static int  machlib(char* name, char* src, bool stat, char* arch, char* drv) {
+  char  at[64], out[64], cmd[512];
+  char* cpu = arch[0] == 'a'? "arm64": "x86_64";
+  FILE* fp = fopen("bins/libSystem.tbd", "wb");
+  if(!fp) return odd;
+  fprintf(fp, "--- !tapi-tbd\ntbd-version: 4\ntargets: [ %s-macos ]\n"
+              "install-name: '/usr/lib/libSystem.B.dylib'\nexports:\n  - targets: [ %s-macos ]\n"
+              "    symbols: [ dyld_stub_binder, _labs, _printf ]\n...\n", cpu, cpu);
+  fclose(fp);
+  snprintf(at, sizeof at, "bins/%s.c", name);
+  snprintf(out, sizeof out, stat? "bins/%s.o": "bins/lib%s.dylib", name);
+  if(!(fp = fopen(at, "wb"))) return odd;
+  fputs(src, fp);
+  fclose(fp);
+  unlink(out);
+  int null = open(NULL_DEV, O_WRONLY);
+  int code = spawn(null, stat? (char*[]){tic(), "-f", "mach", "-a", arch, "-s", "-e", out, at, NULL}
+                             : (char*[]){tic(), "-f", "mach", "-a", arch, "-e", out, at, NULL});
+  close(null);
+  if(code) return bad;
+  snprintf(at, sizeof at, "bins/%s-drv.cin", name);
+  if(!(fp = fopen(at, "wb"))) return odd;
+  fputs(drv, fp);
+  fclose(fp);
+  snprintf(cmd, sizeof cmd, "clang -target %s-apple-macos11 -c -o bins/%s-drv.o -x c %s 2>" NULL_DEV
+           " && ld64.lld -arch %s -platform_version macos 11.0 11.0 -o bins/%s-drv bins/%s-drv.o %s"
+           " bins/libSystem.tbd >" NULL_DEV " 2>&1", cpu, name, at, cpu, name, name, out);
+  return system(cmd)? odd: 0;
+}
+
 // 25-statement bodies: their branches are over 127 bytes on x86
 #define RET5 "return 1; return 1; return 1; return 1; return 1; "
 #define ADD5 "s += 1; s += 1; s += 1; s += 1; s += 1; "
@@ -736,6 +812,94 @@ spec(TAG) {
     }
   }
 
+  context("libraries") { // without main: shared by default, an object with -s
+    #define USE "int twice(int); int total(int);\n" \
+                "int main() { return twice(4) * 10 + total(3); }\n"
+    #define LIB "link \"lib-part\";\nint total(int n) { int s = 0; while(n) { s += n; n -= 1; } return s; }\n"
+    elfs_it("writes a shared library") {
+      module("lib-part", "int twice(int x) { return x * 2; }\n");
+      check(library("lb-sh", LIB, 0, "", USE) == 86);
+    }
+    elfs_it("writes one object for all its sources, with -s") {
+      module("lib-part", "int twice(int x) { return x * 2; }\n");
+      check(library("lb-st", LIB, 1, "", USE) == 86);
+      check(library("lb-st", LIB, 1, "-no-pie", USE) == 86);
+    }
+    elfs_it("loads a shared library at run time") {
+      check(library("lb-dl", "int seven() { return 7; }\n", 0, "", "#include <dlfcn.h>\n"
+        "int main(int c, char** v) { void* h = dlopen(v[1], RTLD_NOW); if(!h) return 99;\n"
+        "  int (*f)(void) = (int (*)(void))dlsym(h, \"seven\"); return f? f(): 98; }\n") == 7);
+    }
+    elfs_it("keeps one copy of a global of a shared library") {
+      // a program built without -fPIC copies a global out of the library: protected, it may not
+      char* src = "int count = 5;\nint bump() { count += 1; return count; }\n";
+      char* drv = "extern int count; int bump(void);\n"
+                  "int main() { count = 10; return bump() * 10 + (count == 11); }\n";
+      check(library("lb-gl", src, 0, "-fPIC", drv) == 111);
+      check(library("lb-gl", src, 0, "-fno-PIC -no-pie", drv) == odd);
+      check(library("lb-glo", src, 1, "", drv) == 111);
+    }
+    elfs_it("binds the imports of a library") {
+      char* src = "load \"c\";\nlong labs(long n);\nint printf(char* f, ...);\nextern char** environ;\n"
+                  "int abs3(int v) { long n = v; return labs(n) + (environ != 0) + (printf(\"\") == 0); }\n";
+      char* drv = "int abs3(int);\nint main() { return abs3(-5); }\n";
+      check(library("lb-im", src, 0, "", drv) == 7);
+      check(library("lb-imo", src, 1, "", drv) == 7);
+    }
+    elfs_it("relocates the addresses in data of its objects") {
+      archive("libar-lib", (char*[]){
+        "static int v[2] = {3, 4};\nint* p = &v[1];\nint two(void) { return 2; }\n"
+        "int (*fp)(void) = two;\nint deref(void) { return *p * 10 + fp(); }\n", NULL});
+      char* src = "link \"ar-lib\";\nint get() { return deref(); }\n";
+      char* drv = "int get(void);\nint main() { return get(); }\n";
+      check(library("lb-dr", src, 0, "", drv) == 42);
+      check(library("lb-dro", src, 1, "", drv) == 42);
+    }
+    elfs_it("leaves a weak name nothing defines to the linker of an object") {
+      archive("libar-libnull", (char*[]){
+        "extern __attribute__((weak)) int missing(void);\n"
+        "int has(void) { char* volatile a = (char*)missing; return 7 + (a != 0); }\n", NULL});
+      char* src = "link \"ar-libnull\";\nint get() { return has(); }\n";
+      char* drv = "int get(void);\nint main() { return get(); }\n";
+      check(library("lb-nul", src, 1, "", drv) == 7);
+      check(library("lb-nul", src, 1, "-no-pie", drv) == 7);
+      check(library("lb-nuls", src, 0, "", drv) == 7);
+    }
+    #undef USE
+    #undef LIB
+  }
+
+  context("Mach-O libraries") { // linked by ld64.lld, not run: skipped without clang and lld
+    #define USE "int twice(int); int total(int); extern int count;\n" \
+                "int main() { return twice(4) * 10 + total(3) + count; }\n"
+    #define LIB "link \"lib-part\";\nint count = 1;\n" \
+                "int total(int n) { int s = 0; while(n) { s += n; n -= 1; } return s + count; }\n"
+    it("links a dylib and one object for all its sources", apple()) {
+      module("lib-part", "int twice(int x) { return x * 2; }\n");
+      check(machlib("lb-msh", LIB, 0, "ia64", USE) == 0);
+      check(machlib("lb-mst", LIB, 1, "ia64", USE) == 0);
+    }
+    it("links an arm64 dylib, but no arm64 object yet", apple()) {
+      module("lib-part", "int twice(int x) { return x * 2; }\n");
+      check(machlib("lb-msha", LIB, 0, "arm8", USE) == 0);
+      check(machlib("lb-msta", LIB, 1, "arm8", USE) == bad);
+    }
+    it("leaves its imports to the program", apple()) {
+      char* src = "load \"c\";\nlong labs(long n);\nint printf(char* f, ...);\n"
+                  "int abs3(int v) { long n = v; return labs(n) + (printf(\"\") == 0); }\n";
+      char* drv = "int abs3(int);\nint main() { return abs3(-5); }\n";
+      check(machlib("lb-mim", src, 0, "ia64", drv) == 0);
+      check(machlib("lb-mimo", src, 1, "ia64", drv) == 0);
+      check(machlib("lb-mima", src, 0, "arm8", drv) == 0);
+    }
+    it("fails to link what the library does not export", apple()) {
+      check(machlib("lb-mno", "static int hidden() { return 1; }\nint shown() { return hidden(); }\n", 0, "ia64",
+                    "int hidden(void);\nint main() { return hidden(); }\n") == odd);
+    }
+    #undef USE
+    #undef LIB
+  }
+
   context("syscall") {
     linux_it("calls the kernel") // write(99, "x", 1) fails with EBADF
       expect(9, "int main() { return -syscall(" WRITE ", 99, \"x\", 1); }\n");
@@ -758,10 +922,16 @@ spec(TAG) {
       expect(bad, "42 main() { return 1; }\n");
     it("rejects a number as a parameter name")
       expect(bad, "int f(int 5) { }\n");
-    it("rejects a program without main")
-      expect(bad, "int f() { return 1; }\n");
-    it("rejects main as a variable")
-      expect(bad, "int main;\n");
+    it("rejects running a program without main") { // -e writes a library
+      module("nomain", "int f() { return 1; }\n");
+      snprintf(src_at, sizeof src_at, "bins/nomain.c");
+      check(jit() == bad);
+    }
+    it("rejects running main as a variable") {
+      module("nomain", "int main;\n");
+      snprintf(src_at, sizeof src_at, "bins/nomain.c");
+      check(jit() == bad);
+    }
     it("rejects an undefined variable")
       expect(bad, "int main() { return x; }\n");
     it("rejects a variable out of scope")

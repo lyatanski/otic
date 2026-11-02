@@ -69,6 +69,7 @@ static u32i pe32_boot(byte* at, chip cpu, u32i rva, u32i main, u32i iat) {
 }
 
 file* pe32_pack(mode* self) {
+  if(!self->main) fail("a library is not supported in this form yet\n");
   const u64i org = 0x140000000;
   const u32i salign = 0x1000, falign = 0x200;
 #define up(n, align) (((n) + (align) - 1) & ~((align) - 1))

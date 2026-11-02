@@ -148,6 +148,8 @@ static void source(char* path, char* src) {
   files[filen++] = (named){path, src};
 }
 
+static byte libs; // what make_ asks for without main, reset after each
+
 // compile main.c, src: 1 when make got to show, else 0 and said tells why
 static int  make_(char* src) {
   free(self.text);
@@ -158,8 +160,9 @@ static int  make_(char* src) {
   self = (mode){
     .name = "main.c",
     .hold = mock_hold, .drop = mock_drop, .heap = mock_heap, .show = mock_show, .scan = mock_scan,
-    .arch = mock, .form = {mock_pack, mock_take, os_linux},
+    .arch = mock, .form = {mock_pack, mock_take, os_linux}, .libs = libs,
   };
+  libs = lb_none;
   source("main.c", src);
   nest(&self, (unit){.kind = un_root});
   if(setjmp(bail)) { filen = 0; return 0; }
@@ -213,6 +216,16 @@ spec("core") {
     it("fails without main") {
       check(rejects("int f() { return 1; }", "no main function"));
       check(shows == 0);
+    }
+    it("makes a library without main, when one is asked for") {
+      libs = lb_dyno;
+      check(compiles("int f() { return 1; }"));
+      check(shows == 1 && !self.main && !self.boot && calls[op_link] == 0);
+    }
+    it("still enters at main in a library build") {
+      libs = lb_relo;
+      check(compiles("int main() { return 2; }"));
+      check(self.main && calls[op_link] == 1);
     }
     it("names the line of an error") {
       check(rejects("int main() {\n  return 1;\n  @\n}", "main.c:3:"));
@@ -373,6 +386,31 @@ spec("core") {
     }
     it("fails when a link finds nothing") {
       check(rejects("link \"none\"; int main() { }", "cannot find \"none\""));
+    }
+  }
+  context("library") {
+    meta** defs;
+    cord*  cords;
+    it("signs the public functions and globals, not statics or imports") {
+      libs = lb_relo;
+      check(compiles("int g = 1;\nstatic int h;\nint f() { return g + h; }\nstatic int s() { return 0; }\n"
+                     "extern int e;\nint imp(int);\nstruct pt { int x; };\n"));
+      u32i n = self.core.sign(&self, &defs), fs = 0, gs = 0;
+      for(u32i i = 0; i < n; i++) {
+        fs += defs[i]->kind == call && defs[i]->name->size == 1 && *defs[i]->name->name == 'f';
+        gs += defs[i]->kind == glob && defs[i]->name->size == 1 && *defs[i]->name->name == 'g';
+      }
+      free(defs);
+      check(n == 2 && fs == 1 && gs == 1);
+    }
+    it("knits the references of the source to its globals at each glob") {
+      libs = lb_relo;
+      check(compiles("int g = 1;\nint z;\nint f() { return g + z; }\n")); // z is loaded first
+      u32i n = self.core.knit(&self, &cords);
+      check(n == 2 && cords[0].kind == cd_glob && cords[1].kind == cd_glob && !cords[0].name);
+      check(cords[0].aim.off == ZERO && cords[1].aim.off == 0);
+      check(!strcmp(at(self.text, cords[0].site.at), "glob"));
+      free(cords);
     }
   }
 }

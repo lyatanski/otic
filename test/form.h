@@ -73,7 +73,23 @@ static inline void define(char* name, meta x) {
 
 static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
 
+// a library's public definitions and references, as sign and knit list them
+static meta* signs[8];
+static cord  cords[8];
+static u32i  signn, cordn;
+static u32i  mock_sign(mode*, meta*** out) {
+  *out = malloc(sizeof signs);
+  memcpy(*out, signs, sizeof signs);
+  return signn;
+}
+static u32i  mock_knit(mode*, cord** out) {
+  *out = malloc(sizeof cords);
+  memcpy(*out, cords, sizeof cords);
+  return cordn;
+}
+
 // a fresh mode for cpu: code and data as given, main at main bytes into code
+// (a library: then set main to NULL)
 static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i main) {
   static file* text = (file*)texts;
   static file* data_ = (file*)datas;
@@ -83,7 +99,7 @@ static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i
   memset(items, 0, sizeof items);
   memset(elsewhere, 0, sizeof elsewhere);
   memset(&docked, 0, sizeof docked);
-  laid = asked = itemn = defn = 0;
+  laid = asked = itemn = defn = signn = cordn = 0;
   said[0] = 0;
   text->body = copy(text->head, code, size);
   text->tail = texts + sizeof texts;
@@ -95,7 +111,8 @@ static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i
     .units = units, .unit = 1, .unitn = 2,
     .arch = {.cpu = cpu},
     .heap = mock_heap,
-    .core = {mock_dock, mock_gap, mock_lay, mock_name, mock_find, mock_heft, mock_ask},
+    .core = {mock_dock, mock_gap, mock_lay, mock_name, mock_find, mock_heft, mock_ask,
+             mock_sign, mock_knit},
   };
 }
 

@@ -199,14 +199,32 @@ typedef struct {
   bool  wide; // 64-bit absolute, else 32-bit pc-relative
   bool  weak;
   bool  load; // a GOT load made a REX lea: mov reg, 0 for address 0
+  bool  got;  // a GOT load made a lea
 } hook;
+
+// a reference of a library object for its linker (knit): at site, to aim, or
+// to name when nothing in the image defines it (weak: it may stay undefined),
+// plus add. A glob is the arch's (emit.glob) at site.at, rel a 32-bit
+// distance from the site, wide an address
+enum { cd_glob, cd_rel, cd_wide };
+typedef struct {
+  seat  site;
+  seat  aim;
+  item* name;
+  s64i  add;
+  byte  kind;
+  bool  weak;
+  bool  got;  // a rel of a GOT load that object code made a lea (hook.got)
+} cord;
 
 // what a form may ask of the front end: make fills it in, a spec mocks it.
 // dock lays data out at text + at, bss after it, text at org; gap is the
 // alignment of data and of bss after it; lay makes room for size bytes in
 // data, or in bss (| ZERO) when zero. An object is taken into the unit being
 // joined: name is a spelling in the table of unit at, find what it means
-// there, heft how firmly x defines it, ask pulls the archive member of x
+// there, heft how firmly x defines it, ask pulls the archive member of x. For
+// a library: sign lists the public definitions (functions and globals, not
+// imports), knit the references, both into arrays from mode.heap: their count
 typedef struct {
   void  (*dock)(mode*, u64i at, u64i org);
   u64i  (*gap)(mode*);
@@ -215,7 +233,13 @@ typedef struct {
   meta* (*find)(mode*, u32i at, item* name);
   u32i  (*heft)(meta* x);
   u32i  (*ask)(mode*, meta* x);
+  u32i  (*sign)(mode*, meta*** out);
+  u32i  (*knit)(mode*, cord** out);
 } core;
+
+// what a source without main makes: nothing (running: it fails), a shared
+// library, or a relocatable object (static)
+enum { lb_none, lb_dyno, lb_relo };
 
 struct mode {
   char* name; // input
@@ -231,7 +255,8 @@ struct mode {
   core  core; // for the form
 
   file* text; // binary code
-  byte* main; // entry of main in text
+  byte* main; // entry of main in text, NULL in a library
+  byte  libs; // what a source without main makes
   byte* boot; // what the boot stub calls: main, or crt
   file* data; // non-zero initialized data
   u64i  zero; // zero initialized data (bss) bytes
@@ -307,4 +332,6 @@ void  reel(mode*);
 meta* rack(mode*, item* s);
 u32i  port(mode*, meta* x);
 void  tie(mode*, u32i from, bool last);
+u32i  sign(mode*, meta*** out);
+u32i  knit(mode*, cord** out);
 
