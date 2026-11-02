@@ -276,6 +276,20 @@ void arm8_pull(file* data) {
   arm8_put(data, 0xf84107e0);                                       // ldr x0, [sp], #16
 }
 
+// scratch k is x9 + k: temporaries, free between calls
+void arm8_keep(file* data) {
+  arm8_save(data);
+}
+
+void arm8_lift(file*, byte* keep, u32i k) {
+  *(uint32_t*)keep = X | I3510_ORR | r0 << 16 | 31 << 5 | (9 + k); // mov x9+k, x0
+}
+
+void arm8_take(file* data, u32i k) {
+  arm8_swap(data);
+  arm8_put(data, X | I3510_ORR | (9 + k) << 16 | 31 << 5 | r0);    // mov x0, x9+k
+}
+
 void arm8_cast(file* data, bool wide) {
   arm8_put(data, wide? 0x93407c00: I3510_ORR | r0 << 16 | 31 << 5); // sxtw x0, w0 or mov w0, w0
 }
@@ -330,6 +344,10 @@ void arm8_args(file* data, u32i i) {
   arm8_put(data, 0xf84107e0 | i);                                   // ldr xi, [sp], #16
 }
 
+void arm8_pass(file* data, u32i i) {
+  if(i) arm8_put(data, X | I3510_ORR | r0 << 16 | 31 << 5 | i);    // mov xi, x0: acc is x0
+}
+
 void arm8_open(file* data) {
   arm8_put(data, 0xa9bf7bfd);                                       // stp x29, x30, [sp, #-16]!
   arm8_put(data, 0x910003fd);                                       // mov x29, sp
@@ -350,6 +368,21 @@ void arm8_trap(file* data, u32i argc) {
 
 void arm8_dial(file* data) {
   arm8_put(data, I3206_BL);                                         // bl, patched by link
+}
+
+// the condition code of comparison op
+arm8_cond arm8_cc(u32i op) {
+  op &= ~(WIDE | TEST);
+  return op == tokd('=', '=')? COND_EQ: op == tokd('!', '=')? COND_NE:
+         op == '<'? COND_LT: op == tokd('<', '=')? COND_LE: op == '>'? COND_GT: COND_GE;
+}
+
+void arm8_flag(file* data, u32i op) {
+  arm8_put(data, I3506_CSINC | 31 << 16 | (arm8_cc(op) ^ 1) << 12 | 31 << 5 | r0); // cset w0, cc
+}
+
+void arm8_bcnd(file* data, u32i op, bool hold) {
+  arm8_put(data, 0x54000000 | (arm8_cc(op) ^ !hold));              // b.cc, patched by mend
 }
 
 // w0 = w0 op (cnst? num: w1), comparisons give 0 or 1; x0, x1 when WIDE.
@@ -373,13 +406,9 @@ void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
       break;
     case tokd('<', '<'): arm8_put(data, I3508_LSLV | w1); break;
     case tokd('>', '>'): arm8_put(data, I3508_ASRV | w1); break;
-    default: { // comparison: cmp w0, w1; cset w0, cc
-      op &= ~WIDE;
-      arm8_cond cc = op == tokd('=', '=')? COND_EQ: op == tokd('!', '=')? COND_NE:
-                     op == '<'? COND_LT: op == tokd('<', '=')? COND_LE: op == '>'? COND_GT: COND_GE;
+    default: // comparison: cmp w0, w1, then cset w0, cc unless TEST
       arm8_put(data, I3502_SUBS | w1 | 31);
-      arm8_put(data, I3506_CSINC | 31 << 16 | (cc ^ 1) << 12 | 31 << 5 | r0);
-    }
+      if(!(op & TEST)) arm8_flag(data, op);
   }
 }
 
@@ -405,11 +434,11 @@ void arm8_mend(file* data, byte* prev) {
   uint32_t* inst = (uint32_t*)prev - 1;
   s64i dist = (data->body - (byte*)inst) >> 2;
   if((*inst & 0xfc000000) == I3206_B) {
-    if(dist >= 1 << 25) fail("jump too far: %ld words\n", dist);
+    if(dist >= 1 << 25) fail("jump too far: %lld words\n", (long long)dist);
     *inst |= dist & 0x3ffffff;
   }
   else {
-    if(dist >= 1 << 18) fail("jump too far: %ld words\n", dist);
+    if(dist >= 1 << 18) fail("jump too far: %lld words\n", (long long)dist);
     *inst |= (dist & 0x7ffff) << 5;
   }
 }
@@ -423,6 +452,37 @@ void arm8_boot(file* data) {
 
 void arm8_link(file*, byte* boot, byte* main) {
   *(uint32_t*)boot = I3206_BL | (((main - boot) >> 2) & 0x3ffffff);
+}
+
+// called by boot, which leaves sp as it was: [sp] is argc, argv follows it
+void arm8_crt(file* data, byte* main, byte* start) {
+  s64i d = main - data->body - 8;
+  if(d < -(1 << 20)) fail("main too far: %lld bytes\n", (long long)d);
+  arm8_put(data, 0xf94003e1);                                       // ldr x1, [sp]
+  arm8_put(data, 0x910023e2);                                       // add x2, sp, #8
+  arm8_put(data, I3406_ADR | (d & 3) << 29 | ((d >> 2) & 0x7ffff) << 5 | r0); // adr x0, main
+  for(u32i r = 3; r < 6; r++) arm8_put(data, X | dati_movz | r);    // mov xr, #0
+  byte* at = data->body;
+  arm8_dial(data);
+  arm8_link(data, at, start);
+  arm8_put(data, 0xd4200000);                                       // brk #0: start never returns
+}
+
+// AAPCS64: arguments in x0-x5, sp is always 16-byte aligned here. Apple passes
+// the variadic ones on the stack instead, 8 bytes each, through x9-x14
+byte* arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
+  u32i vary = os == os_mac && fixed < argc? argc - fixed: 0, room = (vary * 8 + 15) & -16;
+  if(!func) arm8_put(data, 0xf9400010);                             // ldr x16, [x0]
+  for(u32i i = argc; i--; )
+    arm8_put(data, 0xf84107e0 | (vary && i >= fixed? 9 + i - fixed: i)); // ldr xi, [sp], #16
+  if(room) arm8_put(data, 0xd10003ff | room << 10);                 // sub sp, sp, #room
+  for(u32i j = 0; j < vary; j++)
+    arm8_put(data, 0xf90003e0 | j << 10 | (9 + j));                 // str x(9+j), [sp, #8j]
+  byte* at = func? data->body: NULL;
+  if(func) { arm8_dial(data); arm8_link(data, at, func); }
+  else arm8_put(data, 0xd63f0200);                                  // blr x16
+  if(room) arm8_put(data, 0x910003ff | room << 10);                 // add sp, sp, #room
+  return at;
 }
 
 const emit arm8 = {
@@ -453,6 +513,14 @@ const emit arm8 = {
   .done = arm8_done,
   .boot = arm8_boot,
   .link = arm8_link,
+  .ffi  = arm8_ffi,
+  .crt  = arm8_crt,
+  .flag = arm8_flag,
+  .cond = arm8_bcnd,
+  .keep = arm8_keep,
+  .lift = arm8_lift,
+  .take = arm8_take,
+  .pass = arm8_pass,
   .cpu  = cpu_arm8,
 };
 

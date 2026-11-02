@@ -98,29 +98,28 @@ file* mach_pack(mode* self) {
   const u32i cdsz = 88 + sizeof(mach_name) + 32 * slots;
   const u32i sign = (20 + cdsz + 15) & ~15;
   const u64i all = link + sign;
-  dock(self, text - top);
+  self->core.dock(self, text - top, 0);
 
   mach_head h = {
     .mh   = {mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_exec,
-             11, sizeof(h) - sizeof(h.mh), mh_noundefs | mh_dyldlink | mh_twolevel | mh_pie},
+             11, sizeof(h) - sizeof(h.mh), mh_noundefs | mh_dyldlink | mh_twolevel | mh_pie, 0},
     .zero = {lc_segment, sizeof(seg64), "__PAGEZERO", .vmsz = org},
     .text = {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", org, text, 0, text,
-             5, 5, 1}, // r-x
+             5, 5, 1, 0}, // r-x
     .code = {"__text", "__TEXT", org + top, code, top, 2, .flags = 0x80000400}, // instructions
-    .data = {lc_segment, sizeof(seg64), "__DATA", org + text, vmsz, text, size, 3, 3}, // rw-
+    .data = {lc_segment, sizeof(seg64), "__DATA", org + text, vmsz, text, size, 3, 3, 0, 0}, // rw-
     .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text + vmsz, (sign + page - 1) & ~(page - 1),
-             link, sign, 1, 1}, // r--
+             link, sign, 1, 1, 0, 0}, // r--
     .syms = {lc_symtab, sizeof(h.syms), link, 0, link, 0},
-    .dsym = {lc_dysymtab, sizeof(h.dsym)},
+    .dsym = {lc_dysymtab, sizeof(h.dsym), {0}},
     .dyld = {lc_dylinker, sizeof(h.dyld), 12, "/usr/lib/dyld"},
-    .main = {lc_main, sizeof(h.main), top + (self->main - self->text->head)},
-    .build = {lc_build, sizeof(h.build), 1, 0xb0000, 0xb0000}, // macOS 11.0
+    .main = {lc_main, sizeof(h.main), top + (self->main - self->text->head), 0},
+    .build = {lc_build, sizeof(h.build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
     .libs = {lc_dylib, sizeof(h.libs), 24, 2, 0x10000, 0x10000, "/usr/lib/libSystem.B.dylib"},
     .sign = {lc_signature, sizeof(h.sign), link, sign},
   };
 
-  file* out = calloc(1, sizeof(file) + all);
-  if(!out) fail("out of memory\n");
+  file* out = zero(self, sizeof(file) + all);
   out->body = out->head + all;
   out->tail = out->head + all;
   copy(copy(out->head, &h, top), self->text->head, code);
@@ -143,4 +142,5 @@ file* mach_pack(mode* self) {
 
 const form mach = {
   .pack = mach_pack,
+  .os   = os_mac,
 };
