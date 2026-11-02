@@ -25,7 +25,7 @@ typedef struct {
   };
 } para;
 
-#define r(name, val) const para name = {reg, .reg = {val}}
+#define r(name, val) const para name = {reg, .reg = {val, .x64=0}}
 #define R(name, val) const para name = {reg, .reg = {val, .x64=1}}
 r(eax, 0); r(ecx, 1); r(edx, 2); r(ebx, 3); r(esp, 4); r(ebp, 5); r(esi, 6); r(edi, 7);
 R(rax, 0); R(rcx, 1); R(rdx, 2); R(rbx, 3); R(rsp, 4); R(rbp, 5); R(rsi, 6); R(rdi, 7);

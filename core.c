@@ -2,7 +2,7 @@
 #include "core.h"
 
 enum { tend, ttag, tnum };
-#define TEXT (1 << 16)
+#define CODE (1 << 16)
 #define DATA (1 << 16)
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
@@ -973,9 +973,9 @@ void  make(mode* self) {
   //      | typedecl
 
   self->core = (core){dock, gap, lay, hget, find, heft, ask};
-  self->text = (file*)self->hold(0, TEXT);
+  self->text = (file*)self->hold(0, CODE);
   self->text->body = self->text->head;
-  self->text->tail = (byte*)self->text + TEXT;
+  self->text->tail = (byte*)self->text + CODE;
   self->data = calloc(1, sizeof(file) + DATA);
   if(!self->data) fail("out of memory\n");
   self->data->body = self->data->head;
@@ -1023,6 +1023,6 @@ void  make(mode* self) {
   emit(self, link, self->text->head, self->boot);
 
   self->show(self);
-  self->drop(self->text, TEXT);
+  self->drop(self->text, CODE);
   free(self->data);
 }

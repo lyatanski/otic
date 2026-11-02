@@ -10,7 +10,7 @@ u64i  tidy(char* path, u64i size) {
     for(j = i; j < size && path[j] != '/'; j++);
     if(j == i || (j - i == 1 && path[i] == '.')) continue;
     if(j - i == 2 && path[i] == '.' && path[i + 1] == '.') {
-      if(n > keep) { for(n--; n > keep && path[n - 1] != '/'; n--); continue; }
+      if(n > keep) { for(n--; n > keep && path[n - 1] != '/'; n--) {} continue; }
       if(keep == 1) continue; // /.. is /
       keep = n + 3;
     }

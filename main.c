@@ -92,6 +92,7 @@ void prep(void* memory, size_t size) {
 void* drop(void* memory, size_t size) {
 #ifdef _WIN32
   VirtualFree(memory, 0, MEM_RELEASE);
+  (void)size;
 #else
   munmap(memory, size);
 #endif

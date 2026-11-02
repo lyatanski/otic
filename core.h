@@ -259,7 +259,7 @@ u32i  lay(mode*, u32i size, bool zero, u32i align);
 #define home(self) ((self)->units + (self)->unit)
 // fail at the line being parsed, in the file of the unit being parsed
 #define flaw(self, fmt, ...) \
-  fail("%s:%ld: " fmt, home(self)->path, home(self)->line __VA_OPT__(,) __VA_ARGS__)
+  fail("%s:%lu: " fmt, home(self)->path, home(self)->line __VA_OPT__(,) __VA_ARGS__)
 #define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
 #define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
 #define nick(x) (int)(x)->size, (x)->name
