@@ -126,7 +126,7 @@ u32i  ask(mode* self, meta* x) {
 void  reel(mode* self) {
   for(; self->askd < self->askn; self->askd++) {
     meta* x = self->asks[self->askd]->data; // NULL once its member is in
-    if(x && x->kind == pend) ario_pull(self, x);
+    if(x && x->kind == pend) self->ario.pull(self, x);
   }
 }
 

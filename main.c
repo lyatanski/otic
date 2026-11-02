@@ -28,6 +28,8 @@ extern const emit arm8;
 extern const form elfs;
 extern const form mach;
 extern const form pe32;
+void  ario_load(mode*, file*);
+void  ario_pull(mode*, meta*);
 #ifdef __aarch64__
 #define base arm8
 #else // __x86_64__
@@ -280,6 +282,7 @@ int   main(int argc, char** argv) {
     .scan = scan,
     .arch = base,
     .form = host,
+    .ario = {ario_load, ario_pull},
   };
   nest(&self, (unit){.kind = un_root}); // unit 0, before the files of the command line
 

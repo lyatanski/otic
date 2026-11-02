@@ -926,7 +926,10 @@ void  feed(mode* self, u32i at) {
   char* path = self->units[at].path;
   u32i  fixs = self->fixs, back = self->unit;
   self->unit = at;
-  if(kind == un_arch) ario_load(self, code);
+  if(kind == un_arch) {
+    if(!self->ario.load) fail("%s: no archives in this build\n", path);
+    self->ario.load(self, code);
+  }
   else if(kind != un_code) {
     if(!self->form.take) fail("%s: no objects in this form\n", path);
     self->form.take(self, code);

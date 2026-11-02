@@ -129,6 +129,14 @@ typedef struct {
 // is the string, its addr the handle once the run loads it
 typedef enum { base, list, data, call, glob, refs, many, pend, dlib } what;
 typedef struct meta meta;
+
+// static libraries: none when load is NULL. pull is called only for the names
+// load put in a table (pend)
+typedef struct {
+  void  (*load)(mode*, file*); // the symbol index of an archive, its table
+  void  (*pull)(mode*, meta*); // the member that defines an archive name
+} ario;
+
 struct meta {
   meta* type; // data link to its type
   meta* hide; // what the name meant before
@@ -206,6 +214,7 @@ struct mode {
                // items in join order (item.next)
   emit  arch;
   form  form;
+  ario  ario;
   core  core; // for the form
 
   file* text; // binary code
@@ -246,8 +255,6 @@ struct mode {
   hook* hooks;
 };
 
-void  ario_load(mode*, file*); // the symbol index of an archive, its table
-void  ario_pull(mode*, meta*); // the member that defines an archive name
 void  make(mode*);
 void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it, text at org
 u64i  gap(mode*); // alignment of data and of bss after it
@@ -259,7 +266,7 @@ u32i  lay(mode*, u32i size, bool zero, u32i align);
 #define home(self) ((self)->units + (self)->unit)
 // fail at the line being parsed, in the file of the unit being parsed
 #define flaw(self, fmt, ...) \
-  fail("%s:%llu: " fmt, home(self)->path, home(self)->line __VA_OPT__(,) __VA_ARGS__)
+  fail("%s:%llu: " fmt, home(self)->path, (unsigned long long)home(self)->line __VA_OPT__(,) __VA_ARGS__)
 #define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
 #define emit(self, call, ...) (self->arch.call(self->text __VA_OPT__(,) __VA_ARGS__))
 #define nick(x) (int)(x)->size, (x)->name
