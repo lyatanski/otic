@@ -22,14 +22,14 @@ static char    said[256]; // what fail said
 // the trace: each emit call, ", " between them
 static char  trace[8192];
 static u32i  traced;
-static u32i  calls[32]; // per op, the calls made
+static u32i  calls[64]; // per op, the calls made
 static u32i  shows, packs, takes;
 static u64i  laid; // data bytes when shown: make frees data after show
 
 #define OPS(X) X(move) X(load) X(stor) X(peek) X(addr) X(glob) X(site) X(read) \
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
   X(loop) X(open) X(size) X(parm) X(args) X(dial) X(trap) X(done) X(boot)       \
-  X(link) X(ffi) X(crt)
+  X(link) X(ffi) X(crt) X(flag) X(cond) X(keep) X(lift) X(take) X(pass)
 #define TAG(x) op_##x,
 #define NAME(x) #x,
 enum { OPS(TAG) };
@@ -68,10 +68,16 @@ static void mock_push(file* t)                         { note(t, op_push, ""); }
 static void mock_pull(file* t)                         { note(t, op_pull, ""); }
 static void mock_swap(file* t)                         { note(t, op_swap, ""); }
 static void mock_cast(file* t, bool wide)              { note(t, op_cast, wide? " long": " int"); }
+// a comparison op as written: "<=" for tokd('<', '='), its flags dropped
+static char* mock_op(u32i op, char* o) {
+  o[0] = op; o[1] = op >> 8; o[2] = op >> 16; o[3] = 0;
+  return o;
+}
 static void mock_calc(file* t, u32i op, bool cnst, s32i n) {
-  char o[4] = {op, op >> 8, op >> 16};
-  if(cnst) note(t, op_calc, "%s %s %d", op & WIDE? ".w": "", o, n);
-  else note(t, op_calc, "%s %s", op & WIDE? ".w": "", o);
+  char o[4];
+  char* w = op & WIDE? op & TEST? ".w.t": ".w": op & TEST? ".t": "";
+  if(cnst) note(t, op_calc, "%s %s %d", w, mock_op(op, o), n);
+  else note(t, op_calc, "%s %s", w, mock_op(op, o));
 }
 static void mock_when(file* t, bool nz)                { note(t, op_when, nz? " nz": " z"); }
 static void mock_jump(file* t)                         { note(t, op_jump, ""); }
@@ -94,13 +100,20 @@ static byte* mock_ffi(file* t, byte* func, u32i argc, u32i fixed, osys) {
 static void mock_crt(file* t, byte* main, byte* start) {
   note(t, op_crt, " %s %s", at(t, main), at(t, start));
 }
+static void mock_flag(file* t, u32i op)                { char o[4]; note(t, op_flag, " %s", mock_op(op, o)); }
+static void mock_cond(file* t, u32i op, bool hold)     { char o[4]; note(t, op_cond, " %s%s", hold? "": "!", mock_op(op, o)); }
+static void mock_keep(file* t)                         { note(t, op_keep, ""); }
+static void mock_lift(file* t, byte* keep, u32i k)     { note(NULL, op_lift, " %s %u", at(t, keep), k); }
+static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, " %u", k); }
+static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
 
 static const emit mock = {
   mock_move, mock_load, mock_stor, mock_peek, mock_addr, mock_glob, mock_site,
   mock_read, mock_fill, mock_push, mock_pull, mock_swap, mock_cast, mock_calc,
   mock_when, mock_jump, mock_back, mock_loop, mock_open, mock_size, mock_parm,
   mock_args, mock_dial, mock_trap, mock_done, mock_boot, mock_link, mock_ffi,
-  mock_crt, cpu_ia64,
+  mock_crt, mock_flag, mock_cond, mock_keep, mock_lift, mock_tmpk, mock_pass,
+  cpu_ia64,
 };
 
 static file* mock_pack(mode*)         { packs++; return NULL; }
@@ -212,7 +225,11 @@ spec("core") {
     }
     it("calls one defined before, linking it at once") {
       check(compiles("int f(int a) { return a; } int main() { return f(3); }"));
-      check(has("move 3, cast long, push, args 0, dial, link dial open"));
+      check(has("move 3, cast long, pass 0, dial, link dial open"));
+    }
+    it("passes the last argument from acc, pops the others") {
+      check(compiles("int f(int a, int b) { return a; } int main() { return f(1, 2); }"));
+      check(has("move 1, cast long, push, move 2, cast long, pass 1, args 0, dial"));
     }
     it("calls one defined later, linking it when the pass ends") {
       check(compiles("int main() { return f(); } int f() { return 1; }"));
@@ -248,9 +265,25 @@ spec("core") {
       check(compiles("int main() { int a = 2; int b = 3; return a * (b - 1); }"));
       check(has("load -16:4, calc - 1, swap, load -8:4, calc *") && calls[op_push] == 0);
     }
-    it("keeps a computed left operand on the stack while the right is computed") {
+    it("keeps a computed left operand in a scratch register while the right is computed") {
       check(compiles("int main() { int a = 2; int b = 3; return (a + 1) * (b - 1); }"));
-      check(has("load -8:4, calc + 1, push, load -16:4, calc - 1, pull, calc *"));
+      check(has("load -8:4, calc + 1, keep, load -16:4, calc - 1, lift keep 0, take 0, calc *"));
+    }
+    it("nests kept operands in the next scratch registers") {
+      check(compiles("int main() { int a = 2; return (a + 1) * ((a + 2) - (a + 3)); }"));
+      check(has("lift keep 1, take 1, calc -, lift keep 0, take 0, calc *"));
+    }
+    it("keeps them on the stack past the scratch registers") {
+      check(compiles("int main() { int a = 2; return (a+1) * ((a+2) * ((a+3) * ((a+4) * ((a+5) - (a+6))))); }"));
+      check(calls[op_lift] == 4 && calls[op_pull] == 1);
+    }
+    it("keeps a left operand on the stack across a call") {
+      check(compiles("int f() { return 1; } int main() { int a = 2; return (a + 1) * f(); }"));
+      check(has("calc + 1, keep, dial") && has("pull, calc *") && calls[op_lift] == 0);
+    }
+    it("keeps the outer operand on the stack when a nested right operand calls") {
+      check(compiles("int f() { return 1; } int main() { int a = 2; return (a + 1) * ((a + 2) - f()); }"));
+      check(calls[op_lift] == 0 && calls[op_pull] == 2);
     }
     it("computes on 64 bits for a long") {
       check(compiles("int main() { long a = 2; return a + 3; }"));
@@ -263,6 +296,26 @@ spec("core") {
   }
 
   context("statements") {
+    it("branches on the flags of a comparison") {
+      check(compiles("int main() { int a = 1; if(a < 2) return 2; return 3; }"));
+      check(has("load -8:4, calc.t < 2, cond !<, move 2, done, back cond") && calls[op_flag] == 0);
+    }
+    it("loops on the flags of a comparison") {
+      check(compiles("int main() { int a = 3; while(a > 0) a -= 1; return a; }"));
+      check(has("load -8:4, calc.t > 0, cond !>,") && has("loop load, back cond"));
+    }
+    it("compares longs on 64 bits") {
+      check(compiles("int main() { long a = 1; if(a == 2) return 2; return 3; }"));
+      check(has("calc.w.t == 2, cond !=="));
+    }
+    it("turns the flags into a value when it is not a condition") {
+      check(compiles("int main() { int a = 1; return a < 2; }"));
+      check(has("calc.t < 2, flag <, done"));
+    }
+    it("branches on each comparison of && and ||") {
+      check(compiles("int main() { int a = 1; if(a < 2 && a > 0) return 2; return 3; }"));
+      check(has("calc.t < 2, cond !<,") && has("calc.t > 0, flag >, jump") && calls[op_when] == 1);
+    }
     it("branches over an if, patching the branch after its body") {
       check(compiles("int main() { int a = 1; if(a) return 2; return 3; }"));
       check(has("when z, move 2, done, back when"));

@@ -42,6 +42,18 @@ spec("ia64") {
     it("swaps acc to tmp") {
       check(emits("48 89 c1", e.swap(t)));              // mov rcx, rax
     }
+    it("keeps acc on the stack, with room for a move") {
+      check(emits("50 66 90", e.keep(t)));              // push rax; xchg ax, ax
+    }
+    it("lifts a keep into a move to scratch r8 + k") {
+      byte* k;
+      check(emits("49 89 c0", k = here, e.keep(t), e.lift(t, k, 0))); // mov r8, rax
+      check(emits("49 89 c3", k = here, e.keep(t), e.lift(t, k, 3))); // mov r11, rax
+    }
+    it("takes a scratch into acc, its value to tmp") {
+      check(emits("48 89 c1 4c 89 c0", e.take(t, 0)));  // mov rcx, rax; mov rax, r8
+      check(emits("48 89 c1 4c 89 d8", e.take(t, 3)));  // mov rcx, rax; mov rax, r11
+    }
   }
 
   context("calc") {
@@ -61,6 +73,13 @@ spec("ia64") {
       // cmp eax, ecx; setle al; movzx eax, al
       check(emits("39 c8 0f 9e c0 0f b6 c0", e.calc(t, tokd('<', '='), 0, 0)));
     }
+    it("compares into the flags alone for a TEST") {
+      check(emits("39 c8", e.calc(t, tokd('<', '=') | TEST, 0, 0)));    // cmp eax, ecx
+      check(emits("48 83 f8 05", e.calc(t, '<' | TEST | WIDE, 1, 5)));  // cmp rax, 5
+    }
+    it("turns the flags into 0 or 1") {
+      check(emits("0f 9e c0 0f b6 c0", e.flag(t, tokd('<', '=')))); // setle al; movzx eax, al
+    }
   }
 
   context("branches") {
@@ -72,6 +91,13 @@ spec("ia64") {
     }
     it("branches on non zero") {
       check(emits("48 85 c0 0f 85 00 00 00 00", e.when(t, 1)));  // test rax, rax; jne
+    }
+    it("branches on the flags when a comparison fails, once mended") {
+      // jge +5; mov eax, 1
+      check(emits("0f 8d 05 00 00 00 b8 01 00 00 00", e.cond(t, '<', 0), m = here, e.move(t, 1), e.back(t, m)));
+    }
+    it("branches on the flags when a comparison holds") {
+      check(emits("0f 8c 00 00 00 00", e.cond(t, '<', 1)));       // jl
     }
     it("jumps forward, once mended") {
       // jmp +5; mov eax, 1
@@ -98,6 +124,11 @@ spec("ia64") {
     }
     it("pops an argument into its register") {
       check(emits("5a", e.args(t, 2)));                 // pop rdx
+    }
+    it("passes acc in an argument register") {
+      check(emits("48 89 c7", e.pass(t, 0)));           // mov rdi, rax
+      check(emits("48 89 c1", e.pass(t, 3)));           // mov rcx, rax
+      check(emits("49 89 c1", e.pass(t, 5)));           // mov r9, rax
     }
     it("links a call back or forward") {
       // leave; ret; call -7

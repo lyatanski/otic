@@ -276,6 +276,20 @@ void arm8_pull(file* data) {
   arm8_put(data, 0xf84107e0);                                       // ldr x0, [sp], #16
 }
 
+// scratch k is x9 + k: temporaries, free between calls
+void arm8_keep(file* data) {
+  arm8_save(data);
+}
+
+void arm8_lift(file*, byte* keep, u32i k) {
+  *(uint32_t*)keep = X | I3510_ORR | r0 << 16 | 31 << 5 | (9 + k); // mov x9+k, x0
+}
+
+void arm8_take(file* data, u32i k) {
+  arm8_swap(data);
+  arm8_put(data, X | I3510_ORR | (9 + k) << 16 | 31 << 5 | r0);    // mov x0, x9+k
+}
+
 void arm8_cast(file* data, bool wide) {
   arm8_put(data, wide? 0x93407c00: I3510_ORR | r0 << 16 | 31 << 5); // sxtw x0, w0 or mov w0, w0
 }
@@ -330,6 +344,10 @@ void arm8_args(file* data, u32i i) {
   arm8_put(data, 0xf84107e0 | i);                                   // ldr xi, [sp], #16
 }
 
+void arm8_pass(file* data, u32i i) {
+  if(i) arm8_put(data, X | I3510_ORR | r0 << 16 | 31 << 5 | i);    // mov xi, x0: acc is x0
+}
+
 void arm8_open(file* data) {
   arm8_put(data, 0xa9bf7bfd);                                       // stp x29, x30, [sp, #-16]!
   arm8_put(data, 0x910003fd);                                       // mov x29, sp
@@ -350,6 +368,21 @@ void arm8_trap(file* data, u32i argc) {
 
 void arm8_dial(file* data) {
   arm8_put(data, I3206_BL);                                         // bl, patched by link
+}
+
+// the condition code of comparison op
+arm8_cond arm8_cc(u32i op) {
+  op &= ~(WIDE | TEST);
+  return op == tokd('=', '=')? COND_EQ: op == tokd('!', '=')? COND_NE:
+         op == '<'? COND_LT: op == tokd('<', '=')? COND_LE: op == '>'? COND_GT: COND_GE;
+}
+
+void arm8_flag(file* data, u32i op) {
+  arm8_put(data, I3506_CSINC | 31 << 16 | (arm8_cc(op) ^ 1) << 12 | 31 << 5 | r0); // cset w0, cc
+}
+
+void arm8_bcnd(file* data, u32i op, bool hold) {
+  arm8_put(data, 0x54000000 | (arm8_cc(op) ^ !hold));              // b.cc, patched by mend
 }
 
 // w0 = w0 op (cnst? num: w1), comparisons give 0 or 1; x0, x1 when WIDE.
@@ -373,13 +406,9 @@ void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
       break;
     case tokd('<', '<'): arm8_put(data, I3508_LSLV | w1); break;
     case tokd('>', '>'): arm8_put(data, I3508_ASRV | w1); break;
-    default: { // comparison: cmp w0, w1; cset w0, cc
-      op &= ~WIDE;
-      arm8_cond cc = op == tokd('=', '=')? COND_EQ: op == tokd('!', '=')? COND_NE:
-                     op == '<'? COND_LT: op == tokd('<', '=')? COND_LE: op == '>'? COND_GT: COND_GE;
+    default: // comparison: cmp w0, w1, then cset w0, cc unless TEST
       arm8_put(data, I3502_SUBS | w1 | 31);
-      arm8_put(data, I3506_CSINC | 31 << 16 | (cc ^ 1) << 12 | 31 << 5 | r0);
-    }
+      if(!(op & TEST)) arm8_flag(data, op);
   }
 }
 
@@ -486,6 +515,12 @@ const emit arm8 = {
   .link = arm8_link,
   .ffi  = arm8_ffi,
   .crt  = arm8_crt,
+  .flag = arm8_flag,
+  .cond = arm8_bcnd,
+  .keep = arm8_keep,
+  .lift = arm8_lift,
+  .take = arm8_take,
+  .pass = arm8_pass,
   .cpu  = cpu_arm8,
 };
 

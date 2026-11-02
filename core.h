@@ -70,6 +70,8 @@ struct unit {
 typedef enum { cpu_ia64, cpu_arm8 } chip;
 typedef enum { os_linux, os_mac, os_win } osys;
 #define WIDE (1 << 24) // calc op flag: on 64 bits, for pointers and long
+#define TEST (1 << 25) // calc op flag: a comparison sets the flags only, for flag and cond
+#define HELD 4         // scratch registers: kept left operands past these are on the stack
 // typed slots: a variadic pointer would pass the arguments on the stack on
 // Apple arm64, where the encoders read them from registers
 typedef struct {
@@ -107,6 +109,14 @@ typedef struct {
   // entry of a C library, called by boot: start(main, argc, argv, 0, 0, 0)
   // with argc and argv from the initial stack
   void (*crt)(file*, byte* main, byte* start);
+  void (*flag)(file*, u32i op);                    // acc = 1 when the comparison op of a TEST calc held, else 0
+  void (*cond)(file*, u32i op, bool hold);         // branch when it held (hold) or failed, patched by back
+  // a left operand in acc kept while the right one is computed: pushed, with
+  // room for lift to make it a move to scratch k when no call came between
+  void (*keep)(file*);
+  void (*lift)(file*, byte* keep, u32i k);
+  void (*take)(file*, u32i k);                     // tmp = acc, acc = scratch k
+  void (*pass)(file*, u32i i);                     // argument register i = acc
   chip  cpu;  // target, each form maps it to its own machine id
 } emit;
 
@@ -233,6 +243,8 @@ struct mode {
 
   u32i  top;
   meta  pile[256];
+  u32i  held;      // left operands kept: the next one goes to scratch held
+  u32i  dials;     // calls emitted: a kept operand stays on the stack across one
   s32i  slot;      // frame bytes in use
   s32i  deep;      // frame bytes the function needs
   meta* func;      // the function being compiled

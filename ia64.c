@@ -221,6 +221,23 @@ void ia64_shft(file* text, shft op, para dst, para src) {
   }
 }
 
+// the condition code of comparison op
+cond ia64_cc(u32i op) {
+  op &= ~(WIDE | TEST);
+  return op == tokd('=', '=')? je: op == tokd('!', '=')? jne:
+         op == '<'? jl: op == tokd('<', '=')? jle: op == '>'? jg: jge;
+}
+
+void ia64_flag(file* text, u32i op) {
+  iw(text, 0x900f + (ia64_cc(op) << 8)); ib(text, modrm(.mod=3, .rm=eax.reg.enc)); // setcc al
+  iw(text, 0xb60f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=eax.reg.enc));     // movzx eax, al
+}
+
+void ia64_cond(file* text, u32i op, bool hold) {
+  iw(text, 0x800f + ((ia64_cc(op) ^ !hold) << 8)); // jcc rel32, patched by mend
+  id(text, 0);
+}
+
 // eax = eax op (cnst? val: ecx), comparisons give 0 or 1; rax, rcx when WIDE.
 // A constant keeps ecx unless op divides.
 void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
@@ -245,14 +262,9 @@ void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
       break;
     case tokd('<', '<'): W; ia64_shft(text, shl, eax, src); break;
     case tokd('>', '>'): W; ia64_shft(text, sar, eax, src); break;
-    default: { // comparison: cmp; setcc al; movzx eax, al
-      op &= ~WIDE;
-      cond cc = op == tokd('=', '=')? je: op == tokd('!', '=')? jne:
-                op == '<'? jl: op == tokd('<', '=')? jle: op == '>'? jg: jge;
+    default: // comparison: cmp, then setcc al; movzx eax, al unless TEST
       W; ia64_cmp(text, eax, src);
-      iw(text, 0x900f + (cc << 8)); ib(text, modrm(.mod=3, .rm=eax.reg.enc));
-      iw(text, 0xb60f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=eax.reg.enc));
-    }
+      if(!(op & TEST)) ia64_flag(text, op);
   }
 #undef  W
 }
@@ -274,6 +286,21 @@ void ia64_swap(file* text) {
 void ia64_pull(file* text) {
   ia64_swap(text);
   ia64_pop(text, rax);
+}
+
+// scratch k is r8 + k: SysV argument and C call registers, free between calls
+void ia64_keep(file* text) {
+  ia64_push(text, rax);
+  iw(text, 0x9066);                             // xchg ax, ax: room for lift
+}
+
+void ia64_lift(file*, byte* keep, u32i k) {
+  keep[0] = 0x49; keep[1] = 0x89; keep[2] = modrm(.mod=3, .reg=eax.reg.enc, .rm=k); // mov r8+k, rax
+}
+
+void ia64_take(file* text, u32i k) {
+  ia64_swap(text);
+  ib(text, 0x4c); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=k, .rm=eax.reg.enc)); // mov rax, r8+k
 }
 
 void ia64_when(file* text, bool nz) {
@@ -345,6 +372,11 @@ void ia64_drop(file* text, byte reg) {
 
 void ia64_args(file* text, u32i i) {
   ia64_drop(text, ia64_regs[i]);
+}
+
+void ia64_pass(file* text, u32i i) {
+  byte reg = ia64_regs[i];
+  ib(text, rex(.w=1, .b=reg > 7)); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=reg & 7));
 }
 
 void ia64_open(file* text) {
@@ -457,6 +489,12 @@ const emit ia64 = {
   .link = ia64_link,
   .ffi  = ia64_ffi,
   .crt  = ia64_crt,
+  .flag = ia64_flag,
+  .cond = ia64_cond,
+  .keep = ia64_keep,
+  .lift = ia64_lift,
+  .take = ia64_take,
+  .pass = ia64_pass,
   .cpu  = cpu_ia64,
 };
 

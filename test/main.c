@@ -307,6 +307,35 @@ spec(TAG) {
                  " + (1 << 33 == 2) * 32;\n}\n");
   }
 
+  context("conditions and kept operands") {
+    it("branches on each comparison, of ints and longs")
+      expect(237, "int main() {\n  int a = 1, b = 2, r = 0;\n  long x = -1, one = 1, y = one << 32;\n"
+                  "  if(a < b) r += 1; if(a > b) r += 2; if(a <= a) r += 4; if(b >= a) r += 8;\n"
+                  "  if(a == b) r += 16; if(a != b) r += 32; if(x < y) r += 64; if(y > one) r += 128;\n"
+                  "  return r;\n}\n");
+    it("loops on a comparison of longs")
+      expect(4, "int main() {\n  long one = 1, i = one << 32, n = i + 4; int c = 0;\n"
+                "  while(i < n) { i += 1; c += 1; }\n  return c;\n}\n");
+    it("branches on comparisons joined by && and ||")
+      expect(14, "int main() {\n  int a = 1, b = 2, r = 0;\n"
+                 "  if(a < b && b < a) r += 1; if(a < b || b < a) r += 2;\n"
+                 "  if(a > b || a == 1) r += 4; if(!(a > b) && (a < b) == 1) r += 8;\n  return r;\n}\n");
+    it("uses comparisons as values")
+      expect(6, "int main() { int a = 1, b = 2; int c = a < b; return c + (b > a) * 2 + (a != b) * 3 + (a == b) * 4; }\n");
+    it("nests kept operands past the scratch registers")
+      expect(120, "int main() {\n  int a = 1;\n"
+                  "  return (a + 1) * ((a + 2) * ((a + 3) * ((a + 4) * ((a + 6) - (a + 5)))));\n}\n");
+    it("keeps operands across calls")
+      expect(33, "int f(int x) { int a = x + 1; return (a + 1) * (a - 1); }\n"
+                 "int main() {\n  int a = 1;\n"
+                 "  return (a + 1) * f(a + 2) + ((a + 2) - f(a)) * (a + 1) + f(a) * (a * 2 - 1);\n}\n");
+    it("keeps 64-bit operands whole")
+      expect(2, "int main() { long one = 1, x = one << 32; long y = (x + 1) * ((x >> 32) + 1); return y >> 32; }\n");
+    it("passes a computed last argument")
+      expect(13, "int sub(int a, int b) { return a - b; }\n"
+                 "int main() { int a = 3; return sub(30, (a + 1) * (a + 2) - 3); }\n");
+  }
+
   context("locals") {
     it("declares, assigns and reads locals")
       expect(8, "int main() {\n  int a = 2;\n  int b;\n  b = a * 3;\n  return a + b;\n}\n");

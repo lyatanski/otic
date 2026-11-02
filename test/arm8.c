@@ -44,6 +44,18 @@ spec("arm8") {
     it("swaps acc to tmp") {
       check(emits("e1 03 00 aa", e.swap(t)));          // mov x1, x0
     }
+    it("keeps acc on the stack") {
+      check(emits("e0 0f 1f f8", e.keep(t)));          // str x0, [sp, #-16]!
+    }
+    it("lifts a keep into a move to scratch x9 + k") {
+      byte* k;
+      check(emits("e9 03 00 aa", k = here, e.keep(t), e.lift(t, k, 0))); // mov x9, x0
+      check(emits("ec 03 00 aa", k = here, e.keep(t), e.lift(t, k, 3))); // mov x12, x0
+    }
+    it("takes a scratch into acc, its value to tmp") {
+      check(emits("e1 03 00 aa e0 03 09 aa", e.take(t, 0))); // mov x1, x0; mov x0, x9
+      check(emits("e1 03 00 aa e0 03 0c aa", e.take(t, 3))); // mov x1, x0; mov x0, x12
+    }
   }
 
   context("calc") {
@@ -63,6 +75,14 @@ spec("arm8") {
     it("compares into 0 or 1") {
       check(emits("1f 00 01 6b e0 c7 9f 1a", e.calc(t, tokd('<', '='), 0, 0))); // cmp w0, w1; cset w0, le
     }
+    it("compares into the flags alone for a TEST") {
+      check(emits("1f 00 01 6b", e.calc(t, tokd('<', '=') | TEST, 0, 0))); // cmp w0, w1
+      // mov w16, #5; sxtw x16, w16; cmp x0, x16
+      check(emits("b0 00 80 52 10 7e 40 93 1f 00 10 eb", e.calc(t, '<' | TEST | WIDE, 1, 5)));
+    }
+    it("turns the flags into 0 or 1") {
+      check(emits("e0 c7 9f 1a", e.flag(t, tokd('<', '='))));  // cset w0, le
+    }
   }
 
   context("branches") {
@@ -73,6 +93,13 @@ spec("arm8") {
     }
     it("branches on non zero") {
       check(emits("00 00 00 b5", e.when(t, 1)));       // cbnz x0
+    }
+    it("branches on the flags when a comparison fails, once mended") {
+      // b.ge +8; mov w0, #1
+      check(emits("4a 00 00 54 20 00 80 52", e.cond(t, '<', 0), m = here, e.move(t, 1), e.back(t, m)));
+    }
+    it("branches on the flags when a comparison holds") {
+      check(emits("0b 00 00 54", e.cond(t, '<', 1)));  // b.lt
     }
     it("jumps forward, once mended") {
       check(emits("02 00 00 14 20 00 80 52", e.jump(t), m = here, e.move(t, 1), e.back(t, m))); // b +8; mov w0, #1
@@ -98,6 +125,10 @@ spec("arm8") {
     }
     it("pops an argument into its register") {
       check(emits("e2 07 41 f8", e.args(t, 2)));       // ldr x2, [sp], #16
+    }
+    it("passes acc in an argument register, x0 as it is") {
+      check(emits("", e.pass(t, 0)));
+      check(emits("e3 03 00 aa", e.pass(t, 3)));       // mov x3, x0
     }
     it("links a call back or forward") {
       // mov sp, x29; ldp x29, x30, [sp], #16; ret; bl -12

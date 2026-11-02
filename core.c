@@ -159,8 +159,9 @@ u32i  span(meta* t) { return t? t->size: 4; }
 u32i  lean(meta* t) { return t->kind == many? lean(t->type): t->kind == list? (u32i)t->slot: t->size; }
 
 // deferred operand: code is emitted only when the value must be in acc
-typedef enum { vacc, vnum, vloc, vglo, vmem } vkind;
-// ival: value, frame slot or data offset; vmem: its address is in acc
+typedef enum { vacc, vnum, vloc, vglo, vmem, vcmp } vkind;
+// ival: value, frame slot or data offset; vmem: its address is in acc; vcmp:
+// the op of a comparison whose result is in the flags, for a branch on it
 typedef struct { vkind kind; s32i ival; meta* type; } oper;
 #define cnst(n) ((oper){vnum, (n), NULL})
 #define acc(t)  ((oper){vacc, 0, (t)})
@@ -200,6 +201,7 @@ u32i  quote(item* s, byte* out) {
 
 oper  load(mode* self, oper x) {
   meta* t = x.type;
+  if(x.kind == vcmp) { emit(self, flag, x.ival); return acc(NULL); }
   if(t && t->kind == many) { // an array is the address of its first element
     if(x.kind == vloc) emit(self, addr, x.ival);
     if(x.kind == vglo) spot(self, x.ival);
@@ -220,7 +222,7 @@ oper  load(mode* self, oper x) {
 oper  refr(mode* self, oper x) {
   if(x.kind == vloc) emit(self, addr, x.ival);
   if(x.kind == vglo) spot(self, x.ival);
-  if(x.kind == vnum || x.kind == vacc) flaw(self, "cannot take the address\n");
+  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp) flaw(self, "cannot take the address\n");
   return acc(href(self, x.type));
 }
 
@@ -276,7 +278,6 @@ s32i  fold(u32i op, s32i a, s32i b) {
 }
 
 oper  expr(mode* self, int least);
-void  eval(mode* self);
 
 // add a forward call: name, called at at with argc arguments, the C way when ext
 void  post(mode* self, item* name, byte* at, u32i argc, bool ext) {
@@ -319,25 +320,28 @@ oper  cabi(mode* self, item* name, meta* func, u32i argc) {
 }
 
 // name(args): each argument is pushed on 64 bits, then popped into its
-// register; syscall(number, args) goes to the kernel
+// register, the last one moved there from acc; syscall(number, args) goes to
+// the kernel
 oper  dial(mode* self, item* name) {
   bool  trap = name == sget(self, "syscall");
   meta* func = find(self, self->unit, name);
   u32i  argc = 0;
+  self->dials++;
   for(; !twin(self, ')'); argc++) {
-    if(argc) skip(self, ',');
+    if(argc) { skip(self, ','); emit(self, push); } // the one before
     if(argc == 6u + trap) flaw(self, "more than 6 arguments\n");
     if(!wide(load(self, expr(self, 1)).type)) emit(self, cast, 1); // a long parameter
-    emit(self, push);
   }
+  bool  ffi = func && (func->kind == pend || (func->kind == call && func->ext));
+  if(argc && (trap || ffi)) emit(self, push); // they pop all of them
   if(trap) {
     if(!argc) flaw(self, "syscall without a number\n");
     emit(self, trap, argc);
     return acc(NULL);
   }
-  if(func && (func->kind == pend || (func->kind == call && func->ext)))
-    return cabi(self, name, func, argc);
-  for(u32i i = argc; i--; ) emit(self, args, i);
+  if(ffi) return cabi(self, name, func, argc);
+  if(argc) emit(self, pass, argc - 1);
+  for(u32i i = argc? argc - 1: 0; i--; ) emit(self, args, i);
   byte* at = self->text->body;
   emit(self, dial);
   if(func) bind(self, at, name, func, argc, 0);
@@ -345,15 +349,18 @@ oper  dial(mode* self, item* name) {
   return acc(func? func->type: NULL);
 }
 
-// x before its right operand is parsed: a value in acc is pushed after the mark
-byte* keep(mode* self, oper* x) {
-  if(x->kind == vmem) *x = load(self, *x);
-  byte* mark = self->text->body;
-  if(x->kind == vacc) emit(self, push);
+// where the right operand of a pair starts, and the calls emitted before it
+typedef struct { byte* at; u32i dials; } kept;
+
+// x before its right operand is parsed: a value in acc is kept at the mark
+kept  keep(mode* self, oper* x) {
+  if(x->kind == vmem || x->kind == vcmp) *x = load(self, *x);
+  kept  mark = {self->text->body, self->dials};
+  if(x->kind == vacc) { emit(self, keep); self->held++; }
   return mark;
 }
 
-oper  pair(mode* self, u32i op, oper x, oper y, byte* mark);
+oper  pair(mode* self, u32i op, oper x, oper y, kept mark);
 
 oper  atom(mode* self) {
   u32i op = home(self)->talk.kind;
@@ -399,7 +406,7 @@ oper  atom(mode* self) {
   }
   for(;;) { // postfix: x[i] is *(x + i), x.m, x->m is (*x).m
     if(twin(self, '[')) {
-      byte* mark = keep(self, &x);
+      kept  mark = keep(self, &x);
       oper  i = expr(self, 1);
       meta* t = x.type && x.type->kind == many? x.type->type: NULL;
       skip(self, ']');
@@ -426,11 +433,12 @@ oper  both(mode* self, u32i op, oper x, int r) {
     emit(self, calc, tokd('!', '=') | wide(y.type), 1, 0);
     return acc(NULL);
   }
-  load(self, x);
-  emit(self, when, any);
+  if(x.kind == vcmp) emit(self, cond, x.ival, any);
+  else { load(self, x); emit(self, when, any); }
   mark = self->text->body;
-  y = load(self, expr(self, r + 1));
-  emit(self, calc, tokd('!', '=') | wide(y.type), 1, 0);
+  y = expr(self, r + 1);
+  if(y.kind == vcmp) load(self, y); // 0 or 1 already
+  else emit(self, calc, tokd('!', '=') | wide(load(self, y).type), 1, 0);
   emit(self, jump);
   emit(self, back, mark);
   mark = self->text->body;
@@ -446,9 +454,10 @@ void  grow(mode* self, oper x, s32i scale, u32i w) {
   if(scale != 1) emit(self, calc, '*' | WIDE, 1, scale);
 }
 
-// x op y, y parsed after mark; x was pushed there when it was in acc.
-// pointer + n moves n elements, pointer - pointer counts them; void* by bytes
-oper  pair(mode* self, u32i op, oper x, oper y, byte* mark) {
+// x op y, y parsed after mark; x was kept there when it was in acc: in a
+// scratch register unless a call came between. A comparison is left in the
+// flags. pointer + n moves n elements, pointer - pointer counts them; void* by bytes
+oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
   meta *ex = elem(x.type), *ey = elem(y.type), *t = NULL; // t: type of the result
   s32i  sx = 1, sy = 1;
   u32i  w = wide(x.type) | wide(y.type), r = rank(op);
@@ -468,20 +477,27 @@ oper  pair(mode* self, u32i op, oper x, oper y, byte* mark) {
     return cnst(fold(op, x.ival, y.ival));
   if(x.kind == vnum) { x.ival *= sx; sx = 1; }
   if(y.kind == vnum) { y.ival *= sy; sy = 1; }
+  u32i  k = x.kind == vacc? --self->held: 0; // the scratch of x, when kept
+  u32i  c = op | w | (test? TEST: 0);
 
   if(y.kind == vnum || (y.kind == vloc && (y.type->kind == base || y.type->kind == refs) && (!w || wide(y.type)))) {
-    self->text->body = mark; // y emitted nothing: drop the push
+    self->text->body = mark.at; // y emitted nothing: drop the keep
     grow(self, load(self, x), sx, w);
-    if(y.kind == vnum) emit(self, calc, op | w, 1, y.ival);
-    else { emit(self, peek, y.ival, span(y.type)); emit(self, calc, op | w, 0, 0); }
+    if(y.kind == vnum) emit(self, calc, c, 1, y.ival);
+    else { emit(self, peek, y.ival, span(y.type)); emit(self, calc, c, 0, 0); }
   }
   else {
     grow(self, load(self, y), sy, w);
-    if(x.kind == vacc) emit(self, pull);
+    if(x.kind == vacc && k < HELD && self->dials == mark.dials) {
+      emit(self, lift, mark.at, k);
+      emit(self, take, k);
+    }
+    else if(x.kind == vacc) emit(self, pull);
     else { emit(self, swap); x = load(self, x); }
     grow(self, x, sx, w);
-    emit(self, calc, op | w, 0, 0);
+    emit(self, calc, c, 0, 0);
   }
+  if(test) return (oper){vcmp, op | w, NULL};
   if(ex && ey && op == '-' && ex->size > 1) emit(self, calc, '/', 1, ex->size);
   return acc(t);
 }
@@ -502,11 +518,11 @@ u32i  sets(u32i kind) {
 // x = y, x op= y: right associative, the value is left in acc
 oper  give(mode* self, u32i op, oper x) {
   meta* t = x.type;
-  if(x.kind == vnum || x.kind == vacc || (t && (t->kind == many || t->kind == list)))
+  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || (t && (t->kind == many || t->kind == list)))
     flaw(self, "cannot assign\n");
   if(x.kind == vglo) { spot(self, x.ival); x.kind = vmem; }
   if(x.kind == vmem) emit(self, push); // the address, op= reads through it
-  byte* mark = op == '='? self->text->body: keep(self, &x);
+  kept  mark = op == '='? (kept){0}: keep(self, &x);
   oper  y = expr(self, 1);
   y = load(self, op == '='? y: pair(self, op, x, y, mark));
   if(!wide(t) != !wide(y.type)) emit(self, cast, !!wide(t));
@@ -525,15 +541,20 @@ oper  expr(mode* self, int least) {
     chop(self);
     if(op == tokd('&', '&') || op == tokd('|', '|')) { x = both(self, op, x, r); continue; }
 
-    byte* mark = keep(self, &x); // y may need acc
+    kept  mark = keep(self, &x); // y may need acc
     x = pair(self, op, x, expr(self, r + 1), mark);
   }
   return x;
 }
 
-// value of a full expression in acc
-void  eval(mode* self) {
-  load(self, expr(self, 1));
+// (condition): a branch taken when it fails, patched by back. A comparison
+// branches on its flags
+void  gate(mode* self) {
+  skip(self, '(');
+  oper  x = expr(self, 1);
+  skip(self, ')');
+  if(x.kind == vcmp) emit(self, cond, x.ival, 0);
+  else { load(self, x); emit(self, when, 0); }
 }
 
 #define seed(self, ...) {\
@@ -750,8 +771,7 @@ void  stmt(mode* self) {
   else if(same(self, "if")) {
     byte* mark = NULL;
     chop(self);
-    skip(self, '('); eval(self); skip(self, ')');
-    emit(self, when, 0);
+    gate(self);
     mark = self->text->body; // end of the branch, the arch patches backwards
     stmt(self);
     if(same(self, "else")) {
@@ -766,8 +786,7 @@ void  stmt(mode* self) {
   else if(same(self, "while")) {
     byte* cond = self->text->body;
     chop(self);
-    skip(self, '('); eval(self); skip(self, ')');
-    emit(self, when, 0);
+    gate(self);
     byte* out = self->text->body;
     iter(self, cond);
     emit(self, back, out);
