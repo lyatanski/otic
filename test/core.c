@@ -25,6 +25,7 @@ static char  trace[8192];
 static u32i  traced;
 static u32i  calls[32]; // per op, the calls made
 static u32i  shows, packs, takes;
+static u64i  laid; // data bytes when shown: make frees data after show
 
 #define OPS(X) X(move) X(load) X(stor) X(peek) X(addr) X(glob) X(site) X(read) \
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
@@ -125,7 +126,7 @@ static file* mock_scan(char* path) {
 }
 static void* mock_hold(void*, size_t size)    { return malloc(size); }
 static void* mock_drop(void*, size_t)         { return NULL; } // text: freed by the next make_
-static void  mock_show(mode*)                 { shows++; }
+static void  mock_show(mode* m)               { shows++; laid = m->data->body - m->data->head; }
 
 static mode self;
 
@@ -139,7 +140,7 @@ static int  make_(char* src) {
   free(self.text);
   memset(&self, 0, sizeof self);
   memset(calls, 0, sizeof calls);
-  traced = shows = packs = takes = 0;
+  traced = shows = packs = takes = laid = 0;
   trace[0] = said[0] = 0;
   self = (mode){
     .name = "main.c",
@@ -288,7 +289,7 @@ spec("core") {
     it("addresses a global through glob, patched later") {
       check(compiles("int g = 7; int main() { return g; }"));
       check(has("glob, read 4") && self.seats == 1);
-      check(self.data->body - self.data->head >= 4);
+      check(laid >= 4);
     }
   }
 

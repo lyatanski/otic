@@ -220,14 +220,14 @@ static bool is(char* x, char* y) {
 static void arch(mode* self, opts*, char* para) {
   if(is(para, "ia64")) self->arch = ia64;
   else if(is(para, "arm8")) self->arch = arm8;
-  else printf("architecture '%s' not supported\n", para);
+  else fail("architecture '%s' not supported\n", para);
 }
 
 static void wrap(mode* self, opts*, char* para) {
   if(is(para, "elfs")) self->form = elfs;
   else if(is(para, "mach")) self->form = mach;
   else if(is(para, "pe32")) self->form = pe32;
-  else printf("form '%s' not supported\n", para);
+  else fail("form '%s' not supported\n", para);
 }
 
 static void dest(mode* self, opts*, char* para) {
