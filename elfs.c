@@ -61,7 +61,7 @@ typedef struct {
 // starts at the alignment objects ask for, data and bss at gap
 file* elfs_pack(mode* self) {
   const u64i org  = 0x400000;
-  const u64i step = gap(self);
+  const u64i step = self->core.gap(self);
   const u64i code = self->text->body - self->text->head;
   const u64i size = self->data->body - self->data->head;
   const u64i data = (code + step - 1) & -step; // data after text in the file
@@ -69,7 +69,7 @@ file* elfs_pack(mode* self) {
   const u64i head = sizeof(elfs_id) + sizeof(eh64) + nph * sizeof(ph64);
   const u64i top  = self->most? (head + self->most - 1) & -(u64i)self->most: head;
   const u64i all  = top + (nph > 1? data + size: code);
-  dock(self, data + 0x10000, org + top);
+  self->core.dock(self, data + 0x10000, org + top);
 
   elfs_id id = {
     .seal   = {0x7f, 'E', 'L', 'F'},
@@ -141,7 +141,7 @@ static char* elfs_str(byte* o, sh64* tab, u64i at) {
 static item* elfs_name(mode* self, byte* o, sh64* str, sym64* s) {
   char* at = elfs_str(o, str, s->name);
   u64i  len = slen(at);
-  return len? hget(self, self->unit, at, len): NULL;
+  return len? self->core.name(self, self->unit, at, len): NULL;
 }
 
 // a relocatable object, the unit being joined, aligned for its headers, NUL
@@ -192,7 +192,7 @@ void elfs_take(mode* self, file* f) {
       put[i] = (seat){t->head + at, 0};
       t->body = copy(put[i].at, o + s->offset, s->type == SHT_NOBITS? 0: s->size);
     } else {
-      put[i].off = lay(self, s->size, s->type == SHT_NOBITS, a);
+      put[i].off = self->core.lay(self, s->size, s->type == SHT_NOBITS, a);
       if(s->type != SHT_NOBITS) copy(self->data->head + put[i].off, o + s->offset, s->size);
     }
   }
@@ -219,8 +219,8 @@ void elfs_take(mode* self, file* f) {
     if(s->bind == STB_LOCAL || s->shidx == SHN_UNDEF || s->shidx == SHN_ABS) continue;
     item*  name = elfs_name(self, o, str, s);
     if(!name) continue;
-    meta*  prev = find(self, 0, name);
-    u32i   held = prev? heft(prev): 0;
+    meta*  prev = self->core.find(self, 0, name);
+    u32i   held = prev? self->core.heft(prev): 0;
     meta   x = {.name = name, .kind = glob, .unit = self->unit,
                 .weak = s->bind == STB_WEAK || s->shidx == SHN_COMMON};
     if(held > 2 && x.weak) continue;
@@ -230,7 +230,7 @@ void elfs_take(mode* self, file* f) {
       u64i a = s->value? s->value: 1;
       if(a > 4096 || a & (a - 1) || s->size >> 30) flop("bad common symbol\n");
       if(a > self->most) self->most = a;
-      x.slot = lay(self, s->size, 1, a);
+      x.slot = self->core.lay(self, s->size, 1, a);
     } else {
       if(s->shidx >= n || put[s->shidx].off == GONE.off)
         flop("'%.*s' is in a section left out\n", nick(name));
@@ -245,8 +245,8 @@ void elfs_take(mode* self, file* f) {
     sym64* s = sym + i;
     if(s->bind != STB_GLOBAL || s->shidx != SHN_UNDEF) continue;
     item*  name = elfs_name(self, o, str, s);
-    meta*  m = name && !name->data? find(self, self->unit, name): NULL;
-    if(m && m->kind == pend) ask(self, m);
+    meta*  m = name && !name->data? self->core.find(self, self->unit, name): NULL;
+    if(m && m->kind == pend) self->core.ask(self, m);
   }
 
   // references: by name to globals, which a later definition may replace

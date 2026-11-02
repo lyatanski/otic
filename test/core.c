@@ -13,6 +13,7 @@ static char    said[256]; // what fail said
 #undef  fail
 #define fail(...) (snprintf(said, sizeof said, __VA_ARGS__), longjmp(bail, 1))
 
+#include "../util.c"
 #include "../core.c"
 #include "../hash.c"
 #include "../link.c"

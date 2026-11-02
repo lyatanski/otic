@@ -5,13 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h> // test.h's, before the encoder: its macros clash with system headers
-#include "../core.h"
-
-// core's, the only part of it an encoder uses
-byte* copy(byte* dst, void* src, u64i size) {
-  memcpy(dst, src, size);
-  return dst + size;
-}
+#include "../util.c"
 
 static byte  text[4096];
 static file* t = (file*)text;

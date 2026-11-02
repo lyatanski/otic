@@ -11,6 +11,7 @@
 
 // after the system headers: macros of the parts (arm8.c X) clash with them
 #ifndef part
+#include "util.c"
 #include "core.c"
 #include "hash.c"
 #include "link.c"
@@ -211,21 +212,21 @@ static void help(mode*, opts* self, char*) {
   exit(0);
 }
 
-int  scmp(char* x, char* y) {
-  while(x && y && *x && *y && *x==*y) {x++; y++;}
-  return (!x || !y)? 1: *x - *y;
+// x is the string y, none when y is NULL
+static bool is(char* x, char* y) {
+  return y && alike(x, y, slen(y) + 1);
 }
 
 static void arch(mode* self, opts*, char* para) {
-  if(!scmp(para, "ia64")) self->arch = ia64;
-  else if(!scmp(para, "arm8")) self->arch = arm8;
+  if(is(para, "ia64")) self->arch = ia64;
+  else if(is(para, "arm8")) self->arch = arm8;
   else printf("architecture '%s' not supported\n", para);
 }
 
 static void wrap(mode* self, opts*, char* para) {
-  if(!scmp(para, "elfs")) self->form = elfs;
-  else if(!scmp(para, "mach")) self->form = mach;
-  else if(!scmp(para, "pe32")) self->form = pe32;
+  if(is(para, "elfs")) self->form = elfs;
+  else if(is(para, "mach")) self->form = mach;
+  else if(is(para, "pe32")) self->form = pe32;
   else printf("form '%s' not supported\n", para);
 }
 
@@ -243,8 +244,8 @@ static void seek(mode* self, opts*, char* para) {
 // members are object files
 static void apos(mode* self, opts*, char* para) {
   u64i n = slen(para);
-  if(n > 2 && !scmp(para + n - 2, ".o")) bolt(self, para, un_objs);
-  else if(n > 2 && !scmp(para + n - 2, ".a")) bolt(self, para, un_arch);
+  if(n > 2 && is(para + n - 2, ".o")) bolt(self, para, un_objs);
+  else if(n > 2 && is(para + n - 2, ".a")) bolt(self, para, un_arch);
   else self->name = para;
 }
 
@@ -252,10 +253,11 @@ static void parse(mode* self, opts* opt, int argc, char** argv, move call) {
   for(int i = 1; i < argc; i++) {
     bool match = 0;
     for(opts* back = opt; back->name; back++) {
-      if(!scmp(argv[i], back->name) || !scmp(argv[i], back->full)) {
+      if(is(argv[i], back->name) || is(argv[i], back->full)) {
         match = 1;
         if(back->call) {
-          if(back->args) back->call(self, opt, argv[++i]);
+          if(back->args && ++i == argc) fail("%s needs an argument\n", argv[i - 1]);
+          if(back->args) back->call(self, opt, argv[i]);
           else back->call(self, opt, NULL);
         }
       }

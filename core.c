@@ -8,30 +8,6 @@ enum { tend, ttag, tnum };
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
 
-byte* copy(byte* dst, void* src, u64i size) {
-  for(byte* s = src; size--; *dst++ = *s++);
-  return dst;
-}
-
-u64i  slen(char* s) {
-  u64i n = 0;
-  while(s[n]) n++;
-  return n;
-}
-
-void* swell(void* p, u32i n, u32i* cap, u64i size, u32i least) {
-  if(n < *cap) return p;
-  *cap = *cap * 2 + least;
-  if(!(p = realloc(p, *cap * size))) fail("out of memory\n");
-  return p;
-}
-
-bool  alike(void* x, void* y, u64i size) {
-  byte *a = x, *b = y;
-  for(; size && *a == *b; size--, a++, b++);
-  return !size;
-}
-
 void chop(mode* self) {
   s64i  ival = 0;
   s64i  fval = 0;
@@ -996,6 +972,7 @@ void  make(mode* self) {
   //      | variable
   //      | typedecl
 
+  self->core = (core){dock, gap, lay, hget, find, heft, ask};
   self->text = (file*)self->hold(0, TEXT);
   self->text->body = self->text->head;
   self->text->tail = (byte*)self->text + TEXT;

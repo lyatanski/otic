@@ -180,6 +180,22 @@ typedef struct {
   bool  load; // a GOT load made a REX lea: mov reg, 0 for address 0
 } hook;
 
+// what a form may ask of the front end: make fills it in, a spec mocks it.
+// dock lays data out at text + at, bss after it, text at org; gap is the
+// alignment of data and of bss after it; lay makes room for size bytes in
+// data, or in bss (| ZERO) when zero. An object is taken into the unit being
+// joined: name is a spelling in the table of unit at, find what it means
+// there, heft how firmly x defines it, ask pulls the archive member of x
+typedef struct {
+  void  (*dock)(mode*, u64i at, u64i org);
+  u64i  (*gap)(mode*);
+  u32i  (*lay)(mode*, u32i size, bool zero, u32i align);
+  item* (*name)(mode*, u32i at, char* mark, u64i size);
+  meta* (*find)(mode*, u32i at, item* name);
+  u32i  (*heft)(meta* x);
+  u32i  (*ask)(mode*, meta* x);
+} core;
+
 struct mode {
   char* name; // input
   char* outp; // output
@@ -190,6 +206,7 @@ struct mode {
                // items in join order (item.next)
   emit  arch;
   form  form;
+  core  core; // for the form
 
   file* text; // binary code
   byte* main; // entry of main in text
