@@ -541,9 +541,9 @@ static file* elfs_dyno(mode* self) {
   const u64i rw   = (top + code + 7) & -8;
   const u64i dat  = (rw + ndyn * sizeof(dyn64) + step - 1) & -step;
   const u64i bss  = ((size + step - 1) & -step), slots = bss + ((self->zero + 7) & -8);
-  const u64i far  = 0x10000;
+  const u64i skew = 0x10000;
   const u64i shoff = (dat + size + sizeof names + 7) & -8, all = shoff + s_all * sizeof(sh64);
-  self->core.dock(self, dat + far - top, top);
+  self->core.dock(self, dat + skew - top, top);
 
   elfs_id id = {.seal = {0x7f, 'E', 'L', 'F'}, .bits = eb_cl64, .data = ed_2lsb, .issue = ev_curr};
   eh64 eh = {
@@ -561,9 +561,9 @@ static file* elfs_dyno(mode* self) {
   };
   ph64 ph[] = {
     {.type = PT_LOAD, .flags = 5, .filesz = top + code, .memsz = top + code, .align = 0x1000},
-    {.type = PT_LOAD, .flags = 6, .offset = rw, .vaddr = rw + far, .paddr = rw + far,
-     .filesz = dat + size - rw, .memsz = dat - rw + slots + 8 * self->impn, .align = far},
-    {.type = PT_DYNAMIC, .flags = 6, .offset = rw, .vaddr = rw + far, .paddr = rw + far,
+    {.type = PT_LOAD, .flags = 6, .offset = rw, .vaddr = rw + skew, .paddr = rw + skew,
+     .filesz = dat + size - rw, .memsz = dat - rw + slots + 8 * self->impn, .align = skew},
+    {.type = PT_DYNAMIC, .flags = 6, .offset = rw, .vaddr = rw + skew, .paddr = rw + skew,
      .filesz = ndyn * sizeof(dyn64), .memsz = ndyn * sizeof(dyn64), .align = 8},
     {.type = PT_GNU_STACK, .flags = 6, .align = 16},
   };
@@ -582,11 +582,11 @@ static file* elfs_dyno(mode* self) {
      .link = s_sym, .align = 8, .entsize = sizeof(rela64)},
     {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_EXECINSTR, .addr = top, .offset = top, .size = code,
      .align = step},
-    {.type = SHT_DYNAMIC, .flags = SHF_ALLOC | SHF_WRITE, .addr = rw + far, .offset = rw,
+    {.type = SHT_DYNAMIC, .flags = SHF_ALLOC | SHF_WRITE, .addr = rw + skew, .offset = rw,
      .size = sizeof dyn, .link = s_str, .align = 8, .entsize = sizeof(dyn64)},
-    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + far, .offset = dat, .size = size,
+    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + skew, .offset = dat, .size = size,
      .align = step},
-    {.type = SHT_NOBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + far + bss, .offset = dat + size,
+    {.type = SHT_NOBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + skew + bss, .offset = dat + size,
      .size = slots - bss + 8 * self->impn, .align = step},
     {.type = SHT_STRTAB, .offset = dat + size, .size = sizeof names, .align = 1},
   };
@@ -601,7 +601,7 @@ static file* elfs_dyno(mode* self) {
   h[1] = nsym;
   h[2] = nsym > 1;
   for(u32i i = 1; i + 1 < nsym; i++) h[3 + i] = i + 1;
-  elfs_syms_put(self, &t, (sym64*)(o + dsym) + 1, o + dstr, 1, top, dat + far, dat + far + bss,
+  elfs_syms_put(self, &t, (sym64*)(o + dsym) + 1, o + dstr, 1, top, dat + skew, dat + skew + bss,
                 s_text, s_data, s_bss);
   copy(o + dstr + t.strs, soname, sonamen);
   rela64* r = (rela64*)(o + drel);
@@ -609,10 +609,10 @@ static file* elfs_dyno(mode* self) {
     if(c->kind != cd_wide || c->name) continue;
     u64i a;
     copy((byte*)&a, self->data->head + c->site.off, sizeof(a));
-    *r++ = (rela64){dat + far + c->site.off, arm? R_AARCH64_RELATIVE: R_X86_64_RELATIVE, 0, a};
+    *r++ = (rela64){dat + skew + c->site.off, arm? R_AARCH64_RELATIVE: R_X86_64_RELATIVE, 0, a};
   }
   for(u32i i = 0; i < self->impn; i++)
-    *r++ = (rela64){dat + far + slots + 8 * i, arm? R_AARCH64_GLOB_DAT: R_X86_64_GLOB_DAT,
+    *r++ = (rela64){dat + skew + slots + 8 * i, arm? R_AARCH64_GLOB_DAT: R_X86_64_GLOB_DAT,
                     1 + t.ndef + elfs_need(self, &t, self->imps[i]->name, 0, 0), 0};
   copy(o + top, self->text->head, code);
   copy(o + rw, dyn, sizeof dyn);
