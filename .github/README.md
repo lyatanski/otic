@@ -33,6 +33,48 @@ chmod +x hello && ./hello
 | `-p`, `--path` | directory to look for libraries |
 | `-h`, `--help` | display help |
 
+## Language
+
+Source files are linked with `link` and shared libraries are loaded with
+`load`, instead of a preprocessor.
+
+```c
+// vec.c
+struct vec { int x; int y; };
+
+int dot(vec* a, vec* b) { return a->x * b->x + a->y * b->y; }
+```
+
+```c
+// hello.c
+load "c";                    // a shared library: libc
+int printf(char* f, ...);    // its functions, declared after the load
+
+link "vec";                  // vec.c beside this file, compiled once
+
+struct node { int v; node* next; };   // a struct names a type, no typedef
+
+int sum(node* n) {
+  int s = 0;
+  while(n) { s += n->v; n = n->next; }
+  return s;
+}
+
+int main() {
+  node c = {3}, b = {2, &c}, a = {.next = &b, .v = 1};
+  int t[4] = {[2] = 0b101, 0o17};
+  vec p = {1, 2};
+  printf("%d %d %d\n", sum(&a), t[2] + t[3], dot(&p, &(vec){3, 4}));
+  return 0;
+}
+```
+
+- types: `void`, `bool`, `byte`, `char`, `nu16`, `int`, `long`, pointers,
+  arrays, structs (anonymous, bit-fields)
+- statements: `when`/`else`, `while`, `break`, `skip`, `return`
+- initializers with designators, compound literals, `static`, `extern`
+- `syscall(n, ...)` goes straight to the kernel
+
 ## Tests
 
 ```sh

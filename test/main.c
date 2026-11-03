@@ -304,16 +304,16 @@ spec(TAG) {
       expect(15, "int main() { return 0o17; }\n");
   }
 
-  context("if") {
+  context("when") {
     it("takes a true branch")
-      expect(4, "int main() {\n  if(3) return 4;\n  else return 2;\n  return 42;\n}\n");
+      expect(4, "int main() {\n  when(3) return 4;\n  else return 2;\n  return 42;\n}\n");
     it("takes a false branch")
-      expect(2, "int main() {\n  if(0) return 4;\n  else return 2;\n}\n");
+      expect(2, "int main() {\n  when(0) return 4;\n  else return 2;\n}\n");
     it("nests")
-      expect(7, "int main() {\n  if(1) {\n    if(0) return 5;\n    return 7;\n  }\n"
+      expect(7, "int main() {\n  when(1) {\n    when(0) return 5;\n    return 7;\n  }\n"
                 "  return 9;\n}\n");
     it("tests an expression")
-      expect(7, "int main() {\n  if(2 > 1 && 3) return 7;\n  return 9;\n}\n");
+      expect(7, "int main() {\n  when(2 > 1 && 3) return 7;\n  return 9;\n}\n");
   }
 
   context("expressions folded") {
@@ -386,16 +386,16 @@ spec(TAG) {
   context("conditions and kept operands") {
     it("branches on each comparison, of ints and longs")
       expect(237, "int main() {\n  int a = 1, b = 2, r = 0;\n  long x = -1, one = 1, y = one << 32;\n"
-                  "  if(a < b) r += 1; if(a > b) r += 2; if(a <= a) r += 4; if(b >= a) r += 8;\n"
-                  "  if(a == b) r += 16; if(a != b) r += 32; if(x < y) r += 64; if(y > one) r += 128;\n"
+                  "  when(a < b) r += 1; when(a > b) r += 2; when(a <= a) r += 4; when(b >= a) r += 8;\n"
+                  "  when(a == b) r += 16; when(a != b) r += 32; when(x < y) r += 64; when(y > one) r += 128;\n"
                   "  return r;\n}\n");
     it("loops on a comparison of longs")
       expect(4, "int main() {\n  long one = 1, i = one << 32, n = i + 4; int c = 0;\n"
                 "  while(i < n) { i += 1; c += 1; }\n  return c;\n}\n");
     it("branches on comparisons joined by && and ||")
       expect(14, "int main() {\n  int a = 1, b = 2, r = 0;\n"
-                 "  if(a < b && b < a) r += 1; if(a < b || b < a) r += 2;\n"
-                 "  if(a > b || a == 1) r += 4; if(!(a > b) && (a < b) == 1) r += 8;\n  return r;\n}\n");
+                 "  when(a < b && b < a) r += 1; when(a < b || b < a) r += 2;\n"
+                 "  when(a > b || a == 1) r += 4; when(!(a > b) && (a < b) == 1) r += 8;\n  return r;\n}\n");
     it("uses comparisons as values")
       expect(6, "int main() { int a = 1, b = 2; int c = a < b; return c + (b > a) * 2 + (a != b) * 3 + (a == b) * 4; }\n");
     it("nests kept operands past the scratch registers")
@@ -442,7 +442,7 @@ spec(TAG) {
     it("calls a function defined later")
       expect(9, "int main() { return twice(4) + 1; }\nint twice(int x) { return x + x; }\n");
     it("recurses")
-      expect(144, "int fib(int n) {\n  if(n < 2) return n;\n"
+      expect(144, "int fib(int n) {\n  when(n < 2) return n;\n"
                   "  return fib(n - 1) + fib(n - 2);\n}\n"
                   "int main() { return fib(12); }\n");
     it("keeps partial results across calls")
@@ -473,16 +473,16 @@ spec(TAG) {
       expect(55, "int main() {\n  int s = 0;\n  int i = 1;\n"
                  "  while(i <= 10) { s += i; i += 1; }\n  return s;\n}\n");
     it("has no for")
-      expect(bad, "int main() { int i = 0; for(;;) { i += 1; if(i == 9) break; } return i; }\n");
-    it("continues while at its condition")
+      expect(bad, "int main() { int i = 0; for(;;) { i += 1; when(i == 9) break; } return i; }\n");
+    it("skips to the condition of a while")
       expect(18, "int main() {\n  int i = 0; int s = 0;\n"
-                 "  while(i < 10) { i += 1; if(i % 3) continue; s += i; }\n  return s;\n}\n");
+                 "  while(i < 10) { i += 1; when(i % 3) skip; s += i; }\n  return s;\n}\n");
     it("breaks the inner loop only")
       expect(6, "int main() {\n  int n = 0; int i = 0;\n  while(i < 3) {\n    int j = 0;\n"
-                "    while(1) { if(j == 2) break; j += 1; n += 1; }\n    i += 1;\n  }\n"
+                "    while(1) { when(j == 2) break; j += 1; n += 1; }\n    i += 1;\n  }\n"
                 "  return n;\n}\n");
     it("jumps over 127 bytes")
-      expect(1, "int main() {\n  if(1) { " RET5 RET5 RET5 RET5 RET5 "}\n  return 0;\n}\n");
+      expect(1, "int main() {\n  when(1) { " RET5 RET5 RET5 RET5 RET5 "}\n  return 0;\n}\n");
     it("loops back over 127 bytes")
       expect(50, "int main() {\n  int s = 0;\n  int i = 0;\n"
                  "  while(i < 2) { " ADD5 ADD5 ADD5 ADD5 ADD5 "i += 1; }\n  return s;\n}\n");
@@ -689,8 +689,8 @@ spec(TAG) {
       expect(9, "link \"one-a\";\nlink \"one-b\";\nint main() { return a() + b(); }\n");
     }
     it("links modules in a cycle") {
-      module("cyc-a", "link \"cyc-b\";\nint a(int n) { if(n) return b(n - 1) + 2; return 0; }\n");
-      module("cyc-b", "link \"cyc-a\";\nint b(int n) { if(n) return a(n - 1) + 1; return 0; }\n");
+      module("cyc-a", "link \"cyc-b\";\nint a(int n) { when(n) return b(n - 1) + 2; return 0; }\n");
+      module("cyc-b", "link \"cyc-a\";\nint b(int n) { when(n) return a(n - 1) + 1; return 0; }\n");
       expect(6, "link \"cyc-a\";\nint main() { return a(4); }\n");
     }
     it("finds a module beside the one that links it") {
@@ -799,7 +799,7 @@ spec(TAG) {
         "char low(long x) { char r; __asm__(\"mov %1, %q0\" : \"=r\"(r) : \"r\"(x)); return r; }\n",
         NULL});
       expect(2, "link \"ar-cut\";\nint cut(long x);\nchar low(long x);\nint main() { long b = 65536; b = b * 65536; int r = 0;\n"
-                "  if(cut(b)) r = 1;\n  return r + (low(511) == 255) * 2;\n}\n");
+                "  when(cut(b)) r = 1;\n  return r + (low(511) == 255) * 2;\n}\n");
     }
     elfs_it("takes the result type of C code from a prototype") {
       archive("libar-long", (char*[]){"long big(void) { return 1L << 40; }\n", NULL});
@@ -1035,8 +1035,8 @@ spec(TAG) {
       expect(bad, "int main() { return f(1, 2, 3, 4, 5, 6, 7); }\n");
     it("rejects break outside a loop")
       expect(bad, "int main() { break; }\n");
-    it("rejects continue outside a loop")
-      expect(bad, "int main() { if(1) continue; }\n");
+    it("rejects skip outside a loop")
+      expect(bad, "int main() { when(1) skip; }\n");
     it("rejects dereferencing a non-pointer")
       expect(bad, "int main() { int a; return *a; }\n");
     it("rejects taking the address of a value")

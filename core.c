@@ -987,7 +987,7 @@ meta* bulk(mode* self, item* name) {
 
 void  stmt(mode* self);
 
-// loop body: continue jumps back to again, break past the loop
+// loop body: skip jumps back to again, break past the loop
 void  iter(mode* self, byte* again) {
   byte* cont = self->cont;
   u32i  ends = self->ends;
@@ -1011,7 +1011,7 @@ void  stmt(mode* self) {
     vars(self);
     return; // the names stay in the enclosing scope
   }
-  else if(same(self, "if")) {
+  else if(same(self, "when")) {
     byte* mark = NULL;
     chop(self);
     gate(self);
@@ -1042,9 +1042,9 @@ void  stmt(mode* self) {
     emit(self, jump);
     self->quit[self->ends++] = self->text->body;
   }
-  else if(same(self, "continue")) {
+  else if(same(self, "skip")) {
     chop(self); skip(self, ';');
-    if(!self->cont) flaw(self, "continue outside a loop\n");
+    if(!self->cont) flaw(self, "skip outside a loop\n");
     emit(self, loop, self->cont);
   }
   else if(same(self, "return")) {

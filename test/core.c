@@ -324,7 +324,7 @@ spec("core") {
 
   context("statements") {
     it("branches on the flags of a comparison") {
-      check(compiles("int main() { int a = 1; if(a < 2) return 2; return 3; }"));
+      check(compiles("int main() { int a = 1; when(a < 2) return 2; return 3; }"));
       check(has("load -8:4, calc.t < 2, cond !<, move 2, done, back cond") && calls[op_flag] == 0);
     }
     it("loops on the flags of a comparison") {
@@ -332,7 +332,7 @@ spec("core") {
       check(has("load -8:4, calc.t > 0, cond !>,") && has("loop load, back cond"));
     }
     it("compares longs on 64 bits") {
-      check(compiles("int main() { long a = 1; if(a == 2) return 2; return 3; }"));
+      check(compiles("int main() { long a = 1; when(a == 2) return 2; return 3; }"));
       check(has("calc.w.t == 2, cond !=="));
     }
     it("turns the flags into a value when it is not a condition") {
@@ -340,15 +340,15 @@ spec("core") {
       check(has("calc.t < 2, flag <, done"));
     }
     it("branches on each comparison of && and ||") {
-      check(compiles("int main() { int a = 1; if(a < 2 && a > 0) return 2; return 3; }"));
+      check(compiles("int main() { int a = 1; when(a < 2 && a > 0) return 2; return 3; }"));
       check(has("calc.t < 2, cond !<,") && has("calc.t > 0, flag >, jump") && calls[op_when] == 1);
     }
-    it("branches over an if, patching the branch after its body") {
-      check(compiles("int main() { int a = 1; if(a) return 2; return 3; }"));
+    it("branches over a when, patching the branch after its body") {
+      check(compiles("int main() { int a = 1; when(a) return 2; return 3; }"));
       check(has("when z, move 2, done, back when"));
     }
     it("jumps over the else") {
-      check(compiles("int main() { int a = 1; if(a) return 2; else return 3; }"));
+      check(compiles("int main() { int a = 1; when(a) return 2; else return 3; }"));
       check(has("when z, move 2, done, jump, back when, move 3, done, back jump"));
     }
     it("loops back to the condition of a while") {
@@ -356,7 +356,7 @@ spec("core") {
       check(has("load -8:4, when z,") && has("loop load, back when"));
     }
     it("patches each break past the loop") {
-      check(compiles("int main() { int a = 3; while(a) { if(a) break; break; } return a; }"));
+      check(compiles("int main() { int a = 3; while(a) { when(a) break; break; } return a; }"));
       check(calls[op_jump] == 2 && has("loop load, back jump, back jump, back when"));
     }
     it("fails on break outside a loop") {
