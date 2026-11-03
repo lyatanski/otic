@@ -25,7 +25,7 @@ u64i  tidy(char* path, u64i size) {
 
 // the file name with end e (".c", ".o", or ".a" as libname.a) in dir, or
 // beside this source when dir is NULL, joined as a unit: 0 when it is not there
-static bool near(mode* self, item* s, char* dir, u32i e) {
+static bool nigh(mode* self, item* s, char* dir, u32i e) {
   static char* const ends[] = {".c", ".o", ".a"};
   char* at = dir? dir: home(self)->path;
   u32i  d = 0, n = quote(s, NULL) - 1, b = 0, lib = e == 2? 3: 0;
@@ -53,11 +53,11 @@ static bool near(mode* self, item* s, char* dir, u32i e) {
 // comes before the host's library, so running and writing a file pick the
 // same module
 void  haul(mode* self, item* s) {
-  for(u32i e = 0; e < 3; e++) if(near(self, s, NULL, e)) return;
+  for(u32i e = 0; e < 3; e++) if(nigh(self, s, NULL, e)) return;
   for(u32i i = 0; i < self->dirn; i++)
-    for(u32i e = 0; e < 2; e++) if(near(self, s, self->dirs[i], e)) return;
+    for(u32i e = 0; e < 2; e++) if(nigh(self, s, self->dirs[i], e)) return;
   if(self->have && self->have(s)) { home(self)->from = rack(self, s); return; }
-  for(u32i i = 0; i < self->dirn; i++) if(near(self, s, self->dirs[i], 2)) return;
+  for(u32i i = 0; i < self->dirn; i++) if(nigh(self, s, self->dirs[i], 2)) return;
   flaw(self, "cannot find %.*s\n", nick(s));
 }
 
