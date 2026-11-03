@@ -13,6 +13,7 @@ do
     gcc -Dpart -Wall -Wextra -c -ggdb -O0 -o$dst $src || exit $?
   link="$link $dst"
 done
+gcc -o$out/tic $link
 
 echo "--- test"
 for spec in core ia64 arm8 elfs mach pe32; do
