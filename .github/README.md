@@ -30,7 +30,7 @@ chmod +x hello && ./hello
 | `-f`, `--form` | binary format: `elfs`, `mach`, `pe32` |
 | `-e`, `--emit` | write a file instead of running the code |
 | `-s`, `--static` | without `main`, write an object instead of a shared library |
-| `-p`, `--path` | directory to look for libraries |
+| `-p`, `--path` | directory to look for modules (`.c`, `.o`) and libraries |
 | `-h`, `--help` | display help |
 
 ## Language

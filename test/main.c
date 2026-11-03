@@ -51,6 +51,16 @@
 enum { bad = INT_MIN, odd }; // compile error, no result (crash, timeout, ...)
 
 static char src_at[64], exe_at[64];
+static char* dirs_at[3]; // -p directories for the cases, NULL ended
+
+// head (NULL ended) then a -p for each of dirs_at, in args
+static char** with(char** args, char** head) {
+  char** a = args;
+  while(*head) *a++ = *head++;
+  for(char** d = dirs_at; *d; d++) { *a++ = "-p"; *a++ = *d; }
+  *a = NULL;
+  return args;
+}
 
 // run args[0] with stdout on fd for at most 5s: its exit status, or -1 when
 // it was killed
@@ -95,7 +105,8 @@ static char* tic(void) {
 static int  jit(void) {
   int fd[2];
   if(pipe(fd)) return odd;
-  int code = spawn(fd[1], (char*[]){tic(), src_at, NULL});
+  char* args[16];
+  int code = spawn(fd[1], with(args, (char*[]){tic(), src_at, NULL}));
   close(fd[1]);
   char out[256], *last = out;
   int n = read(fd[0], out, sizeof out - 1);
@@ -113,7 +124,8 @@ static int  jit(void) {
 static int  exe(void) {
   int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
-  int code = spawn(null, (char*[]){tic(), "-e", exe_at, src_at, NULL});
+  char* args[16];
+  int code = spawn(null, with(args, (char*[]){tic(), "-e", exe_at, src_at, NULL}));
   close(null);
   if(code == 1) return access(exe_at, F_OK)? bad: odd; // and no executable
   if(code || chmod(exe_at, 0755)) return odd;
@@ -770,6 +782,45 @@ spec(TAG) {
       module("dot-a", "link \"sub/dot-b\";\nint a() { return b() + 1; }\n");
       module("sub/dot-b", "link \"../dot-a\";\nint b() { return 2; }\n");
       expect(3, "link \"dot-a\";\nlink \"./dot-a\";\nint main() { return a(); }\n");
+    }
+    it("finds a module in a -p directory") {
+      mkdir("bins/plat-a", 0755);
+      module("plat-a/pio", "int pio() { return 4; }\n");
+      dirs_at[0] = "bins/plat-a";
+      expect(4, "link \"pio\";\nint main() { return pio(); }\n");
+      dirs_at[0] = NULL;
+    }
+    it("takes a module from the first -p directory that has it") {
+      mkdir("bins/plat-a", 0755);
+      mkdir("bins/plat-b", 0755);
+      module("plat-a/pio", "int pio() { return 4; }\n");
+      module("plat-b/pio", "int pio() { return 5; }\n");
+      dirs_at[0] = "bins/plat-b/", dirs_at[1] = "bins/plat-a";
+      expect(5, "link \"pio\";\nint main() { return pio(); }\n");
+      dirs_at[0] = dirs_at[1] = NULL;
+    }
+    it("prefers a module beside the source to one in a -p directory") {
+      mkdir("bins/plat-a", 0755);
+      module("plat-a/pnear", "int pnear() { return 4; }\n");
+      module("pnear", "int pnear() { return 6; }\n");
+      dirs_at[0] = "bins/plat-a";
+      expect(6, "link \"pnear\";\nint main() { return pnear(); }\n");
+      dirs_at[0] = NULL;
+    }
+    it("finds the links of a -p module beside it") {
+      mkdir("bins/plat-a", 0755);
+      module("plat-a/pout", "link \"pin\";\nint pout() { return pin() + 1; }\n");
+      module("plat-a/pin", "int pin() { return 2; }\n");
+      dirs_at[0] = "bins/plat-a";
+      expect(3, "link \"pout\";\nint main() { return pout(); }\n");
+      dirs_at[0] = NULL;
+    }
+    it("prefers a module in a -p directory to a host library") {
+      mkdir("bins/plat-a", 0755);
+      module("plat-a/m", "int m3() { return 3; }\n");
+      dirs_at[0] = "bins/plat-a";
+      expect(3, "link \"m\";\nint main() { return m3(); }\n");
+      dirs_at[0] = NULL;
     }
   }
 

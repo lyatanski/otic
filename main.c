@@ -294,7 +294,7 @@ int   main(int argc, char** argv) {
     {"-f", "--form", .args = 1, .desc = "binary format: elfs, mach, pe32", .call = wrap},
     {"-e", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
     {"-s", "--static", .desc = "without main, write an object instead of a shared library", .call = flat},
-    {"-p", "--path", .args = 1, .desc = "specify path to look for library", .call = seek},
+    {"-p", "--path", .args = 1, .desc = "directory to look for modules and libraries", .call = seek},
     {"-h", "--help", .desc = "display help", .call = help}, {},
   };
   parse(&self, args, argc, argv, apos);

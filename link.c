@@ -23,31 +23,41 @@ u64i  tidy(char* path, u64i size) {
   return n;
 }
 
-// link "name": the first of name.c, name.o and libname.a beside this source,
-// then, when running, the host's shared library name, as load "name" takes
-// it, then libname.a in the library directories (mode.dirs)
-void  haul(mode* self, item* s) {
+// the file name with end e (".c", ".o", or ".a" as libname.a) in dir, or
+// beside this source when dir is NULL, joined as a unit: 0 when it is not there
+static bool near(mode* self, item* s, char* dir, u32i e) {
   static char* const ends[] = {".c", ".o", ".a"};
-  char* from = home(self)->path;
-  u32i  dir = 0, n = quote(s, NULL) - 1;
-  for(u32i i = 0; from[i]; i++) if(from[i] == '/') dir = i + 1;
-  for(u32i k = 0; k < 3 + self->dirn; k++) {
-    char* at = k < 3? from: self->dirs[k - 3];
-    u32i  d = k < 3? dir: slen(at), b = 0, lib = k > 1? 3: 0;
-    char* path = self->heap(NULL, d + n + 8); // '/', "lib", the end and its NUL
-    byte* p = copy((byte*)path, at, d);
-    if(k > 2 && d && at[d - 1] != '/') { *p++ = '/'; d++; } // -L dir
-    quote(s, p);
-    if(lib) { // "lib" before the last segment
-      for(u32i i = 0; i < n; i++) if(p[i] == '/') b = i + 1;
-      for(u32i i = n; i-- > b; ) p[i + 3] = p[i];
-      copy(p + b, "lib", 3);
-    }
-    copy(p + n + lib, ends[k < 3? k: 2], 3);
-    if(land(self, path, d + n + lib + 2, NULL, un_code + (k < 3? k: 2))) return;
-    self->heap(path, 0);
-    if(k == 2 && self->have && self->have(s)) { home(self)->from = rack(self, s); return; }
+  char* at = dir? dir: home(self)->path;
+  u32i  d = 0, n = quote(s, NULL) - 1, b = 0, lib = e == 2? 3: 0;
+  if(dir) d = slen(dir);
+  else for(u32i i = 0; at[i]; i++) if(at[i] == '/') d = i + 1;
+  char* path = self->heap(NULL, d + n + 8); // '/', "lib", the end and its NUL
+  byte* p = copy((byte*)path, at, d);
+  if(dir && d && at[d - 1] != '/') { *p++ = '/'; d++; } // -p dir
+  quote(s, p);
+  if(lib) { // "lib" before the last segment
+    for(u32i i = 0; i < n; i++) if(p[i] == '/') b = i + 1;
+    for(u32i i = n; i-- > b; ) p[i + 3] = p[i];
+    copy(p + b, "lib", 3);
   }
+  copy(p + n + lib, ends[e], 3);
+  if(land(self, path, d + n + lib + 2, NULL, un_code + e)) return 1;
+  self->heap(path, 0);
+  return 0;
+}
+
+// link "name": the first of name.c, name.o and libname.a beside this source,
+// then name.c and name.o in the library directories (mode.dirs), each in
+// order, then, when running, the host's shared library name, as load "name"
+// takes it, then libname.a in the library directories. Code in a directory
+// comes before the host's library, so running and writing a file pick the
+// same module
+void  haul(mode* self, item* s) {
+  for(u32i e = 0; e < 3; e++) if(near(self, s, NULL, e)) return;
+  for(u32i i = 0; i < self->dirn; i++)
+    for(u32i e = 0; e < 2; e++) if(near(self, s, self->dirs[i], e)) return;
+  if(self->have && self->have(s)) { home(self)->from = rack(self, s); return; }
+  for(u32i i = 0; i < self->dirn; i++) if(near(self, s, self->dirs[i], 2)) return;
   flaw(self, "cannot find %.*s\n", nick(s));
 }
 
