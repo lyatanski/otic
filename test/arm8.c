@@ -130,6 +130,12 @@ spec("arm8") {
       check(emits("", e.pass(t, 0)));
       check(emits("e3 03 00 aa", e.pass(t, 3)));       // mov x3, x0
     }
+    it("points a glob forward at data or back at code") {
+      // adr x0, .; mov x16, #0x2348; movk x16, #0x1, lsl #16; add x0, x0, x16
+      check(emits("00 00 00 10 10 69 84 d2 30 00 a0 f2 00 00 10 8b", d = here, e.glob(t), e.site(t, d, 0x12348)));
+      // ...; sub x0, x0, x16
+      check(emits("00 00 00 10 10 69 84 d2 30 00 a0 f2 00 00 10 cb", d = here, e.glob(t), e.site(t, d, -0x12348)));
+    }
     it("links a call back or forward") {
       // mov sp, x29; ldp x29, x30, [sp], #16; ret; bl -12
       check(emits("bf 03 00 91 fd 7b c1 a8 c0 03 5f d6 fd ff ff 97",

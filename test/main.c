@@ -673,6 +673,56 @@ spec(TAG) {
                   "int main() { s x = {\"ab\", 1}; return x.n[0] + x.n[1] + x.n[3] + t[1].v + t[1].n[0] + t[0].v; }\n");
   }
 
+  context("function pointers") {
+    it("calls through a local, a global and a parameter")
+      expect(17, "int add(int a, int b) { return a + b; }\nint mul(int a, int b) { return a * b; }\n"
+                 "int (*g)(int, int);\nint apply(int (*f)(int, int), int a, int b) { return f(a, b); }\n"
+                 "int main() { int (*f)(int, int) = add; g = mul; int x = 2;\n"
+                 "  return f(x, 3) + g(x, 3) + apply(add, x, 4); }\n");
+    it("takes the address with & and calls through *")
+      expect(9, "int sq(int a) { return a * a; }\n"
+                "int main() { int (*f)(int) = &sq; int (**p)(int) = &f; int x = 3; return (*f)(x) - (**p)(x) + (*p)(x); }\n");
+    it("calls through struct members and arrays")
+      expect(37, "int add(int a, int b) { return a + b; }\nint mul(int a, int b) { return a * b; }\n"
+                 "long neg(long x) { return 0 - x; }\n"
+                 "struct ops { int (*bin)(int, int); long (*un)(long); };\n"
+                 "int main() { ops o = {add, neg}; ops* p = &o; int (*t[2][2])(int, int) = {{add, mul}, {mul, add}};\n"
+                 "  int i = 1; long v = -5; p->bin = mul;\n"
+                 "  return o.bin(4, 5) + p->un(v) + t[i][0](i, 3) + t[0][i](i, 9); }\n");
+    it("passes and returns 64-bit values")
+      expect(3, "long half(long x) { return x / 2; }\n"
+                "int main() { long (*f)(long) = half; long one = 1; return (f(one << 40) == one << 39) + (f(-6) == -3) * 2; }\n");
+    it("recurses through a pointer to itself")
+      expect(120, "int fact(int n) { int (*me)(int) = fact; when(n < 2) return 1; return n * me(n - 1); }\n"
+                  "int main() { int n = 5; return fact(n); }\n");
+    it("compares pointers to functions")
+      expect(7, "int f() { return 0; }\nint h() { return 0; }\n"
+                "int main() { int (*p)() = f; int (*z)(); z = 0; return (p == f) + (p != h) * 2 + !z * 4 - (p == h); }\n");
+    it("keeps a left operand across a call through a pointer")
+      expect(26, "int two(int a) { return a * 2; }\n"
+                 "int main() { int (*f)(int) = two; int x = 5; return x * 3 + f(x - 1) * f(x - 4) / 2 + (x + f(x)) - 12; }\n");
+    it("calls an import through a pointer")
+      here(7, "load \"c\";\nlong labs(long n);\nint main() { long (*f)(long) = labs; long v = -7; return f(v); }\n");
+    it("calls a variadic import through a pointer")
+      here(5, "int printf(char* f, ...);\nint main() { int (*p)(char*, ...) = printf; int v = 5; return p(\"%d\\n\", v) + 3; }\n");
+    it("gives an otic function to C as a callback")
+      here(49, "load \"c\";\nvoid qsort(void* b, long n, long s, int (*)(void*, void*));\n"
+               "int cmp(void* a, void* b) { int* x = a; int* y = b; return *x - *y; }\n"
+               "int main() { int a[4] = {4, 1, 3, 2}; qsort(a, 4, 4, cmp); return a[0] + a[1] * 2 + a[2] * 4 + a[3] * 8; }\n");
+    it("rejects a call with the wrong argument count")
+      expect(bad, "int f(int a) { return a; }\nint main() { int (*g)(int) = f; return g(1, 2); }\n");
+    it("rejects arithmetic on a pointer to a function")
+      expect(bad, "int f(int a) { return a; }\nint main() { int (*g)(int) = f; g = g + 1; return 0; }\n");
+    it("rejects a call through what is not a function")
+      expect(bad, "int main() { int x = 1; return x(1); }\n");
+    it("rejects the address of a function not defined yet")
+      expect(bad, "int main() { int (*g)(int) = h; return 0; }\nint h(int a) { return a; }\n");
+    it("rejects an assignment to a function")
+      expect(bad, "int f(int a) { return a; }\nint main() { int (*g)(int) = f; *g = 0; return 0; }\n");
+    it("rejects a pointer to a function returning an array")
+      expect(bad, "int (*g)(int)[3];\nint main() { return 0; }\n");
+  }
+
   context("link") {
     it("calls a linked function") {
       module("add", "int add(int a, int b) { return a + b; }\n");

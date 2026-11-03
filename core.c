@@ -154,6 +154,18 @@ meta* knot(mode* self, what kind, meta* type, u32i size) {
 // pointer to type
 meta* href(mode* self, meta* type) { return knot(self, refs, type, 8); }
 
+// the type of a function returning type, of argc parameters (-1: unknown),
+// the 64-bit ones in longs, variadic when more, made once
+meta* mold(mode* self, meta* type, s32i argc, byte longs, bool more) {
+  for(meta* x = self->defs; x < self->defs + self->defn; x++)
+    if(x->kind == proc && x->type == type && x->slot == argc && x->longs == longs && x->more == more)
+      return x;
+  return mint(self, (meta){.kind = proc, .type = type, .slot = argc, .longs = longs, .more = more});
+}
+
+// a pointer to a function type, NULL for the rest
+meta* aimp(meta* t) { return t && t->kind == refs && t->type->kind == proc? t->type: NULL; }
+
 // what a pointer points to or an array holds, NULL for the rest
 meta* elem(meta* t) { return t && (t->kind == refs || t->kind == many)? t->type: NULL; }
 u32i  wide(meta* t) { return elem(t) || (t && (t->kind == base || t->kind == bitf) && t->size == 8)? WIDE: 0; }
@@ -429,6 +441,55 @@ oper  dial(mode* self, item* name) {
   return acc(func? func->type: NULL);
 }
 
+s32i  room(mode* self, u32i size);
+
+// the address of function func, named name: a pointer to its type. That of
+// an import is read from its slot, one in text is pc-relative. Otic functions
+// take their arguments the SysV way, which a call through a pointer on Win64
+// does not
+oper  hand(mode* self, item* name, meta* func) {
+  meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->more));
+  if(func->lib) { spot(self, port(self, func)); emit(self, read, 8); return acc(t); }
+  meta* body = func->addr? func: find(self, 0, name); // past a prototype
+  if(!body || body->kind != call || !body->addr)
+    flaw(self, "'%.*s' is not defined yet: define or link it before taking its address\n", nick(name));
+  if(!body->ext && self->arch.cpu == cpu_ia64 && self->form.os == os_win)
+    flaw(self, "'%.*s': no pointers to otic functions on Windows x86-64 yet\n", nick(name));
+  byte* at = self->text->body;
+  emit(self, glob);
+  emit(self, site, at, body->addr - at);
+  return acc(t);
+}
+
+// x(args), x a pointer to a function or what one points to: called the C way,
+// which an otic function follows as well (SysV, AAPCS64). x is kept in a frame
+// slot while the arguments are pushed, each sign extended to 64 bits, then the
+// call goes through the slot
+oper  ring(mode* self, oper x) {
+  meta* f = x.type && x.type->kind == proc && x.kind == vmem? x.type: aimp(x.type);
+  if(!f) flaw(self, "not a function\n");
+  if(f != x.type) load(self, x); // else its address is in acc
+  s32i  slot = room(self, 8);
+  u32i  argc = 0;
+  emit(self, stor, slot, 8);
+  self->dials++;
+  for(; !twin(self, ')'); argc++) {
+    if(argc) { skip(self, ','); emit(self, push); }
+    if(argc == 6) flaw(self, "more than 6 arguments\n");
+    oper  y = expr(self, 1);
+    if(!wide(load(self, y).type)) sext(self, y);
+  }
+  if(f->slot >= 0 && (argc < (u32i)f->slot || (argc > (u32i)f->slot && !f->more)))
+    flaw(self, "the function takes %d arguments, got %d\n", f->slot, argc);
+  if(argc) emit(self, push);
+  emit(self, addr, slot);
+  emit(self, ffi, NULL, argc, f->more? (u32i)f->slot: argc, self->form.os);
+  u32i n = span(f->type);
+  if(n && n < 4) emit(self, calc, '&', 1, (1 << n * 8) - 1);
+  if(n == 4) emit(self, cast, 0);
+  return acc(f->type);
+}
+
 // where the right operand of a pair starts, past the keep of the left one,
 // and the calls emitted before it
 typedef struct { byte* at; byte* past; u32i dials; } kept;
@@ -469,8 +530,10 @@ oper  atom(mode* self) {
     case ttag: {
       item* name = home(self)->talk.hash;
       chop(self);
-      if(twin(self, '(')) { x = dial(self, name); break; }
       meta* var = find(self, self->unit, name);
+      bool  value = var && (var->kind == data || var->kind == glob); // a pointer called below
+      if(!value && twin(self, '(')) { x = dial(self, name); break; }
+      if(var && var->kind == call) { x = hand(self, name, var); break; }
       if(var && var->kind == pend) { x = (oper){vglo, WANT | ask(self, var), NULL}; break; }
       if(!var || (var->kind != data && var->kind != glob))
         flaw(self, "no variable '%.*s'\n", nick(name));
@@ -484,7 +547,17 @@ oper  atom(mode* self) {
       x = expr(self, 1);
       skip(self, ')');
       break;
-    case '&':  chop(self); return refr(self, atom(self));
+    case '&': { // &f is f
+      chop(self);
+      meta* f = home(self)->talk.kind == ttag? find(self, self->unit, home(self)->talk.hash): NULL;
+      if(f && f->kind == call) {
+        item* name = home(self)->talk.hash;
+        chop(self);
+        if(home(self)->talk.kind == '(') flaw(self, "cannot take the address\n");
+        return hand(self, name, f);
+      }
+      return refr(self, atom(self));
+    }
     case '*':  chop(self); return star(self, atom(self));
     case '-': case '!': case '~': {
       chop(self);
@@ -500,8 +573,9 @@ oper  atom(mode* self) {
     default:
       flaw(self, "expected expression, got %x\n", op);
   }
-  for(;;) { // postfix: x[i] is *(x + i), x.m, x->m is (*x).m
-    if(twin(self, '[')) {
+  for(;;) { // postfix: x[i] is *(x + i), x.m, x->m is (*x).m, x(args) a call through x
+    if(twin(self, '(')) x = ring(self, x);
+    else if(twin(self, '[')) {
       kept  mark = keep(self, &x);
       oper  i = expr(self, 1);
       meta* t = x.type && x.type->kind == many? x.type->type: NULL;
@@ -559,7 +633,8 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
   u32i  w = wide(x.type) | wide(y.type), r = rank(op);
   bool  test = r == 6 || r == 7;
   if(ex || ey) {
-    if(!test && !(op == '+' && !(ex && ey)) && !(op == '-' && ex))
+    if(!test && ((!(op == '+' && !(ex && ey)) && !(op == '-' && ex))
+                 || (ex && ex->kind == proc) || (ey && ey->kind == proc)))
       flaw(self, "invalid pointer arithmetic\n");
     if(!test && !(ex && ey)) {
       t = href(self, ex? ex: ey);
@@ -619,7 +694,7 @@ u32i  sets(u32i kind) {
 oper  give(mode* self, u32i op, oper x) {
   meta* t = x.type, *f = t && t->kind == bitf? t: NULL;
   if(f) t = f->type; // the value is of its integer type
-  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || (t && (t->kind == many || t->kind == list)))
+  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || (t && (t->kind == many || t->kind == list || t->kind == proc)))
     flaw(self, "cannot assign\n");
   if(x.kind == vglo) { spot(self, x.ival); x.kind = vmem; }
   if(x.kind == vmem) emit(self, push); // the address, op= reads through it
@@ -712,13 +787,61 @@ meta* sort(mode* self) {
   return type;
 }
 
-// the stars before a declared name: pointers to type, the name into *name
-meta* term(mode* self, meta* type, item** name) {
+meta* coil(mode* self, meta* type, item** name);
+
+// (parameters) after a declarator: the type of a function returning type. The
+// names of the parameters may be left out, they are not declared
+meta* plan(mode* self, meta* type) {
+  u32i  argc = 0;
+  byte  longs = 0;
+  bool  more = 0;
+  skip(self, '(');
+  for(; !twin(self, ')'); argc++, twin(self, ',')) {
+    if(twin(self, tokd('.', '.', '.'))) { more = 1; skip(self, ')'); break; }
+    item* n;
+    meta* t = coil(self, sort(self), &n);
+    if(!n && !t->size && !argc && twin(self, ')')) break; // (void)
+    if(argc < 6 && wide(t)) longs |= 1 << argc;
+  }
+  if(argc > 6) flaw(self, "more than 6 parameters\n");
+  return mold(self, type, argc, longs, more);
+}
+
+// a declarator of type: pointers to type with the name into *name, NULL when
+// there is none, or one of a pointer to a function, (*name[n]...)(parameters),
+// with its arrays of pointers
+meta* coil(mode* self, meta* type, item** name) {
   while(twin(self, '*')) type = href(self, type);
-  if(home(self)->talk.kind != ttag)
-    flaw(self, "expected name, got %x\n", home(self)->talk.kind);
-  *name = home(self)->talk.hash;
-  chop(self);
+  *name = NULL;
+  if(!twin(self, '(')) {
+    if(home(self)->talk.kind == ttag) { *name = home(self)->talk.hash; chop(self); }
+    return type;
+  }
+  u32i  refn = 0, dimn = 0;
+  s32i  dim[8];
+  while(twin(self, '*')) refn++;
+  if(!refn) flaw(self, "expected a pointer to a function\n");
+  if(home(self)->talk.kind == ttag) { *name = home(self)->talk.hash; chop(self); }
+  while(twin(self, '[')) {
+    oper n = expr(self, 1);
+    skip(self, ']');
+    if(n.kind != vnum || n.ival <= 0) flaw(self, "array size must be a positive constant\n");
+    if(dimn == sizeof dim / sizeof *dim) flaw(self, "too many array sizes\n");
+    dim[dimn++] = n.ival;
+  }
+  skip(self, ')');
+  type = plan(self, type);
+  while(refn--) type = href(self, type);
+  while(dimn--) type = knot(self, many, type, dim[dimn] * type->size);
+  if(home(self)->talk.kind == '(' || home(self)->talk.kind == '[')
+    flaw(self, "a function cannot return a function or an array\n");
+  return type;
+}
+
+// a declarator of type that names: its type, the name into *name
+meta* term(mode* self, meta* type, item** name) {
+  type = coil(self, type, name);
+  if(!*name) flaw(self, "expected name, got %x\n", home(self)->talk.kind);
   return type;
 }
 
@@ -1127,13 +1250,12 @@ void  decl(mode* self) {
     self->slot = self->deep = self->lits = 0;
     for(; !twin(self, ')'); func->size++, twin(self, ',')) {
       if(twin(self, tokd('.', '.', '.'))) { func->more = 1; skip(self, ')'); break; }
-      meta* type = sort(self);
-      while(twin(self, '*')) type = href(self, type);
-      if(!type->size && !func->size && twin(self, ')')) break; // (void)
-      if(home(self)->talk.kind != ttag) { anon = 1; continue; } // an import may leave it out
+      item* n;
+      meta* type = coil(self, sort(self), &n);
+      if(!n && !type->size && !func->size && twin(self, ')')) break; // (void)
+      if(!n) { anon = 1; continue; } // an import may leave it out
       if(wide(type)) func->longs |= 1 << func->size;
-      seed(self, .name=home(self)->talk.hash, .type=type, .kind=data, .slot=room(self, 8));
-      chop(self);
+      seed(self, .name=n, .type=type, .kind=data, .slot=room(self, 8));
     }
     if(func->size > 6) flaw(self, "more than 6 parameters\n");
     if(twin(self, ';')) {

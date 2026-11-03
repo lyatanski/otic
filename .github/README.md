@@ -71,6 +71,11 @@ int main() {
 
 - types: `void`, `bool`, `byte`, `char`, `nu16`, `int`, `long`, pointers,
   arrays, structs (anonymous, bit-fields)
+- function pointers: `int (*f)(int, long)`,
+  `int (*ops[4])(int)`; a function's name (or `&name`) is its address. Calls
+  through a pointer follow the C ABI, so imports and C callbacks (`qsort`)
+  work both ways; a global can't be initialized with one yet, and pointers to
+  otic functions aren't supported on Windows x86-64
 - statements: `when`/`else`, `while`, `break`, `skip`, `return`
 - initializers with designators, compound literals, `static`, `extern`
 - `syscall(n, ...)` goes straight to the kernel

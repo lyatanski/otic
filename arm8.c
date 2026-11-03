@@ -322,7 +322,8 @@ void arm8_addr(file* data, s32i slot) {
   arm8_put(data, 0xd1000000 | -slot << 10 | r29 << 5 | r0);         // sub x0, x29, #-slot
 }
 
-// x0 = pc + a 32-bit distance, patched by site
+// x0 = pc + a 32-bit distance, patched by site: a negative distance, to code
+// before it, makes the add a sub
 void arm8_glob(file* data) {
   arm8_put(data, I3406_ADR | r0);                                   // adr x0, .
   arm8_put(data, X | dati_movz | r16);                              // movz x16, #lo
@@ -331,6 +332,7 @@ void arm8_glob(file* data) {
 }
 
 void arm8_site(file*, byte* glob, s64i dist) {
+  if(dist < 0) { dist = -dist; ((uint32_t*)glob)[3] |= 1 << 30; } // sub x0, x0, x16
   if(dist >> 32) fail("data too far\n");
   ((uint32_t*)glob)[1] |= (dist & 0xffff) << 5;
   ((uint32_t*)glob)[2] |= (dist >> 16 & 0xffff) << 5;
