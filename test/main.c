@@ -626,6 +626,16 @@ spec(TAG) {
                  "out g = {.i[0].b = 5, .i[0] = {.a = 1}};\n"
                  "int main() { out o = {.i[0].b = 5, .i[0] = {.a = 1}};\n"
                  "  return (o.i[0].a * 10 + o.i[0].b) * (g.i[0].a == 1 && !g.i[0].b); }\n");
+    it("makes compound literals")
+      expect(16, "struct p { int a; int b; };\nint sum(p* q) { return q->a + q->b; }\n"
+                 "int main() { return (p){3, 4}.a + (p){.b = 4}.b + sum(&(p){2, 7}); }\n");
+    it("makes compound literals of values and arrays")
+      expect(11, "int main() { int x = 3; return x * (int){2} + (int[3]){1, 5, 3}[1]; }\n");
+    it("keeps a compound literal to the end of its block")
+      expect(12, "struct p { int a; int b; };\nint main() { p* q; q = &(p){5, 7};\n"
+                 "  int x = 9; int y = 9; int z[4] = {9, 9, 9, 9}; return q->a + q->b; }\n");
+    it("initializes values and strings in braces")
+      expect(105, "int main() { int x = {7}; char s[4] = {\"abc\",}; return x + s[1]; }\n");
     it("initializes char array members with strings")
       expect(205, "struct s { char n[4]; int v; };\ns t[2] = {{\"ab\", 1}, {.v = 9}};\n"
                   "int main() { s x = {\"ab\", 1}; return x.n[0] + x.n[1] + x.n[3] + t[1].v + t[1].n[0] + t[0].v; }\n");
@@ -1031,6 +1041,10 @@ spec(TAG) {
       expect(bad, "struct p { int x; };\nint main() { p v = {.x.y = 1}; return 0; }\n");
     it("rejects an index designator into a struct")
       expect(bad, "struct p { int x; };\nint main() { p v = {[0] = 1}; return 0; }\n");
+    it("rejects a cast")
+      expect(bad, "int main() { long x = 3; return (int)x; }\n");
+    it("rejects a compound literal in a global initializer")
+      expect(bad, "struct p { int a; };\np g = (p){1};\nint main() { return 0; }\n");
     it("rejects a non-constant global member")
       expect(bad, "struct p { int x; };\nint n;\np g = {.x = n};\nint main() { return 0; }\n");
     it("rejects a void variable")

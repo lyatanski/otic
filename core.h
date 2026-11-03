@@ -294,6 +294,7 @@ struct mode {
   u32i  dials;     // calls emitted: a kept operand stays on the stack across one
   s32i  slot;      // frame bytes in use
   s32i  deep;      // frame bytes the function needs
+  s32i  lits;      // frame bytes the compound literals of the block keep
   meta* func;      // the function being compiled
   byte* cont;      // continue target, NULL outside loops
   u32i  ends;      // pending break jumps

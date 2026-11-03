@@ -365,18 +365,29 @@ oper  dial(mode* self, item* name) {
   return acc(func? func->type: NULL);
 }
 
-// where the right operand of a pair starts, and the calls emitted before it
-typedef struct { byte* at; u32i dials; } kept;
+// where the right operand of a pair starts, past the keep of the left one,
+// and the calls emitted before it
+typedef struct { byte* at; byte* past; u32i dials; } kept;
 
 // x before its right operand is parsed: a value in acc is kept at the mark
 kept  keep(mode* self, oper* x) {
   if(x->kind == vmem || x->kind == vcmp) *x = load(self, *x);
-  kept  mark = {self->text->body, self->dials};
+  kept  mark = {self->text->body, NULL, self->dials};
   if(x->kind == vacc) { emit(self, keep); self->held++; }
+  mark.past = self->text->body;
   return mark;
 }
 
 oper  pair(mode* self, u32i op, oper x, oper y, kept mark);
+oper  lit(mode* self);
+
+// the type the word names, NULL when it names none
+meta* ilk(mode* self) {
+  meta* x = home(self)->talk.kind == ttag? find(self, self->unit, home(self)->talk.hash): NULL;
+  return x && (x->kind == base || x->kind == list)? x: NULL;
+}
+
+#define type(self) (same(self, "struct") || ilk(self))
 
 oper  atom(mode* self) {
   u32i op = home(self)->talk.kind;
@@ -403,7 +414,12 @@ oper  atom(mode* self) {
       if(var->ext) { spot(self, port(self, var)); emit(self, read, 8); x = (oper){vmem, 0, var->type}; }
       break;
     }
-    case '(':  chop(self); x = expr(self, 1); skip(self, ')'); break;
+    case '(':
+      chop(self);
+      if(type(self)) { x = lit(self); break; }
+      x = expr(self, 1);
+      skip(self, ')');
+      break;
     case '&':  chop(self); return refr(self, atom(self));
     case '*':  chop(self); return star(self, atom(self));
     case '-': case '!': case '~': {
@@ -496,7 +512,8 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
   u32i  k = x.kind == vacc? --self->held: 0; // the scratch of x, when kept
   u32i  c = op | w | (test? TEST: 0);
 
-  if(y.kind == vnum || (y.kind == vloc && (y.type->kind == base || y.type->kind == refs) && (!w || wide(y.type)))) {
+  if(y.kind == vnum || (y.kind == vloc && (y.type->kind == base || y.type->kind == refs) && (!w || wide(y.type))
+                        && self->text->body == mark.past)) { // not a compound literal
     self->text->body = mark.at; // y emitted nothing: drop the keep
     load(self, x);
     grow(self, x, sx, w);
@@ -602,14 +619,6 @@ s32i  room(mode* self, u32i size) {
   return -self->slot;
 }
 
-// the type the word names, NULL when it names none
-meta* ilk(mode* self) {
-  meta* x = home(self)->talk.kind == ttag? find(self, self->unit, home(self)->talk.hash): NULL;
-  return x && (x->kind == base || x->kind == list)? x: NULL;
-}
-
-#define type(self) (same(self, "struct") || ilk(self))
-
 // a type name, after an optional struct
 meta* sort(mode* self) {
   if(same(self, "struct")) chop(self);
@@ -673,6 +682,8 @@ void  bits(mode* self, s32i slot, byte* src, u32i size) {
 typedef struct { meta* type; meta* memb; u32i i, off; } tier;
 
 #define bulky(t) ((t)->kind == many || (t)->kind == list)
+// a string for a char array
+#define text(self, t) ((t)->kind == many && (t)->type->size == 1 && home(self)->talk.kind == '"')
 #define TIERS 16
 
 // a tier for type at off, at its first part
@@ -713,11 +724,17 @@ void  aim(mode* self, tier* n) {
 // stored to slot (at is NULL). A list goes over the members of a struct or
 // the elements of an array in order, or from the part a designator chain
 // (.name, [index]) picks; a part that is a struct or array takes the values
-// that come when they are not in braces
+// that come when they are not in braces. A value or a string may be in braces
 void  seal(mode* self, meta* type, byte* at, s32i slot) {
   meta* t = type->kind == many? type->type: NULL;
   if(at && bulky(type)) for(u32i i = 0; i < type->size; i++) at[i] = 0; // as a whole, again
-  if(bulky(type) && twin(self, '{')) {
+  bool  brace = twin(self, '{');
+  if(brace && (!bulky(type) || text(self, type))) {
+    seal(self, type, at, slot);
+    twin(self, ',');
+    skip(self, '}');
+  }
+  else if(brace) {
     tier  k[TIERS] = {dive(self, 0, type, 0)};
     u32i  d = 1, end = 0, off = 0; // depth of k; the bytes before end are set
     while(!twin(self, '}')) {
@@ -737,8 +754,7 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
         while(!(p = pick(k + d - 1, &off)) && d > 1) step(k + --d - 1);
         if(!p) flaw(self, "too many initializers\n");
       }
-      while(bulky(p) && home(self)->talk.kind != '{'
-            && !(p->kind == many && p->type->size == 1 && home(self)->talk.kind == '"')) {
+      while(bulky(p) && home(self)->talk.kind != '{' && !text(self, p)) {
         k[d] = dive(self, d, p, off);
         if(!(p = pick(k + d++, &off))) flaw(self, "too many initializers\n");
       }
@@ -750,7 +766,7 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
     }
     if(!at) bits(self, slot + end, NULL, type->size - end);
   }
-  else if(t && t->size == 1 && home(self)->talk.kind == '"') {
+  else if(text(self, type)) {
     u32i n = quote(home(self)->talk.hash, NULL);
     if(n > type->size) flaw(self, "string too long\n");
     if(at) quote(home(self)->talk.hash, at);
@@ -770,6 +786,21 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
     copy(at, &v, type->size);
   }
   else give(self, '=', (oper){vloc, slot, type});
+}
+
+// (type){ init }, after the "(": a compound literal, a local that lives to the
+// end of the block
+oper  lit(mode* self) {
+  meta* type = sort(self);
+  while(twin(self, '*')) type = href(self, type);
+  type = dims(self, type);
+  skip(self, ')');
+  if(!type->size) flaw(self, "a compound literal without a size\n");
+  if(home(self)->talk.kind != '{') flaw(self, "expected a compound literal\n");
+  s32i  slot = room(self, type->size);
+  self->lits = self->slot;
+  seal(self, type, NULL, slot);
+  return (oper){vloc, slot, type};
 }
 
 // type declarator (= init)? (, declarator (= init)?)* ;
@@ -844,9 +875,10 @@ void  iter(mode* self, byte* again) {
 
 void  stmt(mode* self) {
   u32i  top  = self->top;
-  s32i  slot = self->slot;
+  s32i  slot = self->slot, lits = self->lits;
   if(twin(self, '{')) {
     while(!twin(self, '}')) stmt(self);
+    self->lits = lits;
   }
   else if(twin(self, ';')) {
   }
@@ -904,7 +936,7 @@ void  stmt(mode* self) {
     expr(self, 1); skip(self, ';');
   }
   bury(self, top);
-  self->slot = slot;
+  self->slot = slot < self->lits? self->lits: slot; // the compound literals of the block stay
 }
 
 // x, declared without a body or as extern, is an import from the library of
@@ -972,7 +1004,7 @@ void  decl(mode* self) {
     meta* func = self->func = self->pile + self->top - 1;
     u32i  top  = self->top;
     bool  anon = 0;
-    self->slot = self->deep = 0;
+    self->slot = self->deep = self->lits = 0;
     for(; !twin(self, ')'); func->size++, twin(self, ',')) {
       if(twin(self, tokd('.', '.', '.'))) { func->more = 1; skip(self, ')'); break; }
       meta* type = sort(self);
