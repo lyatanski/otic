@@ -1,5 +1,5 @@
 // vim: ts=2:sw=2
-// core's spec, the front end alone (core, link, hash): the target, the
+// core's spec, the front end alone (core, link, util): the target, the
 // form and the host are mocks in mode. Each emit call is one byte of text,
 // its op, and a line of the trace ("move 42"), so a case reads what core asked
 // the target for. fail longjmps back here, so errors are checked in process
@@ -15,7 +15,6 @@ static char    said[256]; // what fail said
 
 #include "../util.c"
 #include "../core.c"
-#include "../hash.c"
 #include "../link.c"
 #include "test.h"
 

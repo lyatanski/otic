@@ -13,7 +13,6 @@
 #ifndef part
 #include "util.c"
 #include "core.c"
-#include "hash.c"
 #include "link.c"
 #include "ia64.c"
 #include "arm8.c"
