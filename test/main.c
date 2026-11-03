@@ -6,6 +6,7 @@
 // take their operands from locals. It tests the target it is built for, which
 // must be tic's: for arm8, cross-build both.
 #include "test.h"
+#include <stdbool.h> /* bool before C23 */
 
 #include <fcntl.h>    /* open, O_BINARY */
 #include <limits.h>   /* INT_MIN */
@@ -743,8 +744,8 @@ spec(TAG) {
       archive("libar-wide", (char*[]){
         "_Alignas(64) int tab[4] = {1, 2, 3, 4};\n_Alignas(128) char buf[8];\n"
         "__attribute__((aligned(64))) int wide(void) { return tab[3]; }\n"
-        "long at[3] = {(long)tab, (long)buf, (long)wide};\n" // not folded by cc
-        "int ok(void) { return !(at[0] & 63) + !(at[1] & 127) + !(at[2] & 63) + wide(); }\n", NULL});
+        "int ok(void) { long volatile a = (long)tab, b = (long)buf, c = (long)wide;\n" // not folded by cc
+        "  return !(a & 63) + !(b & 127) + !(c & 63) + wide(); }\n", NULL});
       expect(7, "link \"ar-wide\";\nint main() { return ok(); }\n");
     }
     elfs_it("fills pointers in data") {

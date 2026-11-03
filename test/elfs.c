@@ -1,6 +1,6 @@
 // vim: ts=2:sw=2
-// elfs' spec: the ELF executable it packs, and the relocatable objects it
-// takes, which the case builds section by section
+// elfs' spec: the ELF program it packs, and the relocatable objects it takes,
+// which the case builds section by section
 #include "form.h"
 #include "../elfs.c"
 #include "test.h"
@@ -132,62 +132,84 @@ static bool    rela_(rela64* r, u64i offset, u32i type, u32i sym, s64i addend) {
 }
 
 spec("elfs") {
-  context("pack") {
-    elfs_id* id;
-    eh64*    eh;
-    ph64*    ph;
-    file*    out;
-    it("writes a 64-bit little endian executable for the target") {
+  context("program") { // the image of a shared library, entered at the start of text, with a loader
+    file* out;
+    ph64* ph;
+    it("writes a 64-bit little endian image for the target") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
       check((out = packed(elfs)));
-      id = (elfs_id*)out->head; eh = (eh64*)(id + 1);
       check(bytes(out->head, "7f 45 4c 46 02 01 01"));
-      check(eh->type == et_exec && eh->arch == em_ia64);
+      check(HEAD(out)->type == et_dyno && HEAD(out)->arch == em_ia64);
+      start(cpu_arm8, CODE, 6, "", 0, 0);
+      check((out = packed(elfs)) && HEAD(out)->arch == em_arm8);
+    }
+    it("enters at its code") {
+      start(cpu_ia64, CODE, 6, "", 0, 0);
+      check((out = packed(elfs)));
+      sh64* sh = SECT(out);
+      check(HEAD(out)->entry == sh[5].addr && sh[5].size == 6 && sh[5].addr == sh[5].offset);
+      check(bytes(out->head + HEAD(out)->entry, "b8 07 00 00 00 c3"));
+    }
+    it("docks once, text at its address, data 64 KB further") {
+      start(cpu_ia64, CODE, 6, "", 0, 0);
+      check((out = packed(elfs)));
+      sh64* sh = SECT(out);
+      check(docked.calls == 1 && docked.org == sh[5].addr && docked.at == sh[7].addr - sh[5].addr);
+      check(sh[7].addr == sh[7].offset + 0x10000);
+    }
+    it("describes its headers, then names its loader, before any segment") {
+      start(cpu_ia64, CODE, 6, "", 0, 0);
+      check((out = packed(elfs)) && HEAD(out)->phnum == 6);
+      ph = (ph64*)(HEAD(out) + 1);
+      check(ph[0].type == PT_PHDR && ph[0].offset == HEAD(out)->phoff && ph[0].filesz == 6 * sizeof(ph64));
+      check(ph[0].vaddr == ph[0].offset && ph[0].flags == 4);
+      check(ph[1].type == PT_INTERP && ph[1].vaddr == ph[1].offset && ph[1].offset >= ph[0].offset + ph[0].filesz);
+      check(!strcmp((char*)out->head + ph[1].offset, "/lib64/ld-linux-x86-64.so.2"));
+      check(ph[1].filesz == strlen("/lib64/ld-linux-x86-64.so.2") + 1 && ph[2].type == PT_LOAD);
+      check(SECT(out)[1].offset >= ph[1].offset + ph[1].filesz);
       start(cpu_arm8, CODE, 6, "", 0, 0);
       check((out = packed(elfs)));
-      check(((eh64*)(out->head + sizeof(elfs_id)))->arch == em_arm8);
+      ph = (ph64*)(HEAD(out) + 1);
+      check(!strcmp((char*)out->head + ph[1].offset, "/lib/ld-linux-aarch64.so.1"));
     }
-    it("loads the code right after its headers, entering at it") {
+    it("has no soname") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
+      self.outp = "bins/prog";
       check((out = packed(elfs)));
-      eh = (eh64*)(out->head + sizeof(elfs_id)); ph = (ph64*)(eh + 1);
-      u64i top = sizeof(elfs_id) + sizeof(eh64) + sizeof(ph64);
-      check(eh->phnum == 1 && ph->type == 1 && ph->flags == 5 && ph->offset == 0);
-      check(eh->entry == 0x400000 + top && ph->filesz == top + 6);
-      check(bytes(out->head + top, "b8 07 00 00 00 c3"));
-      check((u64i)(out->body - out->head) == top + 6);
+      ph = (ph64*)(HEAD(out) + 1);
+      dyn64* d = (dyn64*)(out->head + SECT(out)[6].offset);
+      check(ph[4].type == PT_DYNAMIC && ph[4].filesz == 9 * sizeof(dyn64));
+      check(d[0].tag == DT_HASH && d[8].tag == DT_NULL);
     }
-    it("docks once, data 64 KB past the aligned code") {
-      start(cpu_ia64, CODE, 6, "", 0, 0);
-      check(packed(elfs));
-      u64i top = sizeof(elfs_id) + sizeof(eh64) + sizeof(ph64);
-      check(docked.calls == 1 && docked.at == 16 + 0x10000 && docked.org == 0x400000 + top);
-    }
-    it("adds a writable segment for data and bss") {
+    it("keeps data and bss in the writable segment") {
       start(cpu_ia64, CODE, 6, "abcd", 4, 0);
       self.zero = 100;
       check((out = packed(elfs)));
-      eh = (eh64*)(out->head + sizeof(elfs_id)); ph = (ph64*)(eh + 1);
-      u64i top = sizeof(elfs_id) + sizeof(eh64) + 2 * sizeof(ph64);
-      check(eh->phnum == 2 && ph[1].flags == 6);
-      check(ph[1].offset == top + 16 && ph[1].vaddr == 0x400000 + top + 16 + 0x10000);
-      check(ph[1].filesz == 4 && ph[1].memsz == 16 + 100);
-      check(bytes(out->head + top + 16, "61 62 63 64"));
-    }
-    it("adds it for bss alone") {
-      start(cpu_ia64, CODE, 6, "", 0, 0);
-      self.zero = 8;
-      check((out = packed(elfs)));
-      eh = (eh64*)(out->head + sizeof(elfs_id)); ph = (ph64*)(eh + 1);
-      check(eh->phnum == 2 && ph[1].filesz == 0 && ph[1].memsz == 8);
+      ph = (ph64*)(HEAD(out) + 1);
+      sh64* sh = SECT(out);
+      check(ph[3].flags == 6 && ph[3].vaddr == sh[6].addr);
+      check(bytes(out->head + sh[7].offset, "61 62 63 64") && sh[7].size == 4);
+      check(sh[8].type == SHT_NOBITS && sh[8].size == 104); // 100, to 8 bytes
+      check(ph[3].memsz == sh[7].offset - ph[3].offset + 16 + 104);
     }
     it("aligns the code as an object asks") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
       self.most = 64;
       check((out = packed(elfs)));
-      eh = (eh64*)(out->head + sizeof(elfs_id));
-      check(eh->entry == 0x400000 + 128 && bytes(out->head + 128, "b8 07"));
-      check(docked.at == 64 + 0x10000);
+      sh64* sh = SECT(out);
+      check(HEAD(out)->entry % 64 == 0 && bytes(out->head + HEAD(out)->entry, "b8 07"));
+      check(sh[7].offset % 64 == 0 && docked.at == sh[7].addr - sh[5].addr);
+    }
+    it("refuses an address in code") {
+      start(cpu_ia64, CODE, 6, "", 0, 0);
+      cord_((cord){.site = {self.text->head + 1, 0}, .aim = {self.text->head, 0}, .kind = cd_wide});
+      check(!packed(elfs) && strstr(said, "an address in code: a program"));
+    }
+    it("has the loader relocate an address in data") {
+      start(cpu_ia64, CODE, 6, "\2\0\0\0\0\0\0\0", 8, 0); // dock puts the address at base 0 there
+      cord_((cord){.site = {NULL, 0}, .aim = {self.text->head, 0}, .kind = cd_wide});
+      check((out = packed(elfs)) && SECT(out)[4].size == sizeof(rela64));
+      check(rela_(rel_(out, 4, 0), SECT(out)[7].addr, R_X86_64_RELATIVE, 0, 2));
     }
   }
 

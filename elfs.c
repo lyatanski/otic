@@ -7,6 +7,10 @@ enum { ev_none, ev_curr };
 enum { et_none, et_relo, et_exec, et_dyno, et_core };
 enum { em_ia64 = 62, em_arm8 = 183 };
 static const u16i elfs_mach[] = { [cpu_ia64] = em_ia64, [cpu_arm8] = em_arm8 };
+// the loader of a program: it relocates the image and binds its imports
+static char* const elfs_loader[] = {
+  [cpu_ia64] = "/lib64/ld-linux-x86-64.so.2", [cpu_arm8] = "/lib/ld-linux-aarch64.so.1",
+};
 
 typedef union {
   byte _[16];
@@ -55,66 +59,6 @@ typedef struct {
 typedef struct {
   u32i type, flags; u64i offset, vaddr, paddr, filesz, memsz, align;
 } ph64;
-
-// an executable: text, then data and bss in a second, writable segment: 64 KB
-// apart in memory so both segments start on their own page with any page
-// size. Text starts at the alignment objects ask for, data and bss at gap
-static file* elfs_exec(mode* self) {
-  const u64i org  = 0x400000;
-  const u64i step = self->core.gap(self);
-  const u64i code = self->text->body - self->text->head;
-  const u64i size = self->data->body - self->data->head;
-  const u64i data = (code + step - 1) & -step; // data after text in the file
-  const u64i nph  = size || self->zero? 2: 1;
-  const u64i head = sizeof(elfs_id) + sizeof(eh64) + nph * sizeof(ph64);
-  const u64i top  = self->most? (head + self->most - 1) & -(u64i)self->most: head;
-  const u64i all  = top + (nph > 1? data + size: code);
-  self->core.dock(self, data + 0x10000, org + top);
-
-  elfs_id id = {
-    .seal   = {0x7f, 'E', 'L', 'F'},
-    .bits   = eb_cl64,
-    .data   = ed_2lsb,
-    .issue  = ev_curr,
-  };
-  eh64 eh = {
-    .type   = et_exec,
-    .arch   = elfs_mach[self->arch.cpu],
-    .issue  = ev_curr,
-    .entry  = org + top,
-    .phoff  = sizeof(id) + sizeof(eh),
-    .ehsize = sizeof(id) + sizeof(eh),
-    .phsize = sizeof(ph64),
-    .phnum  = nph,
-  };
-  ph64 ph[] = {{
-    .type   = 1, // PT_LOAD
-    .flags  = 5, // PF_R | PF_X
-    .vaddr  = org,
-    .paddr  = org,
-    .filesz = top + code,
-    .memsz  = top + code,
-    .align  = 0x1000,
-  }, {
-    .type   = 1,
-    .flags  = 6, // PF_R | PF_W
-    .offset = top + data,
-    .vaddr  = org + top + data + 0x10000,
-    .paddr  = org + top + data + 0x10000,
-    .filesz = size,
-    .memsz  = ((size + step - 1) & -step) + self->zero,
-    .align  = 0x10000,
-  }};
-
-  file* out = zero(self, sizeof(file) + all);
-  out->body = out->head + all;
-  out->tail = out->head + all;
-  byte* at = copy(copy(out->head, &id, sizeof(id)), &eh, sizeof(eh));
-  copy(at, ph, nph * sizeof(ph64));
-  copy(out->head + top, self->text->head, code);
-  copy(out->head + top + data, self->data->head, size);
-  return out;
-}
 
 enum { SHT_INIT_ARRAY = 14, SHT_FINI_ARRAY, SHT_PREINIT_ARRAY, SHT_X86_64_UNWIND = 0x70000001 };
 enum { SHF_WRITE = 0x1, SHF_ALLOC = 0x2, SHF_EXECINSTR = 0x4, SHF_INFO_LINK = 0x40, SHF_TLS = 0x400 };
@@ -306,7 +250,7 @@ enum {
 };
 enum { DT_NULL, DT_HASH = 4, DT_STRTAB, DT_SYMTAB, DT_RELA, DT_RELASZ, DT_RELAENT, DT_STRSZ,
        DT_SYMENT, DT_SONAME = 14 };
-enum { PT_LOAD = 1, PT_DYNAMIC, PT_GNU_STACK = 0x6474e551 };
+enum { PT_LOAD = 1, PT_DYNAMIC, PT_INTERP, PT_NOTE, PT_SHLIB, PT_PHDR, PT_GNU_STACK = 0x6474e551 };
 
 typedef struct { s64i tag; u64i val; } dyn64;
 
@@ -505,11 +449,14 @@ static file* elfs_relo(mode* self) {
   return out;
 }
 
-// a shared library, position independent: its dynamic tables, then text, in
-// the first segment, the dynamic section, data, bss and the import slots in a
-// second, writable one, 64 KB further in memory as in an executable. The
-// public definitions are exported, the imports bound by the loader through
-// their slots, and the addresses in data relocated by the load address
+// an image, position independent: its dynamic tables, then text, in the first
+// segment, the dynamic section, data, bss and the import slots in a second,
+// writable one, 64 KB further in memory. A shared library (without main)
+// exports its public definitions, has its imports bound by the loader through
+// their slots, and its addresses in data relocated by the load address. A
+// program is the same image entered at the start of text, with no soname,
+// and names its loader (PT_INTERP), after the table describing itself
+// (PT_PHDR). Neither can have an address in code
 static file* elfs_dyno(mode* self) {
   static char names[] = "\0.hash\0.dynsym\0.dynstr\0.rela.dyn\0.text\0.dynamic\0.data\0.bss\0.shstrtab";
   enum { s_hash = 1, s_sym, s_str, s_rel, s_text, s_dyn, s_data, s_bss, s_names, s_all };
@@ -517,23 +464,27 @@ static file* elfs_dyno(mode* self) {
   const u64i step = self->core.gap(self);
   const u64i code = self->text->body - self->text->head;
   const u64i size = self->data->body - self->data->head;
-  const u64i nph  = 4;
+  const bool prog = self->main != NULL;
+  const u64i nph  = prog? 6: 4;
+  char*      ldso = elfs_loader[self->arch.cpu];
+  const u64i ldsn = prog? slen(ldso) + 1: 0;
   elfs_syms t;
   elfs_sign(self, &t);
   cord* cords;
   u32i  ncord = self->core.knit(self, &cords), nrel = self->impn;
   for(cord* c = cords; c < cords + ncord; c++) {
     if(c->kind != cd_wide || c->name) continue; // a weak name nothing defines is 0
-    if(c->site.at) fail("an address in code: a shared library cannot have it\n");
+    if(c->site.at) fail("an address in code: %s cannot have it\n", prog? "a program": "a shared library");
     nrel++;
   }
-  char* soname = self->outp? self->outp: "";
+  char* soname = self->outp && !prog? self->outp: "";
   for(char* c = soname; *c; c++) if(*c == '/') soname = c + 1;
   const u64i nsym = 1 + t.ndef + t.nund, sonamen = slen(soname);
-  const u64i strs = t.strs + sonamen + 1, ndyn = 10; // the entries of dyn
+  const u64i strs = t.strs + (prog? 0: sonamen + 1), ndyn = prog? 9: 10; // the entries of dyn
 
   // the first segment, then the second at rw in the file, data at dat
-  const u64i hash = sizeof(elfs_id) + sizeof(eh64) + nph * sizeof(ph64);
+  const u64i tabs = sizeof(elfs_id) + sizeof(eh64);
+  const u64i hash = (tabs + nph * sizeof(ph64) + ldsn + 7) & -8; // the loader's path before it
   const u64i dsym = (hash + 4 * (3 + nsym) + 7) & -8;
   const u64i dstr = dsym + nsym * sizeof(sym64);
   const u64i drel = (dstr + strs + 7) & -8;
@@ -550,6 +501,7 @@ static file* elfs_dyno(mode* self) {
     .type   = et_dyno,
     .arch   = elfs_mach[self->arch.cpu],
     .issue  = ev_curr,
+    .entry  = prog? top: 0, // the boot stub starts text
     .phoff  = sizeof(id) + sizeof(eh),
     .shoff  = shoff,
     .ehsize = sizeof(id) + sizeof(eh),
@@ -559,7 +511,12 @@ static file* elfs_dyno(mode* self) {
     .shnum  = s_all,
     .shstr  = s_names,
   };
-  ph64 ph[] = {
+  const u64i intr = tabs + nph * sizeof(ph64);
+  ph64 ph[] = { // a library has the last four
+    {.type = PT_PHDR, .flags = 4, .offset = tabs, .vaddr = tabs, .paddr = tabs,
+     .filesz = nph * sizeof(ph64), .memsz = nph * sizeof(ph64), .align = 8},
+    {.type = PT_INTERP, .flags = 4, .offset = intr, .vaddr = intr, .paddr = intr,
+     .filesz = ldsn, .memsz = ldsn, .align = 1},
     {.type = PT_LOAD, .flags = 5, .filesz = top + code, .memsz = top + code, .align = 0x1000},
     {.type = PT_LOAD, .flags = 6, .offset = rw, .vaddr = rw + skew, .paddr = rw + skew,
      .filesz = dat + size - rw, .memsz = dat - rw + slots + 8 * self->impn, .align = skew},
@@ -583,7 +540,7 @@ static file* elfs_dyno(mode* self) {
     {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_EXECINSTR, .addr = top, .offset = top, .size = code,
      .align = step},
     {.type = SHT_DYNAMIC, .flags = SHF_ALLOC | SHF_WRITE, .addr = rw + skew, .offset = rw,
-     .size = sizeof dyn, .link = s_str, .align = 8, .entsize = sizeof(dyn64)},
+     .size = ndyn * sizeof(dyn64), .link = s_str, .align = 8, .entsize = sizeof(dyn64)},
     {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + skew, .offset = dat, .size = size,
      .align = step},
     {.type = SHT_NOBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + skew + bss, .offset = dat + size,
@@ -595,7 +552,8 @@ static file* elfs_dyno(mode* self) {
   file* out = zero(self, sizeof(file) + all);
   byte* o = out->head;
   out->body = out->tail = o + all;
-  copy(copy(copy(o, &id, sizeof(id)), &eh, sizeof(eh)), ph, sizeof ph);
+  copy(copy(copy(o, &id, sizeof(id)), &eh, sizeof(eh)), ph + (6 - nph), nph * sizeof(ph64));
+  copy(o + intr, (byte*)ldso, ldsn);
   u32i* h = (u32i*)(o + hash); // one bucket: a chain through every symbol
   h[0] = 1;
   h[1] = nsym;
@@ -615,7 +573,7 @@ static file* elfs_dyno(mode* self) {
     *r++ = (rela64){dat + skew + slots + 8 * i, arm? R_AARCH64_GLOB_DAT: R_X86_64_GLOB_DAT,
                     1 + t.ndef + elfs_need(self, &t, self->imps[i]->name, 0, 0), 0};
   copy(o + top, self->text->head, code);
-  copy(o + rw, dyn, sizeof dyn);
+  copy(o + rw, dyn + (sizeof dyn / sizeof *dyn - ndyn), ndyn * sizeof(dyn64)); // a program: no soname
   copy(o + dat, self->data->head, size);
   copy(o + dat + size, names, sizeof names);
   copy(o + shoff, sh, sizeof sh);
@@ -625,10 +583,10 @@ static file* elfs_dyno(mode* self) {
   return out;
 }
 
-// an executable, or without main a library: shared, or static as an object
+// a program or a shared library as one image, or without main a static
+// library, an object
 file* elfs_pack(mode* self) {
-  if(self->main) return elfs_exec(self);
-  return self->libs == lb_relo? elfs_relo(self): elfs_dyno(self);
+  return !self->main && self->libs == lb_relo? elfs_relo(self): elfs_dyno(self);
 }
 
 const form elfs = {
