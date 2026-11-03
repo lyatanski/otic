@@ -459,6 +459,21 @@ byte* ia64_ffi(file* text, byte* func, u32i argc, u32i, osys os) {
   return at;
 }
 
+// Win64 callers pass the arguments in rcx rdx r8 r9 and past 32 bytes of
+// shadow space, and keep rdi and rsi: the SysV registers otic takes them in
+void ia64_hail(file* text, osys os) {
+  if(os != os_win) return;
+  iw(text, 0x5657);                               // push rdi; push rsi
+  ib(text, 0x48); iw(text, 0xcf89);               // mov rdi, rcx
+  ib(text, 0x48); iw(text, 0xd689);               // mov rsi, rdx
+  ib(text, 0x4c); iw(text, 0xc289);               // mov rdx, r8
+  ib(text, 0x4c); iw(text, 0xc989);               // mov rcx, r9
+  id(text, 0x24448b4c); ib(text, 56);             // mov r8, [rsp+56]
+  id(text, 0x244c8b4c); ib(text, 64);             // mov r9, [rsp+64]
+  ib(text, 0xe8); id(text, 3);                    // call the function, past what follows
+  iw(text, 0x5f5e); ib(text, 0xc3);               // pop rsi; pop rdi; ret
+}
+
 const emit ia64 = {
   .move = ia64_move,
   .load = ia64_load,
@@ -495,6 +510,7 @@ const emit ia64 = {
   .lift = ia64_lift,
   .take = ia64_take,
   .pass = ia64_pass,
+  .hail = ia64_hail,
   .cpu  = cpu_ia64,
 };
 

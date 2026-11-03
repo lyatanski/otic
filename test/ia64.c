@@ -137,5 +137,12 @@ spec("ia64") {
       check(emits("e8 05 00 00 00 b8 07 00 00 00 c9 c3",
                   d = here, e.dial(t), e.move(t, 7), f = here, e.done(t), e.link(t, d, f)));
     }
+    it("enters from Win64 C code through the SysV registers, none elsewhere") {
+      // push rdi; push rsi; mov rdi, rcx; mov rsi, rdx; mov rdx, r8; mov rcx, r9;
+      // mov r8, [rsp+56]; mov r9, [rsp+64]; call +3; pop rsi; pop rdi; ret
+      check(emits("57 56 48 89 cf 48 89 d6 4c 89 c2 4c 89 c9 4c 8b 44 24 38 4c 8b 4c 24 40 "
+                  "e8 03 00 00 00 5e 5f c3", e.hail(t, os_win)));
+      check(emits("", e.hail(t, os_linux)));
+    }
   }
 }

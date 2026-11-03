@@ -487,6 +487,9 @@ byte* arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
   return at;
 }
 
+// AAPCS64 passes the arguments in x0-x7 everywhere: otic's way
+void arm8_hail(file*, osys) {}
+
 const emit arm8 = {
   .move = arm8_move,
   .load = arm8_load,
@@ -523,6 +526,7 @@ const emit arm8 = {
   .lift = arm8_lift,
   .take = arm8_take,
   .pass = arm8_pass,
+  .hail = arm8_hail,
   .cpu  = cpu_arm8,
 };
 

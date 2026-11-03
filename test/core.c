@@ -105,6 +105,7 @@ static void mock_keep(file* t)                         { note(t, op_keep, ""); }
 static void mock_lift(file* t, byte* keep, u32i k)     { note(NULL, op_lift, " %s %u", at(t, keep), k); }
 static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, " %u", k); }
 static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
+static void mock_hail(file*, osys)                     {}
 
 static const emit mock = {
   mock_move, mock_load, mock_stor, mock_peek, mock_addr, mock_glob, mock_site,
@@ -112,7 +113,7 @@ static const emit mock = {
   mock_when, mock_jump, mock_back, mock_loop, mock_open, mock_size, mock_parm,
   mock_args, mock_dial, mock_trap, mock_done, mock_boot, mock_link, mock_ffi,
   mock_crt, mock_flag, mock_cond, mock_keep, mock_lift, mock_tmpk, mock_pass,
-  cpu_ia64,
+  mock_hail, cpu_ia64,
 };
 
 static file* mock_pack(mode*)         { packs++; return NULL; }

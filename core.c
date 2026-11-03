@@ -443,26 +443,23 @@ oper  dial(mode* self, item* name) {
 
 s32i  room(mode* self, u32i size);
 
-// the address of function func, named name: a pointer to its type. That of
-// an import is read from its slot, one in text is pc-relative. Otic functions
-// take their arguments the SysV way, which a call through a pointer on Win64
-// does not
+// the address of function func, named name: a pointer to its type, called
+// the C way (ring). That of an import is read from its slot, one in text is
+// pc-relative: an otic function's entry for C code, when it has one
 oper  hand(mode* self, item* name, meta* func) {
   meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->more));
   if(func->lib) { spot(self, port(self, func)); emit(self, read, 8); return acc(t); }
   meta* body = func->addr? func: find(self, 0, name); // past a prototype
   if(!body || body->kind != call || !body->addr)
     flaw(self, "'%.*s' is not defined yet: define or link it before taking its address\n", nick(name));
-  if(!body->ext && self->arch.cpu == cpu_ia64 && self->form.os == os_win)
-    flaw(self, "'%.*s': no pointers to otic functions on Windows x86-64 yet\n", nick(name));
   byte* at = self->text->body;
   emit(self, glob);
-  emit(self, site, at, body->addr - at);
+  emit(self, site, at, (body->hail? body->hail: body->addr) - at);
   return acc(t);
 }
 
 // x(args), x a pointer to a function or what one points to: called the C way,
-// which an otic function follows as well (SysV, AAPCS64). x is kept in a frame
+// which an otic function follows as well, or its entry for C code. x is kept in a frame
 // slot while the arguments are pushed, each sign extended to 64 bits, then the
 // call goes through the slot
 oper  ring(mode* self, oper x) {
@@ -1267,7 +1264,10 @@ void  decl(mode* self) {
     if(anon) flaw(self, "a parameter without a name\n");
     if(func->more) flaw(self, "only an import can be variadic\n");
     if(home(self)->talk.kind != '{') flaw(self, "expected function body\n");
+    byte* hail = self->text->body;
+    emit(self, hail, self->form.os);
     func->addr = self->text->body;
+    func->hail = hail != func->addr? hail: NULL;
     emit(self, open);
     for(u32i i = 0; i < func->size; i++) emit(self, parm, i, self->pile[top + i].slot);
     stmt(self);

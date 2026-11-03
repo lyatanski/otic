@@ -135,6 +135,9 @@ typedef struct {
   void (*lift)(file*, byte* keep, u32i k);
   void (*take)(file*, u32i k);                     // tmp = acc, acc = scratch k
   void (*pass)(file*, u32i i);                     // argument register i = acc
+  // an entry for C code of os to call the function that follows it: nothing
+  // when otic's way of passing arguments is that of os
+  void (*hail)(file*, osys os);
   chip  cpu;  // target, each form maps it to its own machine id
 } emit;
 
@@ -174,6 +177,7 @@ struct meta {
   meta* hide; // what the name meant before
   item* name;
   byte* addr;
+  byte* hail; // a function's entry for C code (emit.hail), NULL when it is addr
   meta* lib;  // the library of an import
   u32i  size; // bytes of a type, parameters of a call
   s32i  slot; // frame offset, data offset, offset of a member
