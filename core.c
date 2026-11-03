@@ -73,7 +73,8 @@ void chop(mode* self) {
       if     (c[1] == '.' && c[2] == '.') { kind = tok3(c); break; }
       else if(c[1] <  '0' || c[1] >  '9') { kind = tok1(c); break; }
       // else fall trough to number
-    case '0' ... '9':
+    case '0': case '1': case '2': case '3': case '4':
+    case '5': case '6': case '7': case '8': case '9':
       while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
       if(*c == '.')
         while(*c++ && (*c >= '0' && *c <= '9')) fval = fval * 10 + *c - '0';
@@ -89,12 +90,13 @@ void chop(mode* self) {
           else break;
         }
       kind = tnum; break;
-    case '_': case 'a' ... 'z': case 'A' ... 'Z':
+    case '\0': break;
+    default: // a name: a letter or _, then letters, digits and _
+      if(!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || *c == '_'))
+        flaw(self, "unexpected character '%c'\n", *c);
       while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
          || (*c >= '0' && *c <= '9') || *c == '_') c++;
       kind = ttag; break;
-    case '\0': break;
-    default: flaw(self, "unexpected character '%c'\n", *c);
   }
 
   if(kind == '"' || kind == ttag) {
@@ -972,10 +974,11 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
     if(n > type->size) flaw(self, "string too long\n");
     if(at) quote(home(self)->talk.hash, at);
     else {
-      byte b[n];
+      byte* b = self->heap(NULL, n);
       quote(home(self)->talk.hash, b);
       bits(self, slot, b, n);
       bits(self, slot + n, NULL, type->size - n);
+      self->heap(b, 0);
     }
     chop(self);
   }
@@ -1392,6 +1395,7 @@ void  make(mode* self) {
   meta* func = find(self, 0, sget(self, "main"));
   if(func && func->kind == call && func->addr) {
     self->main = self->boot = func->addr;
+    self->hail = func->hail? func->hail: func->addr;
     if(libc && libc->kind == call && libc->ext && libc->addr) {
       self->boot = self->text->body;
       emit(self, crt, self->main, libc->addr);

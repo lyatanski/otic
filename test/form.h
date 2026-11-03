@@ -24,7 +24,8 @@ static struct { u32i calls; u64i at, org; } docked;
 static u32i  laid, asked;
 static meta* asks[8];
 
-static void  mock_dock(mode*, u64i at, u64i org) {
+static void  mock_dock(mode* m, u64i at, u64i org) {
+  (void)m;
   docked.calls++;
   docked.at = at;
   docked.org = org;
@@ -47,19 +48,21 @@ static item  items[32];
 static meta* elsewhere[32];
 static u32i  itemn;
 
-static item* mock_name(mode*, u32i at, char* mark, u64i size) {
+static item* mock_name(mode* m, u32i at, char* mark, u64i size) {
+  (void)m;
   for(u32i i = 0; i < itemn; i++)
     if(items[i].size == size && !memcmp(items[i].name, mark, size)) return items + i;
   items[itemn] = (item){.size = size, .name = mark, .unit = at};
   return items + itemn++;
 }
 static item* named(char* name) { return mock_name(&self, 1, name, strlen(name)); }
-static meta* mock_find(mode*, u32i at, item* name) {
+static meta* mock_find(mode* m, u32i at, item* name) {
+  (void)m;
   if(at && name->data) return name->data;
   return elsewhere[name - items];
 }
 static u32i  mock_heft(meta* x) { return x->kind == pend? 2: x->lib? 1: x->weak? 3: 4; }
-static u32i  mock_ask(mode*, meta* x) { asks[asked] = x; return asked++; }
+static u32i  mock_ask(mode* m, meta* x) { (void)m; asks[asked] = x; return asked++; }
 
 // another unit defines name as x
 static meta  defs[8];
@@ -77,12 +80,14 @@ static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size);
 static meta* signs[8];
 static cord  cords[8];
 static u32i  signn, cordn;
-static u32i  mock_sign(mode*, meta*** out) {
+static u32i  mock_sign(mode* m, meta*** out) {
+  (void)m;
   *out = malloc(sizeof signs);
   memcpy(*out, signs, sizeof signs);
   return signn;
 }
-static u32i  mock_knit(mode*, cord** out) {
+static u32i  mock_knit(mode* m, cord** out) {
+  (void)m;
   *out = malloc(sizeof cords);
   memcpy(*out, cords, sizeof cords);
   return cordn;

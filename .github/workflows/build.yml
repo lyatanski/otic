@@ -6,17 +6,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        include:
+          - { os: ubuntu-latest,    cc: gcc,   cflags: -Wall -Wextra, out: "-o " }
+          - { os: ubuntu-24.04-arm, cc: gcc,   cflags: -Wall -Wextra, out: "-o " }
+          - { os: macos-latest,     cc: clang, cflags: -Wall -Wextra, out: "-o " }
+          - { os: windows-latest,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, out: -Fe }
     runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+      CFLAGS: ${{ matrix.cflags }}
+      OUT: ${{ matrix.out }}
     defaults:
       run:
         shell: bash
     steps:
       - name: Check out
         uses: actions/checkout@v7
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Compiler
+        run:  command -v $CC
       - name: Build
-        run:  gcc -std=gnu2x -Wall -Wextra -Os -o tic main.c
+        run:  $CC $CFLAGS -Os ${OUT}tic main.c
       - name: Module specs
-        run:  for m in core ia64 arm8 elfs mach pe32; do gcc -std=gnu2x -Wall -Wextra -o spec-$m test/$m.c && ./spec-$m || exit 1; done
+        run:  for m in core ia64 arm8 elfs mach pe32; do $CC $CFLAGS ${OUT}spec-$m test/$m.c && ./spec-$m || exit 1; done
       - name: Test
-        run:  gcc -std=gnu2x -Wall -Wextra -o spec test/main.c && TIC=./tic ./spec
+        run:  $CC $CFLAGS ${OUT}spec test/main.c && TIC=./tic ./spec

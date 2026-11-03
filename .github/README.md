@@ -12,7 +12,13 @@ executable, shared library or object file.
 ## Build
 
 ```sh
-gcc -std=gnu2x -Os -o tic main.c
+gcc -Os -o tic main.c
+```
+
+With MSVC, from a Developer Command Prompt:
+
+```bat
+cl /std:clatest /Os /Fetic main.c
 ```
 
 ## Usage
@@ -83,5 +89,5 @@ int main() {
 ## Tests
 
 ```sh
-gcc -std=gnu2x -o spec test/main.c && TIC=./tic ./spec
+gcc -o spec test/main.c && TIC=./tic ./spec
 ```

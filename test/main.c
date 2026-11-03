@@ -12,8 +12,11 @@
 #include <limits.h>   /* INT_MIN */
 #include <stdlib.h>   /* getenv */
 #include <sys/stat.h> /* chmod, mkdir */
-#include <unistd.h>   /* read, close, dup2, access, unlink */
 #ifdef _WIN32
+#include <io.h>       /* read, close, dup2, access, unlink: no unistd.h in MSVC */
+#ifndef F_OK
+#define F_OK 0
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>  /* WaitForSingleObject, TerminateProcess */
 #include <process.h>  /* _spawnv */
@@ -23,12 +26,13 @@
 #define NULL_DEV "NUL"
 #define EXE ".exe"
 #else
+#include <unistd.h>   /* read, close, dup2, access, unlink */
 #include <sys/wait.h> /* waitpid */
 #define NULL_DEV "/dev/null"
 #define EXE ""
 #endif
 
-#ifdef __aarch64__
+#if defined(__aarch64__) || defined(_M_ARM64)
 #define TAG "arm8"
 #define pick(x86, arm) (arm)
 #define WRITE "64"
@@ -237,7 +241,7 @@ static int  library(char* name, char* src, bool stat, char* cflags, char* drv) {
 // are skipped. x86-64 hosts only, so it runs once
 static int  apple(void) {
   static int ok = -1;
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(_M_X64)
   if(ok < 0) ok = !system("clang --version >" NULL_DEV " 2>&1 && ld64.lld --version >" NULL_DEV " 2>&1");
 #else
   ok = 0;

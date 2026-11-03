@@ -60,7 +60,7 @@ static void mock_stor(file* t, s32i slot, u32i size)   { note(t, op_stor, " %d:%
 static void mock_peek(file* t, s32i slot, u32i size)   { note(t, op_peek, " %d:%u", slot, size); }
 static void mock_addr(file* t, s32i slot)              { note(t, op_addr, " %d", slot); }
 static void mock_glob(file* t)                         { note(t, op_glob, ""); }
-static void mock_site(file* t, byte*, s64i dist)       { note(NULL, op_site, " %ld", (long)dist); (void)t; }
+static void mock_site(file* t, byte* g, s64i dist)     { note(NULL, op_site, " %ld", (long)dist); (void)t; (void)g; }
 static void mock_read(file* t, u32i size)              { note(t, op_read, " %u", size); }
 static void mock_fill(file* t, u32i size)              { note(t, op_fill, " %u", size); }
 static void mock_push(file* t)                         { note(t, op_push, ""); }
@@ -91,7 +91,8 @@ static void mock_trap(file* t, u32i argc)              { note(t, op_trap, " %u",
 static void mock_done(file* t)                         { note(t, op_done, ""); }
 static void mock_boot(file* t)                         { note(t, op_boot, ""); }
 static void mock_link(file* t, byte* from, byte* to)   { note(NULL, op_link, " %s %s", at(t, from), at(t, to)); }
-static byte* mock_ffi(file* t, byte* func, u32i argc, u32i fixed, osys) {
+static byte* mock_ffi(file* t, byte* func, u32i argc, u32i fixed, osys os) {
+  (void)os;
   byte* site = t->body;
   note(t, op_ffi, " %u/%u%s", fixed, argc, func? "": " slot");
   return func? site: NULL;
@@ -105,7 +106,7 @@ static void mock_keep(file* t)                         { note(t, op_keep, ""); }
 static void mock_lift(file* t, byte* keep, u32i k)     { note(NULL, op_lift, " %s %u", at(t, keep), k); }
 static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, " %u", k); }
 static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
-static void mock_hail(file*, osys)                     {}
+static void mock_hail(file* t, osys os)                { (void)t; (void)os; }
 
 static const emit mock = {
   mock_move, mock_load, mock_stor, mock_peek, mock_addr, mock_glob, mock_site,
@@ -116,8 +117,8 @@ static const emit mock = {
   mock_hail, cpu_ia64,
 };
 
-static file* mock_pack(mode*)         { packs++; return NULL; }
-static void  mock_take(mode*, file*)  { takes++; }
+static file* mock_pack(mode* m)          { packs++; (void)m; return NULL; }
+static void  mock_take(mode* m, file* f) { takes++; (void)m; (void)f; }
 
 // the sources make may scan, by path
 typedef struct { char* path; char* src; } named;
@@ -136,8 +137,8 @@ static file* mock_scan(char* path) {
   }
   return NULL;
 }
-static void* mock_hold(void*, size_t size)    { return malloc(size); }
-static void* mock_drop(void*, size_t)         { return NULL; } // text: freed by the next make_
+static void* mock_hold(void* p, size_t size)  { (void)p; return malloc(size); }
+static void* mock_drop(void* p, size_t size)  { (void)p; (void)size; return NULL; } // text: freed by the next make_
 static void* mock_heap(void* p, size_t size)  { if(size) return realloc(p, size); free(p); return NULL; }
 static void  mock_show(mode* m)               { shows++; laid = m->data->body - m->data->head; }
 

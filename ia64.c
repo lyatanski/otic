@@ -294,7 +294,8 @@ void ia64_keep(file* text) {
   iw(text, 0x9066);                             // xchg ax, ax: room for lift
 }
 
-void ia64_lift(file*, byte* keep, u32i k) {
+void ia64_lift(file* text, byte* keep, u32i k) {
+  (void)text;
   keep[0] = 0x49; keep[1] = 0x89; keep[2] = modrm(.mod=3, .reg=eax.reg.enc, .rm=k); // mov r8+k, rax
 }
 
@@ -354,7 +355,8 @@ void ia64_glob(file* text) {
   id(text, 0);
 }
 
-void ia64_site(file*, byte* glob, s64i dist) {
+void ia64_site(file* text, byte* glob, s64i dist) {
+  (void)text;
   s32i rel = dist - 7;                          // relative to the end of the lea
   if(rel != dist - 7) fail("data too far\n");
   copy(glob + 3, &rel, sizeof(rel));
@@ -385,7 +387,8 @@ void ia64_open(file* text) {
   ib(text, 0x48); iw(text, 0xec81); id(text, 0); // sub rsp, imm32, patched by size
 }
 
-void ia64_size(file*, byte* func, s32i size) {
+void ia64_size(file* text, byte* func, s32i size) {
+  (void)text;
   copy(func + 7, &size, sizeof(size));
 }
 
@@ -414,7 +417,8 @@ void ia64_boot(file* text) {
   iw(text, 0x050f);                           // syscall
 }
 
-void ia64_link(file*, byte* boot, byte* main) {
+void ia64_link(file* text, byte* boot, byte* main) {
+  (void)text;
   s32i rel = main - (boot + 5);               // call rel32 is relative to its end
   copy(boot + 1, &rel, sizeof(rel));
 }
@@ -440,7 +444,8 @@ void ia64_crt(file* text, byte* main, byte* start) {
 // past 32 bytes of shadow space. Both want rsp 16-byte aligned, which pushed
 // operands may break: the old rsp is pushed twice, then rsp rounded down, so
 // one copy is at [rsp+8] either way
-byte* ia64_ffi(file* text, byte* func, u32i argc, u32i, osys os) {
+byte* ia64_ffi(file* text, byte* func, u32i argc, u32i fixed, osys os) {
+  (void)fixed;
   static const byte win[] = { 1, 2, 8, 9, 10, 0 }; // r10 and rax go on the stack
   byte room = os == os_win? argc > 4? 48: 32: 0;
   if(!func) { ib(text, 0x4c); iw(text, 0x188b); } // mov r11, [rax]

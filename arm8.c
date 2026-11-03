@@ -281,7 +281,8 @@ void arm8_keep(file* data) {
   arm8_save(data);
 }
 
-void arm8_lift(file*, byte* keep, u32i k) {
+void arm8_lift(file* data, byte* keep, u32i k) {
+  (void)data;
   *(uint32_t*)keep = X | I3510_ORR | r0 << 16 | 31 << 5 | (9 + k); // mov x9+k, x0
 }
 
@@ -331,7 +332,8 @@ void arm8_glob(file* data) {
   arm8_put(data, X | I3502_ADD | r16 << 16);                        // add x0, x0, x16
 }
 
-void arm8_site(file*, byte* glob, s64i dist) {
+void arm8_site(file* data, byte* glob, s64i dist) {
+  (void)data;
   if(dist < 0) { dist = -dist; ((uint32_t*)glob)[3] |= 1 << 30; } // sub x0, x0, x16
   if(dist >> 32) fail("data too far\n");
   ((uint32_t*)glob)[1] |= (dist & 0xffff) << 5;
@@ -356,7 +358,8 @@ void arm8_open(file* data) {
   arm8_put(data, 0xd10003ff);                                       // sub sp, sp, #0, patched by size
 }
 
-void arm8_size(file*, byte* func, s32i size) {
+void arm8_size(file* data, byte* func, s32i size) {
+  (void)data;
   if(size > 0xfff) fail("frame too large: %d bytes\n", size);
   ((uint32_t*)func)[2] |= size << 10;
 }
@@ -452,7 +455,8 @@ void arm8_boot(file* data) {
   arm8_put(data, 0xd4000001); // svc #0
 }
 
-void arm8_link(file*, byte* boot, byte* main) {
+void arm8_link(file* data, byte* boot, byte* main) {
+  (void)data;
   *(uint32_t*)boot = I3206_BL | (((main - boot) >> 2) & 0x3ffffff);
 }
 
@@ -488,7 +492,7 @@ byte* arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
 }
 
 // AAPCS64 passes the arguments in x0-x7 everywhere: otic's way
-void arm8_hail(file*, osys) {}
+void arm8_hail(file* data, osys os) { (void)data; (void)os; }
 
 const emit arm8 = {
   .move = arm8_move,

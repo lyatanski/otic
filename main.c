@@ -2,8 +2,8 @@
 #include "core.h"
 
 #ifdef _WIN32
-#include <memoryapi.h>  /* for VirtualAlloc */
-#include <libloaderapi.h> /* for LoadLibrary */
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>    /* VirtualAlloc, LoadLibrary, FlushInstructionCache */
 #else
 #include <sys/mman.h>   /* for mmap         */
 #include <dlfcn.h>      /* for dlopen       */
@@ -29,7 +29,7 @@ extern const form mach;
 extern const form pe32;
 void  ario_load(mode*, file*);
 void  ario_pull(mode*, meta*);
-#ifdef __aarch64__
+#if defined(__aarch64__) || defined(_M_ARM64)
 #define base arm8
 #else // __x86_64__
 #define base ia64
@@ -89,7 +89,11 @@ void prep(void* memory, size_t size) {
   if(mprotect(memory, size, PROT_READ | PROT_EXEC))
 #endif
     fail("cannot protect %zu bytes\n", size);
+#ifdef _WIN32
+  FlushInstructionCache(GetCurrentProcess(), memory, size);
+#else
   __builtin___clear_cache((char*)memory, (char*)memory + size);
+#endif
 }
 
 void* drop(void* memory, size_t size) {
@@ -164,14 +168,13 @@ void  plug(mode* self, u64i* slot) {
   }
 }
 
-#if defined(_WIN32) && defined(__x86_64__)
-typedef int (__attribute__((sysv_abi)) *func)(); // generated code clobbers rdi, rsi
-#else
-typedef int (*func)();
-#endif
+typedef int (*func)(void);
 // the image: text, then data, bss and the import slots on pages of their own
 void  exec(mode* self) {
   if(self->boot != self->main) fail("cannot run a program with a C library, write it with -e\n");
+#ifdef _WIN32 // a Win64 caller: only main's hail keeps rdi and rsi, as it wants
+  if(self->form.os != os_win) fail("cannot run another form here, write it with -e\n");
+#endif
   u64i  code = self->text->body - self->text->head;
   u64i  at   = (code + 0x3fff) & ~0x3fff; // 16 KB: pages on any host
   u64i  size = self->data->body - self->data->head;
@@ -183,7 +186,7 @@ void  exec(mode* self) {
   copy(run + at, self->data->head, size);
   plug(self, (u64i*)(run + all) - self->impn);
   if(at) prep(run, at); // text only: data and bss stay writable
-  int return_code = ((func)(run + (self->main - self->text->head)))();
+  int return_code = ((func)(run + (self->hail - self->text->head)))();
   printf("%d\n", return_code);
 }
 
@@ -208,7 +211,8 @@ struct opts {
         args:1;
 };
 
-static void help(mode*, opts* self, char*) {
+static void help(mode* m, opts* self, char* para) {
+  (void)m; (void)para;
   printf("usage: %s [options] file\n", "tic");
   printf("options:\n");
   while(self->name) {
@@ -226,36 +230,42 @@ static bool is(char* x, char* y) {
   return y && alike(x, y, slen(y) + 1);
 }
 
-static void arch(mode* self, opts*, char* para) {
+static void arch(mode* self, opts* opt, char* para) {
+  (void)opt;
   if(is(para, "ia64")) self->arch = ia64;
   else if(is(para, "arm8")) self->arch = arm8;
   else fail("architecture '%s' not supported\n", para);
 }
 
-static void wrap(mode* self, opts*, char* para) {
+static void wrap(mode* self, opts* opt, char* para) {
+  (void)opt;
   if(is(para, "elfs")) self->form = elfs;
   else if(is(para, "mach")) self->form = mach;
   else if(is(para, "pe32")) self->form = pe32;
   else fail("form '%s' not supported\n", para);
 }
 
-static void dest(mode* self, opts*, char* para) {
+static void dest(mode* self, opts* opt, char* para) {
+  (void)opt;
   self->outp = para;
   self->show = save;
   if(!self->libs) self->libs = lb_dyno;
 }
 
-static void flat(mode* self, opts*, char*) {
+static void flat(mode* self, opts* opt, char* para) {
+  (void)opt; (void)para;
   self->libs = lb_relo;
 }
 
-static void seek(mode* self, opts*, char* para) {
+static void seek(mode* self, opts* opt, char* para) {
+  (void)opt;
   if(self->dirn == sizeof self->dirs / sizeof *self->dirs) fail("too many -L directories\n");
   self->dirs[self->dirn++] = para;
 }
 
 // the source: its link and load lines name the objects and libraries
-static void apos(mode* self, opts*, char* para) {
+static void apos(mode* self, opts* opt, char* para) {
+  (void)opt;
   self->name = para;
 }
 
@@ -295,7 +305,7 @@ int   main(int argc, char** argv) {
     {"-e", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
     {"-s", "--static", .desc = "without main, write an object instead of a shared library", .call = flat},
     {"-p", "--path", .args = 1, .desc = "directory to look for modules and libraries", .call = seek},
-    {"-h", "--help", .desc = "display help", .call = help}, {},
+    {"-h", "--help", .desc = "display help", .call = help}, {0},
   };
   parse(&self, args, argc, argv, apos);
   if(!self.name) fail("no input file\n");
