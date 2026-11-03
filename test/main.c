@@ -626,6 +626,38 @@ spec(TAG) {
                  "out g = {.i[0].b = 5, .i[0] = {.a = 1}};\n"
                  "int main() { out o = {.i[0].b = 5, .i[0] = {.a = 1}};\n"
                  "  return (o.i[0].a * 10 + o.i[0].b) * (g.i[0].a == 1 && !g.i[0].b); }\n");
+    it("lays out and reads bit-fields")
+      expect(29, "struct s { byte b:1, x:1, r:1, w:1, _:4; };\n"
+                 "int main() { s v = {.x = 1, .w = 1}; byte* p = &v; v._ = 1;\n"
+                 "  return *p + v.x + v.w * 2 + v.b + v.r; }\n");
+    it("sign extends int bit-fields, not narrower ones")
+      expect(7, "struct s { int a:3; int b:5; byte c:2; long d:4; };\n"
+                "int main() { s v = {-3, 0, 3, 0}; v.b = 17; v.d = 15; v.c = v.c + 1;\n"
+                "  return (v.a == -3) + (v.b == -15) * 2 + (v.d == -1) * 4 + v.c * 8; }\n");
+    it("writes bit-fields through pointers and globals, with op=")
+      expect(40, "struct s { int a:4; int b:12; nu16 c:3; };\ns g = {1, 2, 3};\n"
+                 "void set(s* p) { p->b += 30; p->a = p->a * 3; p->c = (p->b = p->b + 1) + 2; }\n"
+                 "int main() { set(&g); nu16* h = &g; return g.b + g.a + g.c + (h[0] == 0x213); }\n");
+    it("puts a bit-field in the next unit when it would cross one")
+      expect(14, "struct s { int a:30; int b:4; char c; int :0; char d; };\n"
+                 "int main() { s v; byte* p = &v; int i = 0; while(i < 12) { p[i] = 0; i += 1; }\n"
+                 "  v.b = 7; v.c = 2; v.d = 5; return p[4] + p[5] + p[8]; }\n");
+    it("crosses 32 bits in a long bit-field")
+      expect(7, "struct s { int a:10; long c:40; long d:30; };\n"
+                "int main() { long one = 1; s v = {3, 0, -5}; v.c = (one << 38) + 9;\n"
+                "  long* p = &v; v.a = -1;\n"
+                "  return (v.c == (one << 38) + 9) + (v.d == -5) * 2 + (p[0] >> 10 == v.c) * 4; }\n");
+    it("uses anonymous struct types")
+      expect(21, "struct { int x; int y; } pt = {.y = 4};\n"
+                 "int main() { struct { int a; int b; } q = {2, 3};\n"
+                 "  return pt.y + q.a * q.b + (struct { int a; int b; }){5, 11}.b + pt.x; }\n");
+    it("gives the members of an anonymous struct member to its struct")
+      expect(31, "struct o { char k; struct { int a; byte b:2, c:3; }; long z; };\n"
+                 "o g = {1, 2, 3, 4, 5};\n"
+                 "int main() { o v = {.c = 7, .a = 9}; return g.k + g.a + g.b + g.c + g.z + v.a + v.c + v.k + v.z; }\n");
+    it("defines a struct in a function and with its declarators")
+      expect(23, "struct n { int v; n* next; } n1 = {3};\n"
+                 "int main() { struct w { int a; } wv = {11}; struct p { int b; }; p v; v.b = 9; return wv.a + v.b + n1.v; }\n");
     it("makes compound literals")
       expect(16, "struct p { int a; int b; };\nint sum(p* q) { return q->a + q->b; }\n"
                  "int main() { return (p){3, 4}.a + (p){.b = 4}.b + sum(&(p){2, 7}); }\n");
@@ -1041,6 +1073,16 @@ spec(TAG) {
       expect(bad, "struct p { int x; };\nint main() { p v = {.x.y = 1}; return 0; }\n");
     it("rejects an index designator into a struct")
       expect(bad, "struct p { int x; };\nint main() { p v = {[0] = 1}; return 0; }\n");
+    it("rejects a bit-field of no integer")
+      expect(bad, "struct s { int* p : 3; };\nint main() { return 0; }\n");
+    it("rejects a bit-field wider than its type")
+      expect(bad, "struct s { byte a : 9; };\nint main() { return 0; }\n");
+    it("rejects a named bit-field of width 0")
+      expect(bad, "struct s { int a : 0; };\nint main() { return 0; }\n");
+    it("rejects the address of a bit-field")
+      expect(bad, "struct s { int a : 3; };\nint main() { s v; int* p = &v.a; return 0; }\n");
+    it("rejects an unknown struct")
+      expect(bad, "int main() { struct nope v; return 0; }\n");
     it("rejects a cast")
       expect(bad, "int main() { long x = 3; return (int)x; }\n");
     it("rejects a compound literal in a global initializer")

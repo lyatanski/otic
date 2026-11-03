@@ -156,7 +156,7 @@ meta* href(mode* self, meta* type) { return knot(self, refs, type, 8); }
 
 // what a pointer points to or an array holds, NULL for the rest
 meta* elem(meta* t) { return t && (t->kind == refs || t->kind == many)? t->type: NULL; }
-u32i  wide(meta* t) { return elem(t) || (t && t->kind == base && t->size == 8)? WIDE: 0; }
+u32i  wide(meta* t) { return elem(t) || (t && (t->kind == base || t->kind == bitf) && t->size == 8)? WIDE: 0; }
 u32i  span(meta* t) { return t? t->size: 4; }
 u32i  lean(meta* t) { return t->kind == many? lean(t->type): t->kind == list? (u32i)t->slot: t->size; }
 
@@ -201,6 +201,69 @@ u32i  quote(item* s, byte* out) {
   return n + 1;
 }
 
+// the bits of bit-field f in its unit
+u64i  ones(meta* f) { return (f->longs < 64? ((u64i)1 << f->longs) - 1: ~(u64i)0) << f->slot; }
+
+// acc, the unit of bit-field f, to the value of f: shifted down, sign extended
+// unless its type is narrower than int (a char is not)
+oper  bite(mode* self, meta* f) {
+  u32i  w = wide(f), n = w? 64: 32;
+  if(f->size < 4) {
+    if(f->slot) emit(self, calc, tokd('>', '>'), 1, f->slot);
+    emit(self, calc, '&', 1, (1 << f->longs) - 1);
+  }
+  else {
+    if(n - f->slot - f->longs) emit(self, calc, tokd('<', '<') | w, 1, n - f->slot - f->longs);
+    if(n - f->longs) emit(self, calc, tokd('>', '>') | w, 1, n - f->longs);
+  }
+  return acc(f->type);
+}
+
+// acc &= the bits of bit-field f: a mask that is no 32-bit constant is made in
+// acc and moved to tmp
+void  mask(mode* self, meta* f) {
+  u64i  m = ones(f);
+  u32i  w = wide(f);
+  if(!w || (s64i)(s32i)m == (s64i)m) { emit(self, calc, '&' | w, 1, (s32i)m); return; }
+  emit(self, push);
+  emit(self, move, -1);
+  emit(self, cast, 1);
+  emit(self, calc, tokd('<', '<') | WIDE, 1, f->longs);
+  emit(self, calc, '^' | WIDE, 1, -1);
+  emit(self, calc, tokd('<', '<') | WIDE, 1, f->slot);
+  emit(self, pull);
+  emit(self, calc, '&' | WIDE, 0, 0);
+}
+
+// acc into bit-field f of x, a local, or in memory with its address pushed:
+// unit ^= (unit ^ acc << slot) & ones. The value is what f holds then
+oper  sow(mode* self, oper x, meta* f) {
+  u32i  w = wide(f), n = f->size;
+  if(f->slot) emit(self, calc, tokd('<', '<') | w, 1, f->slot);
+  if(x.kind == vloc) {
+    emit(self, peek, x.ival, n);
+    emit(self, calc, '^' | w, 0, 0);
+    mask(self, f);
+    emit(self, peek, x.ival, n);
+    emit(self, calc, '^' | w, 0, 0);
+    emit(self, stor, x.ival, n);
+  }
+  else {
+    emit(self, pull); // tmp = acc << slot, acc = the address
+    emit(self, push);
+    emit(self, push);
+    emit(self, read, n);
+    emit(self, calc, '^' | w, 0, 0);
+    mask(self, f);
+    emit(self, pull); // tmp = the bits that change, acc = the address
+    emit(self, read, n);
+    emit(self, calc, '^' | w, 0, 0);
+    emit(self, pull);
+    emit(self, fill, n);
+  }
+  return bite(self, f);
+}
+
 oper  load(mode* self, oper x) {
   meta* t = x.type;
   if(x.kind == vcmp) { emit(self, flag, x.ival); return acc(NULL); }
@@ -217,11 +280,12 @@ oper  load(mode* self, oper x) {
   if(x.kind == vloc) emit(self, load, x.ival, span(t));
   if(x.kind == vglo) spot(self, x.ival);
   if(x.kind != vloc) emit(self, read, span(t));
-  return acc(t);
+  return t && t->kind == bitf? bite(self, t): acc(t);
 }
 
 // &x
 oper  refr(mode* self, oper x) {
+  if(x.type && x.type->kind == bitf) flaw(self, "cannot take the address of a bit-field\n");
   if(x.kind == vloc) emit(self, addr, x.ival);
   if(x.kind == vglo) spot(self, x.ival);
   if(x.kind == vnum || x.kind == vacc || x.kind == vcmp) flaw(self, "cannot take the address\n");
@@ -503,6 +567,7 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
     }
   }
   else if(w && !test) t = wide(x.type)? x.type: y.type; // long
+  if(t && t->kind == bitf) t = t->type;
 
   bool trap = (op == '/' || op == '%') && y.kind == vnum && !y.ival; // left to run time
   if(x.kind == vnum && y.kind == vnum && !trap)
@@ -552,7 +617,8 @@ u32i  sets(u32i kind) {
 
 // x = y, x op= y: right associative, the value is left in acc
 oper  give(mode* self, u32i op, oper x) {
-  meta* t = x.type;
+  meta* t = x.type, *f = t && t->kind == bitf? t: NULL;
+  if(f) t = f->type; // the value is of its integer type
   if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || (t && (t->kind == many || t->kind == list)))
     flaw(self, "cannot assign\n");
   if(x.kind == vglo) { spot(self, x.ival); x.kind = vmem; }
@@ -561,6 +627,7 @@ oper  give(mode* self, u32i op, oper x) {
   oper  y = expr(self, 1);
   if(op != '=') y = pair(self, op, x, y, mark);
   if(!wide(t) != !wide(load(self, y).type)) { if(wide(t)) sext(self, y); else emit(self, cast, 0); }
+  if(f) return sow(self, x, f);
   if(x.kind == vloc) emit(self, stor, x.ival, span(t));
   else { emit(self, pull); emit(self, fill, span(t)); }
   if(span(t) < 4) emit(self, calc, '&', 1, (1 << span(t) * 8) - 1); // as it was stored
@@ -619,9 +686,22 @@ s32i  room(mode* self, u32i size) {
   return -self->slot;
 }
 
-// a type name, after an optional struct
+meta* bulk(mode* self, item* name);
+
+// a type name: struct name, or a type name with an optional struct before,
+// or struct name? { ... }, which defines one
 meta* sort(mode* self) {
-  if(same(self, "struct")) chop(self);
+  if(same(self, "struct")) {
+    chop(self);
+    item* name = home(self)->talk.kind == ttag? home(self)->talk.hash: NULL;
+    if(name) chop(self);
+    if(home(self)->talk.kind == '{') return bulk(self, name);
+    if(!name) flaw(self, "expected a struct name or {\n");
+    meta* type = find(self, self->unit, name);
+    if(!type || (type->kind != list && type->kind != base))
+      flaw(self, "no struct '%.*s'\n", nick(name));
+    return type;
+  }
   meta* type = ilk(self);
   if(!type) {
     if(home(self)->talk.kind == ttag)
@@ -758,7 +838,8 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
         k[d] = dive(self, d, p, off);
         if(!(p = pick(k + d++, &off))) flaw(self, "too many initializers\n");
       }
-      if(!at && end < off) bits(self, slot + end, NULL, off - end);
+      u32i  to = off + (p->kind == bitf? p->size: 0); // a bit-field reads its unit
+      if(!at && end < to) bits(self, slot + end, NULL, to - end);
       seal(self, p, at? at + off: NULL, slot + off);
       if(end < off + p->size) end = off + p->size;
       step(k + d - 1);
@@ -783,7 +864,13 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
     if(x.kind != vnum || t || type->kind == list)
       flaw(self, "expected a constant\n");
     s64i v = x.ival;
-    copy(at, &v, type->size);
+    if(type->kind == bitf) { // into the bits of its unit
+      u64i u = 0;
+      copy((byte*)&u, at, type->size);
+      u ^= (u ^ (u64i)v << type->slot) & ones(type);
+      copy(at, (byte*)&u, type->size);
+    }
+    else copy(at, &v, type->size);
   }
   else give(self, '=', (oper){vloc, slot, type});
 }
@@ -806,6 +893,7 @@ oper  lit(mode* self) {
 // type declarator (= init)? (, declarator (= init)?)* ;
 void  vars(mode* self) {
   meta* base = sort(self);
+  if(twin(self, ';')) return; // a struct, defined
   do {
     item* name;
     meta* type = noun(self, base, &name);
@@ -828,36 +916,73 @@ void  once(mode* self, meta* prev, item* name, bool own) {
     flaw(self, "'%.*s' is already defined\n", nick(name));
 }
 
-// struct name? { type declarator (, declarator)* ; ... } ;
-// a member is aligned to its size, the struct to its widest member
-void  bulk(mode* self) {
-  meta  anon = {.kind = list}, *type = &anon, **next = &anon.type;
-  if(home(self)->talk.kind == ttag) { // seeded first: members may point to it
-    once(self, find(self, self->unit, home(self)->talk.hash), home(self)->talk.hash, 0);
-    seed(self, .name=home(self)->talk.hash, .kind=list);
+// the type of a bit-field of integer type t, width bits from bit at in its unit
+meta* nibs(mode* self, meta* t, u32i at, u32i width) {
+  for(meta* x = self->defs; x < self->defs + self->defn; x++)
+    if(x->kind == bitf && x->type == t && (u32i)x->slot == at && x->longs == width) return x;
+  return mint(self, (meta){.kind = bitf, .type = t, .size = t->size, .slot = at, .longs = width});
+}
+
+// { type declarator (: width)? (, declarator (: width)?)* ; ... } after
+// "struct" name?, name NULL when it has none. A member is aligned to its size,
+// the struct to its widest member. A bit-field takes the bits after the one
+// before unless they would cross a unit of its type, a width 0 without a name
+// ends the unit. A struct without a name nor a declarator gives its members
+meta* bulk(mode* self, item* name) {
+  meta* type;
+  if(name) { // seeded first: members may point to it
+    once(self, find(self, self->unit, name), name, 0);
+    seed(self, .name=name, .kind=list);
     type = self->pile + self->top - 1;
-    next = &type->type;
-    chop(self);
   }
+  else type = mint(self, (meta){.kind = list});
+  meta** next = &type->type;
   skip(self, '{');
-  u32i size = 0, align = 1;
+  u32i  bit = 0, align = 1; // bits laid out
   while(!twin(self, '}')) {
-    meta* base = sort(self);
+    meta* of = sort(self); // the type the declarators are of
+    if(twin(self, ';')) { // a struct, defined: its members are this one's when it has no name
+      if(of->kind != list || of->name) continue;
+      u32i  a = lean(of);
+      bit = (bit + 8 * a - 1) & -(8 * a);
+      for(meta* m = of->type; m; m = m->hide) {
+        *next = mint(self, (meta){.name = m->name, .type = m->type, .slot = bit / 8 + m->slot});
+        next = &(*next)->hide;
+      }
+      bit += 8 * of->size;
+      if(align < a) align = a;
+      continue;
+    }
     do {
-      item* name;
-      meta* t = noun(self, base, &name);
-      u32i  a = lean(t);
-      size = (size + a - 1) & -a;
-      *next = mint(self, (meta){.name = name, .type = t, .slot = size});
+      item* n = NULL;
+      meta* t = home(self)->talk.kind == ':'? of: noun(self, of, &n);
+      u32i  a = lean(t), at = bit;
+      if(twin(self, ':')) {
+        if(t->kind != base || !t->size) flaw(self, "a bit-field must be an integer\n");
+        oper  k = expr(self, 1);
+        u32i  u = 8 * t->size;
+        if(k.kind != vnum || k.ival < 0 || (u32i)k.ival > u || (!k.ival && n))
+          flaw(self, "bit-field width must be a constant from %d to %d\n", !!n, u);
+        if(!k.ival || bit / u != (bit + k.ival - 1) / u) bit = (bit + u - 1) & -u; // the next unit
+        at = bit;
+        bit += k.ival;
+        if(!n) continue;
+        t = nibs(self, t, at % u, k.ival);
+        at = at / u * u;
+      }
+      else {
+        at = bit = (bit + 8 * a - 1) & -(8 * a);
+        bit += 8 * t->size;
+      }
+      *next = mint(self, (meta){.name = n, .type = t, .slot = at / 8});
       next = &(*next)->hide;
-      size += t->size;
       if(align < a) align = a;
     } while(twin(self, ','));
     skip(self, ';');
   }
-  skip(self, ';');
-  type->size = (size + align - 1) & -align;
+  type->size = ((bit + 7) / 8 + align - 1) & -align;
   type->slot = align;
+  return type;
 }
 
 void  stmt(mode* self);
@@ -984,16 +1109,11 @@ void  decl(mode* self) {
   bool ext = same(self, "extern");
   if(ext) chop(self);
 
-  // declaration begins with a type, or defines a struct:
+  // declaration begins with a type, or only defines a struct:
   // "struct" name? "{" decl "}" ";"
-  if(same(self, "struct")) {
-    chop(self);
-    meta* type = ilk(self);
-    if(!type || type->kind != list) { bulk(self); return; }
-  }
-
   item* name;
   meta* base = sort(self);
+  if(twin(self, ';')) return;
   meta* type = term(self, base, &name);
 
   // type name "(" args ")" "{" stmt "}"     // callable decl

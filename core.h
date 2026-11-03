@@ -154,8 +154,10 @@ typedef struct {
 // base and list (struct) are types, data a local, glob a global, call a function,
 // refs a pointer type, many an array type, pend a name in an archive's index
 // whose member is not pulled yet, dlib a shared library named by load: its name
-// is the string, its addr the handle once the run loads it
-typedef enum { base, list, data, call, glob, refs, many, pend, dlib } what;
+// is the string, its addr the handle once the run loads it. bitf is the type
+// of a bit-field: type its integer type, size the bytes of the unit it is read
+// and written in, slot its first bit there, longs its width
+typedef enum { base, list, data, call, glob, refs, many, pend, dlib, bitf } what;
 typedef struct meta meta;
 
 // static libraries: none when load is NULL. pull is called only for the names
