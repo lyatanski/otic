@@ -591,6 +591,44 @@ spec(TAG) {
     it("nests structs and arrays")
       expect(12, "struct in { int t[3]; };\nstruct out { char c; in i[2]; };\nout g;\n"
                  "int main() { out* p = &g; g.i[1].t[2] = 9; p->c = 3; return p->i[1].t[2] + g.c; }\n");
+    it("initializes struct locals, the rest is zero")
+      expect(23, "struct p { char c; int x; long y; };\n"
+                 "void f() { p v; v.c = 9; v.x = 9; v.y = 9; }\n"
+                 "int main() { f(); p v = {2, 3}; return v.c * 10 + v.x + v.y; }\n");
+    it("initializes struct globals")
+      expect(123, "struct p { char c; int x; long y; };\np g = {1, 2, 3};\n"
+                  "int main() { return g.c * 100 + g.x * 10 + g.y; }\n");
+    it("initializes members by name, the rest is zero")
+      expect(21, "struct p { char c; int x; long y; };\n"
+                 "void f() { p v; v.c = 9; v.x = 9; v.y = 9; }\n"
+                 "int main() { f(); p v = {.x = 2, 1}; return v.c + v.x * 10 + v.y; }\n");
+    it("initializes global members by name")
+      expect(30, "struct p { char c; int x; long y; };\np g = {.y = 3};\n"
+                 "int main() { return g.c + g.x + g.y * 10; }\n");
+    it("initializes elements by index")
+      expect(46, "int main() { int a[5] = {[3] = 4, 6, [0] = 1};\n"
+                 "  return a[0] * 0 + a[3] * 10 + a[4] + a[1] + a[2]; }\n");
+    it("follows designator chains")
+      expect(123, "struct in { int a; int b; };\nstruct out { int k; in i[2]; };\n"
+                  "out g = {.i[1].a = 2, 3, .k = 1};\n"
+                  "int main() { out o = {.i[1].a = 2, 3, .k = 1};\n"
+                  "  return (o.k * 100 + o.i[1].a * 10 + o.i[1].b) * (g.k * 100 + g.i[1].a * 10 + g.i[1].b == 123); }\n");
+    it("initializes nested structs and arrays without braces")
+      expect(237, "struct in { int a; int b; };\nstruct out { int k; in i[2]; };\n"
+                   "int main() { out o = {1, 2, 3, 4};\n"
+                   "  return o.i[0].a * 100 + o.i[0].b * 10 + o.i[1].a * 2 + o.i[1].b - o.k; }\n");
+    it("initializes nested structs and arrays in braces")
+      expect(237, "struct in { int a; int b; };\nstruct out { int k; in i[2]; };\n"
+                   "int main() { out o = {1, {{2, 3}, {.a = 4},},};\n"
+                   "  return o.i[0].a * 100 + o.i[0].b * 10 + o.i[1].a * 2 + o.i[1].b - o.k; }\n");
+    it("sets a braced member again as a whole")
+      expect(10, "struct in { int a; int b; };\nstruct out { int k; in i[2]; };\n"
+                 "out g = {.i[0].b = 5, .i[0] = {.a = 1}};\n"
+                 "int main() { out o = {.i[0].b = 5, .i[0] = {.a = 1}};\n"
+                 "  return (o.i[0].a * 10 + o.i[0].b) * (g.i[0].a == 1 && !g.i[0].b); }\n");
+    it("initializes char array members with strings")
+      expect(205, "struct s { char n[4]; int v; };\ns t[2] = {{\"ab\", 1}, {.v = 9}};\n"
+                  "int main() { s x = {\"ab\", 1}; return x.n[0] + x.n[1] + x.n[3] + t[1].v + t[1].n[0] + t[0].v; }\n");
   }
 
   context("link") {
@@ -981,6 +1019,20 @@ spec(TAG) {
       expect(bad, "int main() { char s[3] = \"abc\"; return 0; }\n");
     it("rejects too many nested local initializers")
       expect(bad, "int main() { int a[2][2] = {{1, 2, 3}}; return 0; }\n");
+    it("rejects too many struct initializers")
+      expect(bad, "struct p { int x; int y; };\nint main() { p v = {1, 2, 3}; return 0; }\n");
+    it("rejects an unknown member designator")
+      expect(bad, "struct p { int x; };\nint main() { p v = {.z = 1}; return 0; }\n");
+    it("rejects an index designator out of bounds")
+      expect(bad, "int main() { int a[2] = {[2] = 1}; return 0; }\n");
+    it("rejects a non-constant index designator")
+      expect(bad, "int main() { int n = 0; int a[2] = {[n] = 1}; return 0; }\n");
+    it("rejects a member designator into a non-struct")
+      expect(bad, "struct p { int x; };\nint main() { p v = {.x.y = 1}; return 0; }\n");
+    it("rejects an index designator into a struct")
+      expect(bad, "struct p { int x; };\nint main() { p v = {[0] = 1}; return 0; }\n");
+    it("rejects a non-constant global member")
+      expect(bad, "struct p { int x; };\nint n;\np g = {.x = n};\nint main() { return 0; }\n");
     it("rejects a void variable")
       expect(bad, "int main() { void v; return 0; }\n");
     it("rejects a struct operand")

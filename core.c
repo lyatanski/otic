@@ -236,13 +236,19 @@ oper  star(mode* self, oper x) {
   return (oper){vmem, 0, t};
 }
 
-// x.name
-oper  memb(mode* self, oper x) {
-  meta* m = x.type && x.type->kind == list? x.type->type: NULL;
+// the member of the struct type that the name at hand names
+meta* mate(mode* self, meta* type) {
+  meta* m = type && type->kind == list? type->type: NULL;
   if(!m || home(self)->talk.kind != ttag) flaw(self, "expected a member\n");
   for(; m && !akin(m->name, home(self)->talk.hash); m = m->hide); // m->name may be another unit's
   if(!m) flaw(self, "no member '%.*s'\n", nick(home(self)->talk.hash));
   chop(self);
+  return m;
+}
+
+// x.name
+oper  memb(mode* self, oper x) {
+  meta* m = mate(self, x.type);
   if(x.kind != vmem) x.ival += m->slot;
   else if(m->slot) emit(self, calc, '+' | WIDE, 1, m->slot);
   x.type = m->type;
@@ -662,19 +668,87 @@ void  bits(mode* self, s32i slot, byte* src, u32i size) {
   }
 }
 
+// an array or struct being initialized, at off in the braced one, and the
+// part of it at hand: member memb of a struct, element i of an array
+typedef struct { meta* type; meta* memb; u32i i, off; } tier;
+
+#define bulky(t) ((t)->kind == many || (t)->kind == list)
+#define TIERS 16
+
+// a tier for type at off, at its first part
+tier  dive(mode* self, u32i depth, meta* type, u32i off) {
+  if(depth == TIERS) flaw(self, "initializer nested too deep\n");
+  return (tier){type, type->kind == list? type->type: NULL, 0, off};
+}
+
+// the part of n at hand and its offset into off, NULL past the end of n
+meta* pick(tier* n, u32i* off) {
+  if(n->type->kind == list) {
+    if(!n->memb) return NULL;
+    *off = n->off + n->memb->slot;
+    return n->memb->type;
+  }
+  meta* t = n->type->type;
+  if((n->i + 1) * t->size > n->type->size) return NULL;
+  *off = n->off + n->i * t->size;
+  return t;
+}
+
+void  step(tier* n) { if(n->type->kind == list) n->memb = n->memb->hide; else n->i++; }
+
+// a designator, .name or [index], picks the part of n
+void  aim(mode* self, tier* n) {
+  if(twin(self, '.')) { n->memb = mate(self, n->type); return; }
+  skip(self, '[');
+  if(n->type->kind != many) flaw(self, "not an array\n");
+  oper i = expr(self, 1);
+  skip(self, ']');
+  if(i.kind != vnum || i.ival < 0 || (u32i)i.ival >= n->type->size / n->type->type->size)
+    flaw(self, "array index must be a constant in bounds\n");
+  n->i = i.ival;
+}
+
 // the initializer of type: { a list }, the rest zero, a string for a char
 // array, or a value; a global's is a constant written to at, a local's is
-// stored to slot (at is NULL)
+// stored to slot (at is NULL). A list goes over the members of a struct or
+// the elements of an array in order, or from the part a designator chain
+// (.name, [index]) picks; a part that is a struct or array takes the values
+// that come when they are not in braces
 void  seal(mode* self, meta* type, byte* at, s32i slot) {
   meta* t = type->kind == many? type->type: NULL;
-  if(t && twin(self, '{')) {
-    u32i i = 0;
-    for(; !twin(self, '}'); i++) {
-      if(i) skip(self, ',');
-      if((i + 1) * t->size > type->size) flaw(self, "too many initializers\n");
-      seal(self, t, at? at + i * t->size: NULL, slot + i * t->size);
+  if(at && bulky(type)) for(u32i i = 0; i < type->size; i++) at[i] = 0; // as a whole, again
+  if(bulky(type) && twin(self, '{')) {
+    tier  k[TIERS] = {dive(self, 0, type, 0)};
+    u32i  d = 1, end = 0, off = 0; // depth of k; the bytes before end are set
+    while(!twin(self, '}')) {
+      meta* p;
+      u32i  c = home(self)->talk.kind;
+      if(c == '.' || c == '[') { // the chain starts from the braced tier
+        aim(self, k + (d = 1) - 1);
+        for(; (c = home(self)->talk.kind) == '.' || c == '['; aim(self, k + d - 1)) {
+          p = pick(k + d - 1, &off);
+          k[d] = dive(self, d, p, off);
+          d++;
+        }
+        skip(self, '=');
+        p = pick(k + d - 1, &off);
+      }
+      else {
+        while(!(p = pick(k + d - 1, &off)) && d > 1) step(k + --d - 1);
+        if(!p) flaw(self, "too many initializers\n");
+      }
+      while(bulky(p) && home(self)->talk.kind != '{'
+            && !(p->kind == many && p->type->size == 1 && home(self)->talk.kind == '"')) {
+        k[d] = dive(self, d, p, off);
+        if(!(p = pick(k + d++, &off))) flaw(self, "too many initializers\n");
+      }
+      if(!at && end < off) bits(self, slot + end, NULL, off - end);
+      seal(self, p, at? at + off: NULL, slot + off);
+      if(end < off + p->size) end = off + p->size;
+      step(k + d - 1);
+      if(!twin(self, ',')) { skip(self, '}'); break; }
     }
-    if(!at) bits(self, slot + i * t->size, NULL, type->size - i * t->size); // data is zero
+    if(!at) bits(self, slot + end, NULL, type->size - end);
   }
   else if(t && t->size == 1 && home(self)->talk.kind == '"') {
     u32i n = quote(home(self)->talk.hash, NULL);
