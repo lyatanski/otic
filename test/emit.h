@@ -7,12 +7,12 @@
 #include <time.h> // test.h's, before the encoder: its macros clash with system headers
 #include "../util.c"
 
-static byte  text[4096];
-static file* t = (file*)text;
+static byte  textb[4096];
+static file* t = (file*)textb;
 
 static void  start(void) {
   t->body = t->head;
-  t->tail = text + sizeof text;
+  t->tail = textb + sizeof textb;
 }
 
 // the bytes emitted since start are want, else both are shown

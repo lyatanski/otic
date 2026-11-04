@@ -185,11 +185,11 @@ typedef struct { vkind kind; s32i ival; meta* type; } oper;
 // size bytes of data, or of bss when zero: their offset
 u32i  lay(mode* self, u32i size, bool zero, u32i align) {
   if(zero) {
-    self->zero = ((self->zero + align - 1) & -align) + size;
-    return (self->zero - size) | ZERO;
+    self->zero = ((self->zero + align - 1) & ~(u64i)(align - 1)) + size;
+    return (u32i)(self->zero - size) | ZERO;
   }
   file* d = self->data;
-  u32i  off = ((d->body - d->head) + align - 1) & -align;
+  u32i  off = ((u32i)(d->body - d->head) + align - 1) & ~(align - 1);
   if(off + size > (u64i)(d->tail - d->head)) fail("data section overflow\n");
   d->body = d->head + off + size;
   return off;
@@ -517,9 +517,9 @@ oper  atom(mode* self) {
   u32i op = home(self)->talk.kind;
   oper x;
   switch(op) {
-    case tnum: x = cnst(home(self)->talk.ival); chop(self); return x;
+    case tnum: x = cnst((s32i)home(self)->talk.ival); chop(self); return x;
     case '"': {
-      u32i off = lay(self, home(self)->talk.hash->size - 1, 0, 8);
+      u32i off = lay(self, (u32i)(home(self)->talk.hash->size - 1), 0, 8);
       quote(home(self)->talk.hash, self->data->head + off);
       chop(self);
       spot(self, off);
@@ -562,7 +562,7 @@ oper  atom(mode* self) {
       chop(self);
       x = atom(self);
       if(x.kind == vnum)
-        return cnst(op == '-'? (s32i)-(u32i)x.ival: op == '!'? !x.ival: ~x.ival);
+        return cnst(op == '-'? (s32i)(0 - (u32i)x.ival): op == '!'? !x.ival: ~x.ival);
       x = load(self, x);
       u32i w = wide(x.type);
       if(op == '-') { emit(self, swap); emit(self, move, 0); emit(self, calc, '-' | w, 0, 0); }
@@ -1043,7 +1043,7 @@ void  once(mode* self, meta* prev, item* name, bool own) {
 meta* nibs(mode* self, meta* t, u32i at, u32i width) {
   for(meta* x = self->defs; x < self->defs + self->defn; x++)
     if(x->kind == bitf && x->type == t && (u32i)x->slot == at && x->longs == width) return x;
-  return mint(self, (meta){.kind = bitf, .type = t, .size = t->size, .slot = at, .longs = width});
+  return mint(self, (meta){.kind = bitf, .type = t, .size = t->size, .slot = at, .longs = (byte)width});
 }
 
 // { type declarator (: width)? (, declarator (: width)?)* ; ... } after
@@ -1067,7 +1067,7 @@ meta* bulk(mode* self, item* name) {
     if(twin(self, ';')) { // a struct, defined: its members are this one's when it has no name
       if(of->kind != list || of->name) continue;
       u32i  a = lean(of);
-      bit = (bit + 8 * a - 1) & -(8 * a);
+      bit = (bit + 8 * a - 1) & ~(8 * a - 1);
       for(meta* m = of->type; m; m = m->hide) {
         *next = mint(self, (meta){.name = m->name, .type = m->type, .slot = bit / 8 + m->slot});
         next = &(*next)->hide;
@@ -1086,7 +1086,7 @@ meta* bulk(mode* self, item* name) {
         u32i  u = 8 * t->size;
         if(k.kind != vnum || k.ival < 0 || (u32i)k.ival > u || (!k.ival && n))
           flaw(self, "bit-field width must be a constant from %d to %d\n", !!n, u);
-        if(!k.ival || bit / u != (bit + k.ival - 1) / u) bit = (bit + u - 1) & -u; // the next unit
+        if(!k.ival || bit / u != (bit + k.ival - 1) / u) bit = (bit + u - 1) & ~(u - 1); // the next unit
         at = bit;
         bit += k.ival;
         if(!n) continue;
@@ -1094,7 +1094,7 @@ meta* bulk(mode* self, item* name) {
         at = at / u * u;
       }
       else {
-        at = bit = (bit + 8 * a - 1) & -(8 * a);
+        at = bit = (bit + 8 * a - 1) & ~(8 * a - 1);
         bit += 8 * t->size;
       }
       *next = mint(self, (meta){.name = n, .type = t, .slot = at / 8});
@@ -1103,7 +1103,7 @@ meta* bulk(mode* self, item* name) {
     } while(twin(self, ','));
     skip(self, ';');
   }
-  type->size = ((bit + 7) / 8 + align - 1) & -align;
+  type->size = ((bit + 7) / 8 + align - 1) & ~(align - 1);
   type->slot = align;
   return type;
 }
@@ -1251,11 +1251,11 @@ void  decl(mode* self) {
     for(; !twin(self, ')'); func->size++, twin(self, ',')) {
       if(twin(self, tokd('.', '.', '.'))) { func->more = 1; skip(self, ')'); break; }
       item* n;
-      meta* type = coil(self, sort(self), &n);
-      if(!n && !type->size && !func->size && twin(self, ')')) break; // (void)
+      meta* of = coil(self, sort(self), &n);
+      if(!n && !of->size && !func->size && twin(self, ')')) break; // (void)
       if(!n) { anon = 1; continue; } // an import may leave it out
-      if(wide(type)) func->longs |= 1 << func->size;
-      seed(self, .name=n, .type=type, .kind=data, .slot=room(self, 8));
+      if(wide(of)) func->longs |= 1 << func->size;
+      seed(self, .name=n, .type=of, .kind=data, .slot=room(self, 8));
     }
     if(func->size > 6) flaw(self, "more than 6 parameters\n");
     if(twin(self, ';')) {

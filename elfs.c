@@ -127,15 +127,15 @@ void elfs_take(mode* self, file* f) {
     if(s->type == SHT_INIT_ARRAY || s->type == SHT_FINI_ARRAY || s->type == SHT_PREINIT_ARRAY)
       flop("constructors are not supported\n");
     if(a > 4096 || a & (a - 1)) flop("alignment over a page\n");
-    if(a > self->most) self->most = a;
+    if(a > self->most) self->most = (u32i)a;
     if(s->flags & SHF_EXECINSTR) {
       file* t = self->text;
-      u64i  at = ((t->body - t->head) + a - 1) & -a;
+      u64i  at = ((t->body - t->head) + a - 1) & ~(a - 1);
       if(at + s->size > (u64i)(t->tail - t->head)) fail("text section overflow\n");
       put[i] = (seat){t->head + at, 0};
       t->body = copy(put[i].at, o + s->offset, s->type == SHT_NOBITS? 0: s->size);
     } else {
-      put[i].off = self->core.lay(self, s->size, s->type == SHT_NOBITS, a);
+      put[i].off = self->core.lay(self, (u32i)s->size, s->type == SHT_NOBITS, (u32i)a);
       if(s->type != SHT_NOBITS) copy(self->data->head + put[i].off, o + s->offset, s->size);
     }
   }
@@ -171,14 +171,14 @@ void elfs_take(mode* self, file* f) {
     if(s->shidx == SHN_COMMON) { // value: alignment
       u64i a = s->value? s->value: 1;
       if(a > 4096 || a & (a - 1) || s->size >> 30) flop("bad common symbol\n");
-      if(a > self->most) self->most = a;
-      x.slot = self->core.lay(self, s->size, 1, a);
+      if(a > self->most) self->most = (u32i)a;
+      x.slot = self->core.lay(self, (u32i)s->size, 1, (u32i)a);
     } else {
       if(s->shidx >= n || put[s->shidx].off == GONE.off)
         flop("'%.*s' is in a section left out\n", nick(name));
       seat p = put[s->shidx];
       if(p.at) { x.kind = call; x.addr = p.at + s->value; x.size = VARY; x.ext = 1; }
-      else x.slot = p.off + s->value;
+      else x.slot = (s32i)(p.off + s->value);
     }
     defs[i] = x;
     name->data = defs + i;
@@ -290,7 +290,7 @@ static void  elfs_sign(mode* self, elfs_syms* t) {
 
 // the name of s at str + *at, NUL ended: its offset
 static u32i  elfs_word(byte* str, u64i* at, item* s) {
-  u32i o = *at;
+  u32i o = (u32i)*at;
   str[o + s->size] = 0;
   copy(str + o, s->name, s->size);
   *at += s->size + 1;
@@ -325,7 +325,7 @@ static void  elfs_syms_put(mode* self, elfs_syms* t, sym64* sym, byte* str, bool
 // the offset of the k-th name in a string table of NUL separated names
 static u32i  elfs_nth(char* s, u32i k) {
   u32i i = 1;
-  while(k--) i += slen(s + i) + 1;
+  while(k--) i += (u32i)slen(s + i) + 1;
   return i;
 }
 
@@ -378,7 +378,7 @@ static file* elfs_relo(mode* self) {
     else if(c->kind == cd_wide) RELA(ss, so, R_X86_64_64, sym, to + c->add);
     else if(ts == ss) { // within a section: the distance is known
       s64i d = (s64i)to + c->add - (s64i)so;
-      s32i r = d;
+      s32i r = (s32i)d;
       if(r != d) fail("object reference too far\n");
       copy(at, &r, sizeof(r));
     }
@@ -413,7 +413,7 @@ static file* elfs_relo(mode* self) {
   u64i at = sizeof(elfs_id) + sizeof(eh64);
   for(u32i i = 1; i < s_all; i++) {
     sh[i].name = elfs_nth(names, i - 1);
-    at = (at + sh[i].align - 1) & -sh[i].align;
+    at = (at + sh[i].align - 1) & ~(sh[i].align - 1);
     sh[i].offset = at;
     if(sh[i].type != SHT_NOBITS) at += sh[i].size;
   }
@@ -488,10 +488,10 @@ static file* elfs_dyno(mode* self) {
   const u64i dsym = (hash + 4 * (3 + nsym) + 7) & -8;
   const u64i dstr = dsym + nsym * sizeof(sym64);
   const u64i drel = (dstr + strs + 7) & -8;
-  const u64i top  = (drel + nrel * sizeof(rela64) + step - 1) & -step;
+  const u64i top  = (drel + nrel * sizeof(rela64) + step - 1) & ~(step - 1);
   const u64i rw   = (top + code + 7) & -8;
-  const u64i dat  = (rw + ndyn * sizeof(dyn64) + step - 1) & -step;
-  const u64i bss  = ((size + step - 1) & -step), slots = bss + ((self->zero + 7) & -8);
+  const u64i dat  = (rw + ndyn * sizeof(dyn64) + step - 1) & ~(step - 1);
+  const u64i bss  = ((size + step - 1) & ~(step - 1)), slots = bss + ((self->zero + 7) & -8);
   const u64i skew = 0x10000;
   const u64i shoff = (dat + size + sizeof names + 7) & -8, all = shoff + s_all * sizeof(sh64);
   self->core.dock(self, dat + skew - top, top);
@@ -506,7 +506,7 @@ static file* elfs_dyno(mode* self) {
     .shoff  = shoff,
     .ehsize = sizeof(id) + sizeof(eh),
     .phsize = sizeof(ph64),
-    .phnum  = nph,
+    .phnum  = (u16i)nph,
     .shsize = sizeof(sh64),
     .shnum  = s_all,
     .shstr  = s_names,
@@ -556,7 +556,7 @@ static file* elfs_dyno(mode* self) {
   copy(o + intr, (byte*)ldso, ldsn);
   u32i* h = (u32i*)(o + hash); // one bucket: a chain through every symbol
   h[0] = 1;
-  h[1] = nsym;
+  h[1] = (u32i)nsym;
   h[2] = nsym > 1;
   for(u32i i = 1; i + 1 < nsym; i++) h[3 + i] = i + 1;
   elfs_syms_put(self, &t, (sym64*)(o + dsym) + 1, o + dstr, 1, top, dat + skew, dat + skew + bss,

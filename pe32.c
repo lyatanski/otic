@@ -72,9 +72,9 @@ file* pe32_pack(mode* self) {
   if(!self->main) fail("a library is not supported in this form yet\n");
   const u64i org = 0x140000000;
   const u32i salign = 0x1000, falign = 0x200;
-#define up(n, align) (((n) + (align) - 1) & ~((align) - 1))
+#define up(n, align) ((u32i)((n) + (align) - 1) & ~((align) - 1))
   const chip cpu = self->arch.cpu;
-  const u32i code = self->text->body - self->text->head;
+  const u32i code = (u32i)(self->text->body - self->text->head);
   const u32i boot = up(code, 16); // the stub after the code
   const u32i text = boot + pe32_boot(NULL, cpu, 0, 0, 0);
   const u32i head = up(sizeof(pe32_head), falign);
@@ -82,8 +82,8 @@ file* pe32_pack(mode* self) {
   const u32i toff = head, doff = toff + up(text, falign);   // and file offsets
   const u32i iat = drva + offs(pe32_idata, bind);
   const u32i idat = up(sizeof(pe32_idata), 16);             // data after the imports
-  const u32i size = self->data->body - self->data->head;
-  const u32i fsz = up(idat + size, falign), vmsz = idat + up(size, 16) + self->zero;
+  const u32i size = (u32i)(self->data->body - self->data->head);
+  const u32i fsz = up(idat + size, falign), vmsz = idat + up(size, 16) + (u32i)self->zero;
   const u32i all = doff + fsz;
   self->core.dock(self, drva + idat - trva, 0);
 
@@ -131,7 +131,7 @@ file* pe32_pack(mode* self) {
   out->tail = out->head + all;
   copy(out->head, &h, sizeof(h));
   copy(out->head + toff, self->text->head, code);
-  pe32_boot(out->head + toff + boot, cpu, trva + boot, trva + (self->main - self->text->head), iat);
+  pe32_boot(out->head + toff + boot, cpu, trva + boot, trva + (u32i)(self->main - self->text->head), iat);
   copy(out->head + doff, &d, sizeof(d));
   copy(out->head + doff + idat, self->data->head, size);
   return out;

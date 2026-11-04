@@ -39,7 +39,8 @@ R(ir8, 0); R(ir9, 1); R(ir10, 2); R(ir11, 3); R(ir12, 4); R(ir13, 5); R(ir14, 6)
  *   X - extension of the SIB index field
  *   B - extension of the ModR/M rm field, SIB base field or Opcode reg field
  */
-#define rex(...)   (*(byte*)&(struct { byte b:1, x:1, r:1, w:1, _:4; }){._=4, __VA_ARGS__})
+typedef struct { byte b:1, x:1, r:1, w:1, _:4; } rexs;
+#define rex(...)   (*(byte*)&(rexs){._=4, __VA_ARGS__})
 
 /* ModR/M:
  *   mod:
@@ -48,25 +49,29 @@ R(ir8, 0); R(ir9, 1); R(ir10, 2); R(ir11, 3); R(ir12, 4); R(ir13, 5); R(ir14, 6)
  *     2 - Register/Memory with 4 byte offset
  *     3 - Register/Register
  */
-#define modrm(...) (*(byte*)&(struct { byte rm:3, reg:3, mod:2; }){__VA_ARGS__})
+typedef struct { byte rm:3, reg:3, mod:2; } modrms;
+#define modrm(...) (*(byte*)&(modrms){__VA_ARGS__})
 
-#define sib(...)   (*(byte*)&(struct { byte base:3, idx:3, ss:2; }){__VA_ARGS__})
+typedef struct { byte base:3, idx:3, ss:2; } sibs;
+#define sib(...)   (*(byte*)&(sibs){__VA_ARGS__})
 
 // some instructions have the following bit pattern xxxxxxDS where:
 //   S - size of the operand 8/32
 //   D - direction RM -> 1 / MR -> 0
-#define bits(...)  (*(byte*)&(struct { byte size:1, rm:1, _:6; }){__VA_ARGS__})
+typedef struct { byte size:1, rm:1, _:6; } bitss;
+#define bits(...)  (*(byte*)&(bitss){__VA_ARGS__})
 
 //byte mspe[] = {           rcx, rdx, ir8, ir9 };
 //byte elfs[] = { rdi, rsi, rdx, rcx, ir8, ir9 };
 
-#define BODY {                                                               \
+// the low bytes of v: an immediate or displacement is emitted truncated
+#define BODY(type) { type val = (type)v;                                     \
   if(text->body + sizeof(val) > text->tail) fail("text section overflow\n"); \
   text->body = copy(text->body, &val, sizeof(val)); }
-void ib(file* text, byte val) BODY
-void iw(file* text, u16i val) BODY
-void id(file* text, u32i val) BODY
-void io(file* text, u64i val) BODY
+void ib(file* text, u64i v) BODY(byte)
+void iw(file* text, u64i v) BODY(u16i)
+void id(file* text, u64i v) BODY(u32i)
+void io(file* text, u64i v) BODY(u64i)
 #undef  BODY
 
 void ia64_push(file* text, para src) {
@@ -137,7 +142,7 @@ void ia64_ret(file* text) {
 
 // prev is the end of a rel32 branch
 void ia64_mend(file* text, byte* prev) {
-  s32i dist = text->body - prev;
+  s32i dist = (s32i)(text->body - prev);
   copy(prev - 4, &dist, sizeof(dist));
 }
 
@@ -357,7 +362,7 @@ void ia64_glob(file* text) {
 
 void ia64_site(file* text, byte* glob, s64i dist) {
   (void)text;
-  s32i rel = dist - 7;                          // relative to the end of the lea
+  s32i rel = (s32i)(dist - 7);                  // relative to the end of the lea
   if(rel != dist - 7) fail("data too far\n");
   copy(glob + 3, &rel, sizeof(rel));
 }
@@ -419,7 +424,7 @@ void ia64_boot(file* text) {
 
 void ia64_link(file* text, byte* boot, byte* main) {
   (void)text;
-  s32i rel = main - (boot + 5);               // call rel32 is relative to its end
+  s32i rel = (s32i)(main - (boot + 5));       // call rel32 is relative to its end
   copy(boot + 1, &rel, sizeof(rel));
 }
 

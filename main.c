@@ -77,7 +77,6 @@ void* hold(void* memory, size_t size) {
   if(memory == MAP_FAILED) fail("cannot map %zu bytes\n", size);
   return memory;
 #endif
-  return NULL;
 }
 
 // W^X: the pages held writable turn executable, and no longer writable
@@ -178,7 +177,7 @@ void  exec(mode* self) {
   u64i  code = self->text->body - self->text->head;
   u64i  at   = (code + 0x3fff) & ~0x3fff; // 16 KB: pages on any host
   u64i  size = self->data->body - self->data->head;
-  u64i  bss  = at + ((size + gap(self) - 1) & -gap(self));
+  u64i  bss  = at + ((size + gap(self) - 1) & ~(gap(self) - 1));
   u64i  all  = bss + ((self->zero + 7) & -8) + 8 * self->impn; // the slots as pose places them
   byte* run  = self->hold(0, all);
   dock(self, at, (u64i)run);

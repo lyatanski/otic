@@ -69,7 +69,7 @@ static void mock_swap(file* t)                         { note(t, op_swap, ""); }
 static void mock_cast(file* t, bool wide)              { note(t, op_cast, wide? " long": " int"); }
 // a comparison op as written: "<=" for tokd('<', '='), its flags dropped
 static char* mock_op(u32i op, char* o) {
-  o[0] = op; o[1] = op >> 8; o[2] = op >> 16; o[3] = 0;
+  o[0] = (char)op; o[1] = (char)(op >> 8); o[2] = (char)(op >> 16); o[3] = 0;
   return o;
 }
 static void mock_calc(file* t, u32i op, bool cnst, s32i n) {
@@ -156,7 +156,7 @@ static int  make_(char* src) {
   free(self.text);
   memset(&self, 0, sizeof self);
   memset(calls, 0, sizeof calls);
-  traced = shows = packs = takes = laid = 0;
+  laid = traced = shows = packs = takes = 0;
   trace[0] = said[0] = 0;
   self = (mode){
     .name = "main.c",

@@ -57,14 +57,14 @@ spec("pe32") {
     }
     it("puts data and bss in .data") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
-      self.zero = 100;
+      ours.zero = 100;
       check((out = packed(pe32)) && (h = (pe32_head*)out->head));
       check(bytes(out->head + h->data.off + IDAT, "61 62 63 64"));
       check(h->data.vmsz == IDAT + 16 + 100 && h->opt.size == DRVA + 0x1000);
     }
     it("refuses a library, so far") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
-      self.main = NULL;
+      ours.main = NULL;
       check(!packed(pe32) && strstr(said, "a library is not supported"));
     }
   }

@@ -44,7 +44,7 @@ static file* finish(u16i arch) {
   o.n = (o.n + 7) & -8;
   elfs_id id = {.seal = {0x7f, 'E', 'L', 'F'}, .bits = eb_cl64, .data = ed_2lsb, .issue = ev_curr};
   eh64 eh = {.type = et_relo, .arch = arch, .issue = ev_curr, .shoff = o.n,
-             .ehsize = sizeof(id) + sizeof(eh), .shsize = sizeof(sh64), .shnum = o.shn};
+             .ehsize = sizeof(id) + sizeof(eh), .shsize = sizeof(sh64), .shnum = (u16i)o.shn};
   memcpy(o.at, &id, sizeof id);
   memcpy(o.at + sizeof id, &eh, sizeof eh);
   memcpy(o.at + o.n, o.sh, o.shn * sizeof(sh64));
@@ -85,7 +85,7 @@ static file* standard(u16i arch) {
 // take f: 1 when it was, else 0 and said tells why
 static bool  took(file* f) {
   if(setjmp(bail)) return 0;
-  elfs.take(&self, f);
+  elfs.take(&ours, f);
   return 1;
 }
 static bool  refused(file* f, char* why) {
@@ -104,16 +104,16 @@ static meta  lf, lv, lz, int4 = {.kind = base, .size = 4};
 static void  library(chip cpu, byte libs) {
   start(cpu, "\xb8\x07\x00\x00\x00\xc3" "\xe8\x00\x00\x00\x00", 11,
         "abcdefgh\x10\x00\x00\x00\x00\x00\x00\x00", 16, 0);
-  self.main = NULL;
-  self.libs = libs;
-  self.zero = 32;
-  lf = (meta){.name = named("lf"), .kind = call, .addr = self.text->head};
+  ours.main = NULL;
+  ours.libs = libs;
+  ours.zero = 32;
+  lf = (meta){.name = named("lf"), .kind = call, .addr = ours.text->head};
   lv = (meta){.name = named("lv"), .kind = glob, .slot = 4, .type = &int4};
   lz = (meta){.name = named("lz"), .kind = glob, .slot = 8 | ZERO, .weak = 1};
   signs[0] = &lf; signs[1] = &lv; signs[2] = &lz;
   signn = 3;
 }
-static void  cord_(cord c) { cords[cordn++] = c; }
+static void  cord_(cord c) { knits[cordn++] = c; }
 
 // the header and sections of an image, symbol i of table tab, its name, and
 // relocation i of section sec
@@ -174,7 +174,7 @@ spec("elfs") {
     }
     it("has no soname") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
-      self.outp = "bins/prog";
+      ours.outp = "bins/prog";
       check((out = packed(elfs)));
       ph = (ph64*)(HEAD(out) + 1);
       dyn64* d = (dyn64*)(out->head + SECT(out)[6].offset);
@@ -183,7 +183,7 @@ spec("elfs") {
     }
     it("keeps data and bss in the writable segment") {
       start(cpu_ia64, CODE, 6, "abcd", 4, 0);
-      self.zero = 100;
+      ours.zero = 100;
       check((out = packed(elfs)));
       ph = (ph64*)(HEAD(out) + 1);
       sh64* sh = SECT(out);
@@ -194,7 +194,7 @@ spec("elfs") {
     }
     it("aligns the code as an object asks") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
-      self.most = 64;
+      ours.most = 64;
       check((out = packed(elfs)));
       sh64* sh = SECT(out);
       check(HEAD(out)->entry % 64 == 0 && bytes(out->head + HEAD(out)->entry, "b8 07"));
@@ -202,12 +202,12 @@ spec("elfs") {
     }
     it("refuses an address in code") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
-      cord_((cord){.site = {self.text->head + 1, 0}, .aim = {self.text->head, 0}, .kind = cd_wide});
+      cord_((cord){.site = {ours.text->head + 1, 0}, .aim = {ours.text->head, 0}, .kind = cd_wide});
       check(!packed(elfs) && strstr(said, "an address in code: a program"));
     }
     it("has the loader relocate an address in data") {
       start(cpu_ia64, CODE, 6, "\2\0\0\0\0\0\0\0", 8, 0); // dock puts the address at base 0 there
-      cord_((cord){.site = {NULL, 0}, .aim = {self.text->head, 0}, .kind = cd_wide});
+      cord_((cord){.site = {NULL, 0}, .aim = {ours.text->head, 0}, .kind = cd_wide});
       check((out = packed(elfs)) && SECT(out)[4].size == sizeof(rela64));
       check(rela_(rel_(out, 4, 0), SECT(out)[7].addr, R_X86_64_RELATIVE, 0, 2));
     }
@@ -219,22 +219,22 @@ spec("elfs") {
     it("puts the code after text, aligned") {
       start(cpu_ia64, "\x90\x90\x90", 3, "", 0, 0);
       check(took(standard(em_ia64)));
-      check(self.text->body == self.text->head + 16 + 12);
-      check(bytes(self.text->head + 16, "b8 2a 00 00 00 c3 e8 00 00 00 00 c3"));
-      check(self.most == 32); // com
+      check(ours.text->body == ours.text->head + 16 + 12);
+      check(bytes(ours.text->head + 16, "b8 2a 00 00 00 c3 e8 00 00 00 00 c3"));
+      check(ours.most == 32); // com
     }
     it("lays data, bss and common symbols out through core") {
       start(cpu_ia64, "", 0, "", 0, 0);
       check(took(standard(em_ia64)));
-      check(laid == 3 && self.zero == 32 + 64);
-      check(bytes(self.data->head, "01 02 03 04 05 06 07 08"));
+      check(laid == 3 && ours.zero == 32 + 64);
+      check(bytes(ours.data->head, "01 02 03 04 05 06 07 08"));
     }
     it("defines its functions as C code in text") {
       start(cpu_ia64, "\x90\x90\x90", 3, "", 0, 0);
       check(took(standard(em_ia64)));
       check((m = meant("func")) && m->kind == call && m->ext && m->size == VARY);
-      check(m->addr == self.text->head + 16 && m->unit == 1 && !m->weak);
-      check((m = meant("weak")) && m->weak && m->addr == self.text->head + 16 + 6);
+      check(m->addr == ours.text->head + 16 && m->unit == 1 && !m->weak);
+      check((m = meant("weak")) && m->weak && m->addr == ours.text->head + 16 + 6);
     }
     it("defines its data at their offset, common ones in bss") {
       start(cpu_ia64, "", 0, "", 0, 0);
@@ -256,8 +256,8 @@ spec("elfs") {
     it("hooks a reference by name for dock") {
       start(cpu_ia64, "", 0, "", 0, 0);
       check(took(standard(em_ia64)));
-      check(self.hookn == 1 && (h = self.hooks));
-      check(h->site.at == self.text->head + 7 && h->name == named("ext"));
+      check(ours.hookn == 1 && (h = ours.hooks));
+      check(h->site.at == ours.text->head + 7 && h->name == named("ext"));
       check(h->add == -4 && !h->wide && !h->weak && h->unit == 1);
     }
     it("leaves a weak definition out when a unit defines the name") {
@@ -279,8 +279,8 @@ spec("elfs") {
       u32i tab = symbols(s, 2, strs, sizeof strs);
       relocate((rela64[]){{.offset = 3, .type = R_X86_64_REX_GOTPCRELX, .sym = 1, .addend = -4}}, 1, text, tab);
       check(took(finish(em_ia64)));
-      check(bytes(self.text->head, "48 8d 05")); // mov rax, [rip+x] -> lea rax, [rip+x]
-      check(self.hookn == 1 && self.hooks->load);
+      check(bytes(ours.text->head, "48 8d 05")); // mov rax, [rip+x] -> lea rax, [rip+x]
+      check(ours.hookn == 1 && ours.hooks->load);
     }
   }
 
@@ -308,21 +308,21 @@ spec("elfs") {
     }
     it("relocates a global by the symbol of its section") {
       library(cpu_ia64, lb_relo);
-      cord_((cord){.site = {self.text->head, 0}, .aim = {NULL, 4}, .kind = cd_glob});
-      cord_((cord){.site = {self.text->head, 0}, .aim = {NULL, 8 | ZERO}, .kind = cd_glob});
+      cord_((cord){.site = {ours.text->head, 0}, .aim = {NULL, 4}, .kind = cd_glob});
+      cord_((cord){.site = {ours.text->head, 0}, .aim = {NULL, 8 | ZERO}, .kind = cd_glob});
       check((out = packed(elfs)) && SECT(out)[6].size == 2 * sizeof(rela64));
       check(rela_(rel_(out, 6, 0), 3, R_X86_64_PC32, 2, 0));
       check(rela_(rel_(out, 6, 1), 3, R_X86_64_PC32, 3, 4));
     }
     it("patches a distance within text") {
       library(cpu_ia64, lb_relo);
-      cord_((cord){.site = {self.text->head + 7, 0}, .aim = {self.text->head, 0}, .add = -4, .kind = cd_rel});
+      cord_((cord){.site = {ours.text->head + 7, 0}, .aim = {ours.text->head, 0}, .add = -4, .kind = cd_rel});
       check((out = packed(elfs)) && SECT(out)[6].size == 0);
       check(bytes(out->head + SECT(out)[1].offset + 7, "f5 ff ff ff"));
     }
     it("calls a name nothing defines through the linker") {
       library(cpu_ia64, lb_relo);
-      cord_((cord){.site = {self.text->head + 7, 0}, .name = named("ext"), .add = -4, .kind = cd_rel, .weak = 1});
+      cord_((cord){.site = {ours.text->head + 7, 0}, .name = named("ext"), .add = -4, .kind = cd_rel, .weak = 1});
       check((out = packed(elfs)));
       check(rela_(rel_(out, 6, 0), 7, R_X86_64_PLT32, 7, -4));
       sym64* s = sym_(out, 4, 7);
@@ -330,22 +330,22 @@ spec("elfs") {
     }
     it("makes the lea of a GOT load to such a name a load again") {
       library(cpu_ia64, lb_relo);
-      copy(self.text->head, "\x48\x8d\x05", 3);
-      cord_((cord){.site = {self.text->head + 3, 0}, .name = named("ext"), .add = -4, .kind = cd_rel, .got = 1});
+      copy(ours.text->head, "\x48\x8d\x05", 3);
+      cord_((cord){.site = {ours.text->head + 3, 0}, .name = named("ext"), .add = -4, .kind = cd_rel, .got = 1});
       check((out = packed(elfs)) && bytes(out->head + SECT(out)[1].offset, "48 8b 05"));
       check(rela_(rel_(out, 6, 0), 3, R_X86_64_GOTPCREL, 7, -4));
     }
     it("relocates an address in data") {
       library(cpu_ia64, lb_relo);
-      cord_((cord){.site = {NULL, 8}, .aim = {self.text->head + 6, 0}, .add = 2, .kind = cd_wide});
+      cord_((cord){.site = {NULL, 8}, .aim = {ours.text->head + 6, 0}, .add = 2, .kind = cd_wide});
       check((out = packed(elfs)) && SECT(out)[7].size == sizeof(rela64));
       check(rela_(rel_(out, 7, 0), 8, R_X86_64_64, 1, 8));
     }
     it("puts the import slots after data, each relocated by its name") {
       library(cpu_ia64, lb_relo);
-      self.imps[0] = &(meta){.name = named("puts"), .kind = call};
-      self.impn = 1;
-      cord_((cord){.site = {self.text->head, 0}, .aim = {NULL, SLOT}, .kind = cd_glob});
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call};
+      ours.impn = 1;
+      cord_((cord){.site = {ours.text->head, 0}, .aim = {NULL, SLOT}, .kind = cd_glob});
       check((out = packed(elfs)) && SECT(out)[2].size == 24);
       check(rela_(rel_(out, 6, 0), 3, R_X86_64_PC32, 2, 12));
       check(rela_(rel_(out, 7, 0), 16, R_X86_64_64, 7, 0));
@@ -354,7 +354,7 @@ spec("elfs") {
     }
     it("relocates the movz and movk of a global on arm8") {
       library(cpu_arm8, lb_relo);
-      cord_((cord){.site = {self.text->head, 0}, .aim = {NULL, 4}, .kind = cd_glob});
+      cord_((cord){.site = {ours.text->head, 0}, .aim = {NULL, 4}, .kind = cd_glob});
       check((out = packed(elfs)) && HEAD(out)->arch == em_arm8);
       check(rela_(rel_(out, 6, 0), 4, R_AARCH64_MOVW_PREL_G0_NC, 2, 8));
       check(rela_(rel_(out, 6, 1), 8, R_AARCH64_MOVW_PREL_G1_NC, 2, 12));
@@ -398,29 +398,29 @@ spec("elfs") {
     }
     it("names itself after its file") {
       library(cpu_ia64, lb_dyno);
-      self.outp = "bins/libq.so";
+      ours.outp = "bins/libq.so";
       check((out = packed(elfs)));
       dyn64* d = (dyn64*)(out->head + SECT(out)[6].offset);
       check(d[0].tag == DT_SONAME && !strcmp((char*)out->head + SECT(out)[3].offset + d[0].val, "libq.so"));
     }
     it("relocates the addresses in data by the load address") {
       library(cpu_ia64, lb_dyno);
-      cord_((cord){.site = {NULL, 8}, .aim = {self.text->head, 0}, .kind = cd_wide});
+      cord_((cord){.site = {NULL, 8}, .aim = {ours.text->head, 0}, .kind = cd_wide});
       cord_((cord){.site = {NULL, 0}, .name = named("gone"), .kind = cd_wide, .weak = 1}); // stays 0
       check((out = packed(elfs)) && SECT(out)[4].size == sizeof(rela64));
       check(rela_(rel_(out, 4, 0), SECT(out)[7].addr + 8, R_X86_64_RELATIVE, 0, 0x10));
     }
     it("binds the imports through their slots, after bss") {
       library(cpu_arm8, lb_dyno);
-      self.imps[0] = &(meta){.name = named("puts"), .kind = call};
-      self.impn = 1;
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call};
+      ours.impn = 1;
       check((out = packed(elfs)) && SECT(out)[8].size == 32 + 8);
       check(rela_(rel_(out, 4, 0), SECT(out)[8].addr + 32, R_AARCH64_GLOB_DAT, 4, 0));
       check(sym_(out, 2, 4)->shidx == SHN_UNDEF);
     }
     it("refuses an address in code") {
       library(cpu_ia64, lb_dyno);
-      cord_((cord){.site = {self.text->head + 7, 0}, .aim = {self.text->head, 0}, .kind = cd_wide});
+      cord_((cord){.site = {ours.text->head + 7, 0}, .aim = {ours.text->head, 0}, .kind = cd_wide});
       check(!packed(elfs) && strstr(said, "an address in code"));
     }
   }

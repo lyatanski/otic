@@ -61,7 +61,7 @@ static const char mach_name[] = "tic"; // the signature's identifier
 static u32i ror(u32i x, int n) { return x >> n | x << (32 - n); }
 
 static byte* be32(byte* at, u32i v) {
-  for(int i = 0; i < 4; i++) *at++ = v >> (24 - 8 * i);
+  for(int i = 0; i < 4; i++) *at++ = (byte)(v >> (24 - 8 * i));
   return at;
 }
 
@@ -111,15 +111,15 @@ static u32i  mach_sigsz(u64i limit) {
 // sign the image at o, its first limit bytes, the signature at limit: text
 // the size of __TEXT, exe for an executable
 static void  mach_seal(byte* o, u64i limit, u64i text, bool exe) {
-  const u32i slots = (limit + 4095) >> 12;
+  const u32i slots = (u32i)((limit + 4095) >> 12);
   const u32i cdsz = 88 + sizeof(mach_name) + 32 * slots;
   // super blob holding one code directory (version 0x20400), big-endian
   u32i blob[] = {
     0xfade0cc0, mach_sigsz(limit), 1, 0, 20,
     0xfade0c02, cdsz, 0x20400, 0x20002, // adhoc, linker signed
-    88 + sizeof(mach_name), 88, 0, slots, limit, // hashes, identifier, code limit
+    88 + sizeof(mach_name), 88, 0, slots, (u32i)limit, // hashes, identifier, code limit
     0x2002000c, 0, 0, 0, 0, // SHA-256, 4 KB pages
-    0, 0, 0, 0, 0, text, 0, exe, // code limit 64, exec segment base, limit, main binary
+    0, 0, 0, 0, 0, (u32i)text, 0, exe, // code limit 64, exec segment base, limit, main binary
   };
   byte* at = o + limit;
   for(u32i i = 0; i < sizeof(blob) / sizeof(*blob); i++) at = be32(at, blob[i]);
@@ -141,22 +141,22 @@ static file* mach_exec(mode* self) {
   self->core.dock(self, text - top, 0);
 
   mach_head h = {
-    .mh   = {mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_exec,
+    .mh   = {(u32i)mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_exec,
              11, sizeof(h) - sizeof(h.mh), mh_noundefs | mh_dyldlink | mh_twolevel | mh_pie, 0},
     .zero = {lc_segment, sizeof(seg64), "__PAGEZERO", .vmsz = org},
     .text = {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", org, text, 0, text,
              5, 5, 1, 0}, // r-x
-    .code = {"__text", "__TEXT", org + top, code, top, 2, .flags = s_code},
+    .code = {"__text", "__TEXT", org + top, code, (u32i)top, 2, .flags = (u32i)s_code},
     .data = {lc_segment, sizeof(seg64), "__DATA", org + text, vmsz, text, size, 3, 3, 0, 0}, // rw-
     .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text + vmsz, (sign + page - 1) & ~(page - 1),
              link, sign, 1, 1, 0, 0}, // r--
-    .syms = {lc_symtab, sizeof(h.syms), link, 0, link, 0},
+    .syms = {lc_symtab, sizeof(h.syms), (u32i)link, 0, (u32i)link, 0},
     .dsym = {lc_dysymtab, sizeof(h.dsym), .ilocal = 0},
     .dyld = {lc_dylinker, sizeof(h.dyld), 12, "/usr/lib/dyld"},
-    .main = {lc_main, sizeof(h.main), top + (self->main - self->text->head), 0},
+    .main = {(u32i)lc_main, sizeof(h.main), top + (self->main - self->text->head), 0},
     .build = {lc_build, sizeof(h.build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
     .libs = {lc_dylib, sizeof(h.libs), 24, 2, 0x10000, 0x10000, "/usr/lib/libSystem.B.dylib"},
-    .sign = {lc_signature, sizeof(h.sign), link, sign},
+    .sign = {lc_signature, sizeof(h.sign), (u32i)link, sign},
   };
 
   file* out = zero(self, sizeof(file) + all);
@@ -210,7 +210,7 @@ static void  mach_put(mode* self, mach_syms* t, nl64* sym, byte* str,
   str[0] = 0;
   for(u32i i = 0; i < t->ndef + t->nund; i++, sym++) {
     item* s = i < t->ndef? t->defs[i]->name: t->unds[i - t->ndef].name;
-    *sym = (nl64){.strx = at};
+    *sym = (nl64){.strx = (u32i)at};
     str[at++] = '_';
     copy(str + at, s->name, s->size);
     at += s->size;
@@ -261,7 +261,7 @@ static file* mach_relo(mode* self) {
   const u64i code = self->text->body - self->text->head;
   const u64i size = self->data->body - self->data->head;
   const u64i slots = (size + 7) & -8, dsz = slots + 8 * self->impn;
-  const u64i data = (code + step - 1) & -step, bss = (data + dsz + step - 1) & -step;
+  const u64i data = (code + step - 1) & ~(step - 1), bss = (data + dsz + step - 1) & ~(step - 1);
   mach_syms t;
   mach_sign(self, &t);
   cord* cords;
@@ -272,7 +272,7 @@ static file* mach_relo(mode* self) {
 
   const u64i top  = sizeof(mach_mh) + sizeof(seg64) + 3 * sizeof(sec64) + sizeof(mach_build)
                   + sizeof(mach_symtab) + sizeof(mach_dysym);
-  const u64i base = (top + step - 1) & -step; // text, then data, as in memory
+  const u64i base = (top + step - 1) & ~(step - 1); // text, then data, as in memory
   const u64i rels = (base + data + dsz + 3) & -4, rdat = rels + ncord * sizeof(mrel);
   const u64i syms = (rdat + self->impn * sizeof(mrel) + 7) & -8, strs = syms + nsym * sizeof(nl64);
   const u64i all  = strs + t.strs;
@@ -280,15 +280,15 @@ static file* mach_relo(mode* self) {
   struct {
     mach_mh mh; seg64 seg; sec64 sec[3]; mach_build build; mach_symtab syms; mach_dysym dsym;
   } h = {
-    .mh    = {mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_object,
-              4, top - sizeof(mach_mh), 0, 0},
+    .mh    = {(u32i)mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_object,
+              4, (u32i)(top - sizeof(mach_mh)), 0, 0},
     .seg   = {lc_segment, sizeof(seg64) + 3 * sizeof(sec64), "", 0, bss + self->zero, base,
               data + dsz, 7, 7, 3, 0},
-    .sec   = {{"__text", "__TEXT", 0, code, base, lg, rels, ncord, s_code, {0}},
-              {"__data", "__DATA", data, dsz, base + data, lg, rdat, self->impn, 0, {0}},
+    .sec   = {{"__text", "__TEXT", 0, code, (u32i)base, lg, (u32i)rels, ncord, (u32i)s_code, {0}},
+              {"__data", "__DATA", data, dsz, (u32i)(base + data), lg, (u32i)rdat, self->impn, 0, {0}},
               {"__bss", "__DATA", bss, self->zero, 0, lg, 0, 0, s_zerofill, {0}}},
     .build = {lc_build, sizeof(mach_build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
-    .syms  = {lc_symtab, sizeof(mach_symtab), syms, nsym, strs, t.strs},
+    .syms  = {lc_symtab, sizeof(mach_symtab), (u32i)syms, nsym, (u32i)strs, (u32i)t.strs},
     .dsym  = {lc_dysymtab, sizeof(mach_dysym), .next = t.ndef, .iund = t.ndef, .nund = t.nund},
   };
 
@@ -303,17 +303,17 @@ static file* mach_relo(mode* self) {
     u64i at = c->site.at - self->text->head + 3, to;
     s32i v = 0;
     if(c->name) // extern: the name, the distance from the lea's end
-      *r = (mrel){at, (t.ndef + mach_need(self, &t, c->name, c->weak)) | 1 << 24 | 2 << 25 | 1 << 27
+      *r = (mrel){(s32i)at, (t.ndef + mach_need(self, &t, c->name, c->weak)) | 1 << 24 | 2 << 25 | 1 << 27
                       | x64_signed << 28};
     else { // its section: the distance there, which the linker moves with it
       u32i sec = mach_part(self, c->aim, data, slots, bss, &to);
-      v = to - (at + 4);
-      *r = (mrel){at, sec | 1 << 24 | 2 << 25 | x64_signed << 28};
+      v = (s32i)(to - (at + 4));
+      *r = (mrel){(s32i)at, sec | 1 << 24 | 2 << 25 | x64_signed << 28};
     }
     copy(o + base + at, &v, sizeof(v));
   }
   for(u32i i = 0; i < self->impn; i++, r++) // a slot: the address of its name
-    *r = (mrel){slots + 8 * i, (t.ndef + i) | 3 << 25 | 1 << 27 | x64_unsigned << 28};
+    *r = (mrel){(s32i)(slots + 8 * i), (t.ndef + i) | 3 << 25 | 1 << 27 | x64_unsigned << 28};
   mach_put(self, &t, (nl64*)(o + syms), o + strs, 0, data, bss, 0);
   self->heap(cords, 0);
   self->heap(t.defs, 0);
@@ -353,7 +353,7 @@ static byte* mach_trie(mode* self, byte* at, nl64* sym, u32i n, byte* str) {
   }
   for(u32i i = 0; i < n; i++) { // its size, flags (weak), address, no edges
     nl64* m = sym + by[i];
-    *at++ = 1 + (uleb(k, m->value) - k);
+    *at++ = (byte)(1 + (uleb(k, m->value) - k));
     *at++ = m->desc & n_weak_def? 0x4: 0;
     at = uleb(at, m->value);
     *at++ = 0;
@@ -381,11 +381,11 @@ static file* mach_dyno(mode* self) {
   const u64i top  = sizeof(mach_mh) + 3 * sizeof(seg64) + 3 * sizeof(sec64) + sizeof(mach_info)
                   + sizeof(mach_symtab) + sizeof(mach_dysym) + idsz + sizeof(mach_dylib)
                   + sizeof(mach_build) + sizeof(mach_blob);
-  const u64i text = (top + code + page - 1) & -page; // __DATA in the file and in memory
-  const u64i bss  = (size + step - 1) & -step, slots = bss + ((self->zero + 7) & -8);
+  const u64i text = (top + code + page - 1) & ~(page - 1); // __DATA in the file and in memory
+  const u64i bss  = (size + step - 1) & ~(step - 1), slots = bss + ((self->zero + 7) & -8);
   const u64i end  = slots + 8 * self->impn;
-  const u64i vmsz = ((end? end: 1) + page - 1) & -page;
-  const u64i link = text + ((size + page - 1) & -page);
+  const u64i vmsz = ((end? end: 1) + page - 1) & ~(page - 1);
+  const u64i link = text + ((size + page - 1) & ~(page - 1));
   self->core.dock(self, text - top, top);
 
   // __LINKEDIT: binds, trie, symbols and their names, made before it is laid out
@@ -416,24 +416,25 @@ static file* mach_dyno(mode* self) {
   seg64 seg[3] = {
     {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", 0, text, 0, text, 5, 5, 1, 0}, // r-x
     {lc_segment, sizeof(seg64) + 2 * sizeof(sec64), "__DATA", text, vmsz, text, size, 3, 3, 2, 0},
-    {lc_segment, sizeof(seg64), "__LINKEDIT", text + vmsz, (all - link + page - 1) & -page, link,
+    {lc_segment, sizeof(seg64), "__LINKEDIT", text + vmsz, (all - link + page - 1) & ~(page - 1), link,
      all - link, 1, 1, 0, 0},
   };
   sec64 sec[3] = {
-    {"__text", "__TEXT", top, code, top, lg, .flags = s_code},
-    {"__data", "__DATA", text, size, text, lg, .flags = 0},
+    {"__text", "__TEXT", top, code, (u32i)top, lg, .flags = (u32i)s_code},
+    {"__data", "__DATA", text, size, (u32i)text, lg, .flags = 0},
     {"__bss", "__DATA", text + bss, end - bss, 0, lg, .flags = s_zerofill},
   };
-  mach_info  info = {lc_dyld_info, sizeof info, 0, 0, nbind? link: 0, nbind, 0, 0, 0, 0, at, ntrie};
-  mach_symtab st  = {lc_symtab, sizeof st, syms, nsym, strs, t.strs};
+  mach_info  info = {(u32i)lc_dyld_info, sizeof info, 0, 0, nbind? (u32i)link: 0, (u32i)nbind, 0, 0, 0, 0,
+                     (u32i)at, (u32i)ntrie};
+  mach_symtab st  = {lc_symtab, sizeof st, (u32i)syms, nsym, (u32i)strs, (u32i)t.strs};
   mach_dysym dsym = {lc_dysymtab, sizeof dsym, .next = t.ndef, .iund = t.ndef, .nund = t.nund};
-  mach_dylib id   = {lc_id_dylib, idsz, 24, 1, 0x10000, 0x10000, .path = ""};
+  mach_dylib id   = {lc_id_dylib, (u32i)idsz, 24, 1, 0x10000, 0x10000, .path = ""};
   mach_dylib libs = {lc_dylib, sizeof libs, 24, 2, 0x10000, 0x10000,
                      "/usr/lib/libSystem.B.dylib"};
   mach_build bld  = {lc_build, sizeof bld, 1, 0xb0000, 0xb0000, 0}; // macOS 11.0
-  mach_blob  sign = {lc_signature, sizeof sign, sig, all - sig};
-  mach_mh    mh   = {mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_dylib,
-                     10, top - sizeof(mach_mh),
+  mach_blob  sign = {lc_signature, sizeof sign, (u32i)sig, (u32i)(all - sig)};
+  mach_mh    mh   = {(u32i)mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_dylib,
+                     10, (u32i)(top - sizeof(mach_mh)),
                      mh_dyldlink | mh_twolevel | mh_noreexport | (self->impn? 0: mh_noundefs), 0};
 
   file* out = zero(self, sizeof(file) + all);

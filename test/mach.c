@@ -26,21 +26,21 @@ static u32i  be(byte* at) { return (u32i)at[0] << 24 | at[1] << 16 | at[2] << 8 
 static meta  lf, lv, lz;
 static void  library(chip cpu, byte libs) {
   start(cpu, CODE "\x48\x8d\x05\x00\x00\x00\x00", 19, "abcdefghijklmnop", 16, 0);
-  self.main = NULL;
-  self.libs = libs;
-  self.zero = 32;
-  lf = (meta){.name = named("lf"), .kind = call, .addr = self.text->head};
+  ours.main = NULL;
+  ours.libs = libs;
+  ours.zero = 32;
+  lf = (meta){.name = named("lf"), .kind = call, .addr = ours.text->head};
   lv = (meta){.name = named("lv"), .kind = glob, .slot = 4};
   lz = (meta){.name = named("lz"), .kind = glob, .slot = 8 | ZERO, .weak = 1};
   signs[0] = &lf; signs[1] = &lv; signs[2] = &lz;
   signn = 3;
 }
-static void  cord_(cord c) { cords[cordn++] = c; }
+static void  cord_(cord c) { knits[cordn++] = c; }
 static void  import(char* name) {
   static meta imps[4];
-  imps[self.impn] = (meta){.name = named(name), .kind = call};
-  self.imps[self.impn] = imps + self.impn;
-  self.impn++;
+  imps[ours.impn] = (meta){.name = named(name), .kind = call};
+  ours.imps[ours.impn] = imps + ours.impn;
+  ours.impn++;
 }
 
 // the first load command cmd of an image, section i of the segment seg, symbol
@@ -101,7 +101,7 @@ spec("mach") {
     }
     it("puts data and bss in __DATA") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
-      self.zero = 100;
+      ours.zero = 100;
       check((out = packed(mach)) && (h = (mach_head*)out->head));
       check(!strcmp(h->data.name, "__DATA") && h->data.off == PAGE && h->data.fsz == 4);
       check(h->data.addr == 0x100000000 + PAGE && h->data.vmsz == PAGE);
@@ -152,8 +152,8 @@ spec("mach") {
     }
     it("relocates a global by its section, the distance in place") {
       library(cpu_ia64, lb_relo);
-      cord_((cord){.site = {self.text->head + 12, 0}, .aim = {NULL, 4}, .kind = cd_glob});
-      cord_((cord){.site = {self.text->head + 12, 0}, .aim = {NULL, 8 | ZERO}, .kind = cd_glob});
+      cord_((cord){.site = {ours.text->head + 12, 0}, .aim = {NULL, 4}, .kind = cd_glob});
+      cord_((cord){.site = {ours.text->head + 12, 0}, .aim = {NULL, 8 | ZERO}, .kind = cd_glob});
       check((out = packed(mach)) && (seg = cmd_(out, lc_segment)) && sec_(seg, 0)->nrel == 2);
       check(rel_is(rel_(out, sec_(seg, 0), 0), 15, 2, 1, 2, 0, x64_signed));
       check(rel_is(rel_(out, sec_(seg, 0), 1), 15, 3, 1, 2, 0, x64_signed));
@@ -161,7 +161,7 @@ spec("mach") {
     }
     it("relocates a global nothing defines by its name") {
       library(cpu_ia64, lb_relo);
-      cord_((cord){.site = {self.text->head + 12, 0}, .name = named("ext"), .kind = cd_glob, .weak = 1});
+      cord_((cord){.site = {ours.text->head + 12, 0}, .name = named("ext"), .kind = cd_glob, .weak = 1});
       check((out = packed(mach)) && (seg = cmd_(out, lc_segment)));
       check(rel_is(rel_(out, sec_(seg, 0), 0), 15, 3, 1, 2, 1, x64_signed));
       check(bytes(out->head + sec_(seg, 0)->off + 15, "00 00 00 00"));
@@ -171,7 +171,7 @@ spec("mach") {
     it("puts the import slots after data, each relocated by its name") {
       library(cpu_ia64, lb_relo);
       import("puts");
-      cord_((cord){.site = {self.text->head + 12, 0}, .aim = {NULL, SLOT}, .kind = cd_glob});
+      cord_((cord){.site = {ours.text->head + 12, 0}, .aim = {NULL, SLOT}, .kind = cd_glob});
       check((out = packed(mach)) && (seg = cmd_(out, lc_segment)) && sec_(seg, 1)->size == 24);
       check(rel_is(rel_(out, sec_(seg, 0), 0), 15, 2, 1, 2, 0, x64_signed));
       check(bytes(out->head + sec_(seg, 0)->off + 15, "1d 00 00 00")); // 32 + 16 - 19
@@ -201,7 +201,7 @@ spec("mach") {
     }
     it("names itself @rpath/ and its file name") {
       library(cpu_ia64, lb_dyno);
-      self.outp = "bins/libq.dylib";
+      ours.outp = "bins/libq.dylib";
       mach_dylib* id;
       check((out = packed(mach)) && (id = cmd_(out, lc_id_dylib)));
       check(!strcmp((char*)id + id->name, "@rpath/libq.dylib") && id->size % 8 == 0);
@@ -210,7 +210,7 @@ spec("mach") {
       library(cpu_ia64, lb_dyno);
       lv.name = named("lff");
       mach_info* info;
-      check((out = packed(mach)) && (info = cmd_(out, lc_dyld_info)) && (seg = cmd_(out, lc_segment)));
+      check((out = packed(mach)) && (info = cmd_(out, (u32i)lc_dyld_info)) && (seg = cmd_(out, lc_segment)));
       byte* t = out->head + info->trie;
       check(t[0] == 0 && t[1] == 3 && !strcmp((char*)t + 2, "_lz") && !strcmp((char*)t + 10, "_lff"));
       check(!strcmp((char*)t + 19, "_lf"));
@@ -223,7 +223,7 @@ spec("mach") {
       library(cpu_arm8, lb_dyno);
       import("puts");
       mach_info* info;
-      check((out = packed(mach)) && (info = cmd_(out, lc_dyld_info)));
+      check((out = packed(mach)) && (info = cmd_(out, (u32i)lc_dyld_info)));
       check(!(HEAD(out)->flags & mh_noundefs) && HEAD(out)->cpu == 0x0100000c);
       check(info->nbind == 13 && bytes(out->head + info->bind, "3e 51 40 5f 70 75 74 73 00 71 30 90 00"));
       check(sym_(out, 3)->type == n_ext && sym_(out, 3)->desc == n_flat);

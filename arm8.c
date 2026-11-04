@@ -326,7 +326,7 @@ void arm8_addr(file* data, s32i slot) {
 // x0 = pc + a 32-bit distance, patched by site: a negative distance, to code
 // before it, makes the add a sub
 void arm8_glob(file* data) {
-  arm8_put(data, I3406_ADR | r0);                                   // adr x0, .
+  arm8_put(data, (u32i)I3406_ADR | r0);                             // adr x0, .
   arm8_put(data, X | dati_movz | r16);                              // movz x16, #lo
   arm8_put(data, X | dati_movk | 1 << 21 | r16);                    // movk x16, #hi, lsl 16
   arm8_put(data, X | I3502_ADD | r16 << 16);                        // add x0, x0, x16
@@ -372,7 +372,7 @@ void arm8_trap(file* data, u32i argc) {
 }
 
 void arm8_dial(file* data) {
-  arm8_put(data, I3206_BL);                                         // bl, patched by link
+  arm8_put(data, (u32i)I3206_BL);                                   // bl, patched by link
 }
 
 // the condition code of comparison op
@@ -450,9 +450,9 @@ void arm8_mend(file* data, byte* prev) {
 
 // program entry: exit(main())
 void arm8_boot(file* data) {
-  arm8_put(data, I3206_BL);   // bl main, patched by link
-  arm8_put(data, 0xd2800ba8); // mov x8, #93 (SYS_exit)
-  arm8_put(data, 0xd4000001); // svc #0
+  arm8_put(data, (u32i)I3206_BL); // bl main, patched by link
+  arm8_put(data, 0xd2800ba8);     // mov x8, #93 (SYS_exit)
+  arm8_put(data, 0xd4000001);     // svc #0
 }
 
 void arm8_link(file* data, byte* boot, byte* main) {

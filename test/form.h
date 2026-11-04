@@ -15,7 +15,7 @@ static char    said[256]; // what fail said
 
 #include "../util.c"
 
-static mode  self;
+static mode  ours;
 static unit  units[2]; // the root and the object being joined
 static byte  texts[1 << 14], datas[1 << 12];
 
@@ -34,10 +34,10 @@ static u64i  mock_gap(mode* self) { return self->most > 16? self->most: 16; }
 static u32i  mock_lay(mode* self, u32i size, bool zero, u32i align) {
   laid++;
   if(zero) {
-    self->zero = ((self->zero + align - 1) & -align) + size;
-    return (self->zero - size) | ZERO;
+    self->zero = ((self->zero + align - 1) & ~(u64i)(align - 1)) + size;
+    return (u32i)(self->zero - size) | ZERO;
   }
-  u32i off = ((self->data->body - self->data->head) + align - 1) & -align;
+  u32i off = ((u32i)(self->data->body - self->data->head) + align - 1) & ~(align - 1);
   self->data->body = self->data->head + off + size;
   return off;
 }
@@ -55,7 +55,7 @@ static item* mock_name(mode* m, u32i at, char* mark, u64i size) {
   items[itemn] = (item){.size = size, .name = mark, .unit = at};
   return items + itemn++;
 }
-static item* named(char* name) { return mock_name(&self, 1, name, strlen(name)); }
+static item* named(char* name) { return mock_name(&ours, 1, name, strlen(name)); }
 static meta* mock_find(mode* m, u32i at, item* name) {
   (void)m;
   if(at && name->data) return name->data;
@@ -65,20 +65,20 @@ static u32i  mock_heft(meta* x) { return x->kind == pend? 2: x->lib? 1: x->weak?
 static u32i  mock_ask(mode* m, meta* x) { (void)m; asks[asked] = x; return asked++; }
 
 // another unit defines name as x
-static meta  defs[8];
+static meta  others[8];
 static u32i  defn;
 static inline void define(char* name, meta x) {
   item* s = named(name);
-  defs[defn] = x;
-  defs[defn].name = s;
-  elsewhere[s - items] = defs + defn++;
+  others[defn] = x;
+  others[defn].name = s;
+  elsewhere[s - items] = others + defn++;
 }
 
 static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
 
 // a library's public definitions and references, as sign and knit list them
 static meta* signs[8];
-static cord  cords[8];
+static cord  knits[8];
 static u32i  signn, cordn;
 static u32i  mock_sign(mode* m, meta*** out) {
   (void)m;
@@ -88,8 +88,8 @@ static u32i  mock_sign(mode* m, meta*** out) {
 }
 static u32i  mock_knit(mode* m, cord** out) {
   (void)m;
-  *out = malloc(sizeof cords);
-  memcpy(*out, cords, sizeof cords);
+  *out = malloc(sizeof knits);
+  memcpy(*out, knits, sizeof knits);
   return cordn;
 }
 
@@ -98,8 +98,8 @@ static u32i  mock_knit(mode* m, cord** out) {
 static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i main) {
   static file* text = (file*)texts;
   static file* data_ = (file*)datas;
-  free(self.hooks);
-  memset(&self, 0, sizeof self);
+  free(ours.hooks);
+  memset(&ours, 0, sizeof ours);
   memset(units, 0, sizeof units);
   memset(items, 0, sizeof items);
   memset(elsewhere, 0, sizeof elsewhere);
@@ -111,7 +111,7 @@ static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i
   data_->body = copy(data_->head, data, dsize);
   data_->tail = datas + sizeof datas;
   units[1].path = "obj.o";
-  self = (mode){
+  ours = (mode){
     .text = text, .data = data_, .main = text->head + main,
     .units = units, .unit = 1, .unitn = 2,
     .arch = {.cpu = cpu},
@@ -127,7 +127,7 @@ static file* packed(form f) {
   free(out);
   out = NULL;
   if(setjmp(bail)) return NULL;
-  return out = f.pack(&self);
+  return out = f.pack(&ours);
 }
 
 // the bytes at p are want, in hex, else both are shown

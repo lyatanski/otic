@@ -29,7 +29,7 @@ static bool nigh(mode* self, item* s, char* dir, u32i e) {
   static char* const ends[] = {".c", ".o", ".a"};
   char* at = dir? dir: home(self)->path;
   u32i  d = 0, n = quote(s, NULL) - 1, b = 0, lib = e == 2? 3: 0;
-  if(dir) d = slen(dir);
+  if(dir) d = (u32i)slen(dir);
   else for(u32i i = 0; at[i]; i++) if(at[i] == '/') d = i + 1;
   char* path = self->heap(NULL, d + n + 8); // '/', "lib", the end and its NUL
   byte* p = copy((byte*)path, at, d);
@@ -41,7 +41,7 @@ static bool nigh(mode* self, item* s, char* dir, u32i e) {
     copy(p + b, "lib", 3);
   }
   copy(p + n + lib, ends[e], 3);
-  if(land(self, path, d + n + lib + 2, NULL, un_code + e)) return 1;
+  if(land(self, path, d + n + lib + 2, NULL, (byte)(un_code + e))) return 1;
   self->heap(path, 0);
   return 0;
 }
@@ -193,7 +193,7 @@ u64i  gap(mode* self) {
 }
 
 void  dock(mode* self, u64i at, u64i org) {
-  u64i bss = at + ((self->data->body - self->data->head + gap(self) - 1) & -gap(self));
+  u64i bss = at + ((self->data->body - self->data->head + gap(self) - 1) & ~(gap(self) - 1));
   for(seat* s = self->aims; s < self->aims + self->seats; s++)
     emit(self, site, s->at, pose(self, (seat){NULL, s->off}, at, bss)
                             - (s->at - self->text->head));
@@ -207,14 +207,14 @@ void  dock(mode* self, u64i at, u64i org) {
       copy(site, &(s32i){0}, 4);
       continue;
     }
-    s64i  to = null? -org: pose(self, h->name? goal(self, h->unit, h->name, 1): h->aim, at, bss);
+    s64i  to = null? 0 - org: pose(self, h->name? goal(self, h->unit, h->name, 1): h->aim, at, bss);
     if(h->wide) {
       u64i a = org + to + h->add;
       copy(site, &a, sizeof(a));
       continue;
     }
     s64i  rel = to + h->add - pose(self, h->site, at, bss);
-    s32i  r   = rel;
+    s32i  r   = (s32i)rel;
     if(r != rel) fail("object reference too far\n");
     copy(site, &r, sizeof(r));
   }
@@ -257,5 +257,5 @@ u32i  knit(mode* self, cord** out) {
     else c->aim = m->kind == call? (seat){m->addr, 0}: (seat){NULL, m->slot};
   }
   *out = all;
-  return c - all;
+  return (u32i)(c - all);
 }
