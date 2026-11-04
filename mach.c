@@ -151,7 +151,7 @@ static file* mach_exec(mode* self) {
     .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text + vmsz, (sign + page - 1) & ~(page - 1),
              link, sign, 1, 1, 0, 0}, // r--
     .syms = {lc_symtab, sizeof(h.syms), link, 0, link, 0},
-    .dsym = {lc_dysymtab, sizeof(h.dsym)},
+    .dsym = {lc_dysymtab, sizeof(h.dsym), .ilocal = 0},
     .dyld = {lc_dylinker, sizeof(h.dyld), 12, "/usr/lib/dyld"},
     .main = {lc_main, sizeof(h.main), top + (self->main - self->text->head), 0},
     .build = {lc_build, sizeof(h.build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
@@ -284,9 +284,9 @@ static file* mach_relo(mode* self) {
               4, top - sizeof(mach_mh), 0, 0},
     .seg   = {lc_segment, sizeof(seg64) + 3 * sizeof(sec64), "", 0, bss + self->zero, base,
               data + dsz, 7, 7, 3, 0},
-    .sec   = {{"__text", "__TEXT", 0, code, base, lg, rels, ncord, s_code},
-              {"__data", "__DATA", data, dsz, base + data, lg, rdat, self->impn, 0},
-              {"__bss", "__DATA", bss, self->zero, 0, lg, 0, 0, s_zerofill}},
+    .sec   = {{"__text", "__TEXT", 0, code, base, lg, rels, ncord, s_code, {0}},
+              {"__data", "__DATA", data, dsz, base + data, lg, rdat, self->impn, 0, {0}},
+              {"__bss", "__DATA", bss, self->zero, 0, lg, 0, 0, s_zerofill, {0}}},
     .build = {lc_build, sizeof(mach_build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
     .syms  = {lc_symtab, sizeof(mach_symtab), syms, nsym, strs, t.strs},
     .dsym  = {lc_dysymtab, sizeof(mach_dysym), .next = t.ndef, .iund = t.ndef, .nund = t.nund},
