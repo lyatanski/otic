@@ -16,7 +16,7 @@ done
 gcc -o$out/tic $link
 
 echo "--- test"
-for spec in core ia64 arm8 elfs mach pe32; do
+for spec in core link ario ia64 arm8 elfs mach pe32; do
   gcc -Wall -Wextra -o$out/test-$spec test/$spec.c && $out/test-$spec
 done
 gcc -Wall -Wextra -o$out/test test/main.c && $out/test
