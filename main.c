@@ -53,7 +53,9 @@ file* scan(char* name) {
   FILE* fp = fopen(name, "rb");
   if(!fp) return NULL;
   fseek(fp, 0, SEEK_END);
-  size_t size = ftell(fp);
+  long end = ftell(fp);
+  if(end < 0) fail("cannot size %s\n", name); // a pipe or another unseekable file
+  size_t size = (size_t)end;
   rewind(fp);
 
   file* f = heap(NULL, sizeof(file)+size);
