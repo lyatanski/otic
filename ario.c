@@ -82,9 +82,28 @@ static void ario_name(mode* self, meta* x, char* name, u64i len, u64i off) {
   s->data = x;
 }
 
-static int ario_cmp(const void* x, const void* y) {
-  s32i a = (*(meta**)x)->slot, b = (*(meta**)y)->slot;
-  return (a > b) - (a < b);
+// whether x goes before y: by member offset, then by place in defs, so that
+// the order is the same on every host
+static bool ario_less(meta* x, meta* y) {
+  return x->slot < y->slot || (x->slot == y->slot && x < y);
+}
+
+// by[i] sinks into the heap of the n in by, below each larger child
+static void ario_sift(meta** by, u64i i, u64i n) {
+  for(u64i c; (c = 2 * i + 1) < n; i = c) {
+    if(c + 1 < n && ario_less(by[c], by[c + 1])) c++;
+    if(!ario_less(by[i], by[c])) return;
+    meta* t = by[i]; by[i] = by[c]; by[c] = t;
+  }
+}
+
+// heapsort of the n in by: in place, no recursion, n log n at worst
+static void ario_sort(meta** by, u64i n) {
+  for(u64i i = n / 2; i--;) ario_sift(by, i, n);
+  while(n > 1) {
+    meta* t = by[0]; by[0] = by[--n]; by[n] = t;
+    ario_sift(by, 0, n);
+  }
 }
 
 // the names of each member, of the n in defs, linked in a ring (meta.hide):
@@ -93,7 +112,7 @@ static void ario_ring(mode* self, meta* defs, u64i n) {
   meta** by = self->heap(NULL, n * sizeof(meta*) + 1);
   u64i k = 0;
   for(u64i i = 0; i < n; i++) if(defs[i].kind == pend) by[k++] = defs + i;
-  qsort(by, k, sizeof(meta*), ario_cmp);
+  ario_sort(by, k);
   for(u64i i = 0, j; i < k; i = j) {
     for(j = i + 1; j < k && by[j]->slot == by[i]->slot; j++) by[j - 1]->hide = by[j];
     by[j - 1]->hide = by[i];
