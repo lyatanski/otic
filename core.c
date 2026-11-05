@@ -169,9 +169,9 @@ meta* mold(mode* self, meta* type, s32i argc, byte longs, bool more) {
 meta* aimp(meta* t) { return t && t->kind == refs && t->type->kind == proc? t->type: NULL; }
 
 // what a pointer points to or an array holds, NULL for the rest
-meta* elem(meta* t) { return t && (t->kind == refs || t->kind == many)? t->type: NULL; }
-u32i  wide(meta* t) { return elem(t) || (t && (t->kind == base || t->kind == bitf) && t->size == 8)? WIDE: 0; }
-u32i  span(meta* t) { return t? t->size: 4; }
+meta* elem(const meta* t) { return t && (t->kind == refs || t->kind == many)? t->type: NULL; }
+u32i  wide(const meta* t) { return elem(t) || (t && (t->kind == base || t->kind == bitf) && t->size == 8)? WIDE: 0; }
+u32i  span(const meta* t) { return t? t->size: 4; }
 u32i  lean(meta* t) { return t->kind == many? lean(t->type): t->kind == list? (u32i)t->slot: t->size; }
 
 // deferred operand: code is emitted only when the value must be in acc
@@ -204,9 +204,9 @@ void  spot(mode* self, u32i off) {
 }
 
 // the bytes of string literal s and a NUL, into out when given: their count
-u32i  quote(item* s, byte* out) {
+u32i  quote(const item* s, byte* out) {
   u32i n = 0;
-  for(char* c = s->name + 1; c < s->name + s->size - 1; c++, n++) {
+  for(const char* c = s->name + 1; c < s->name + s->size - 1; c++, n++) {
     char v = *c;
     if(v == '\\') v = (v = *++c) == 'n'? '\n': v == 't'? '\t': v == 'r'? '\r': v == '0'? 0: v;
     if(out) out[n] = v;
@@ -216,7 +216,7 @@ u32i  quote(item* s, byte* out) {
 }
 
 // the bits of bit-field f in its unit
-u64i  ones(meta* f) { return (f->longs < 64? ((u64i)1 << f->longs) - 1: ~(u64i)0) << f->slot; }
+u64i  ones(const meta* f) { return (f->longs < 64? ((u64i)1 << f->longs) - 1: ~(u64i)0) << f->slot; }
 
 // acc, the unit of bit-field f, to the value of f: shifted down, sign extended
 // unless its type is narrower than int (a char is not)
@@ -235,7 +235,7 @@ oper  bite(mode* self, meta* f) {
 
 // acc &= the bits of bit-field f: a mask that is no 32-bit constant is made in
 // acc and moved to tmp
-void  mask(mode* self, meta* f) {
+void  mask(mode* self, const meta* f) {
   u64i  m = ones(f);
   u32i  w = wide(f);
   if(!w || (s64i)(s32i)m == (s64i)m) { emit(self, calc, '&' | w, 1, (s32i)m); return; }
@@ -373,7 +373,7 @@ void  post(mode* self, item* name, byte* at, u32i argc, bool ext) {
 
 // point the call at to func, the function name with argc arguments; a call
 // the C way (ext) was checked against its prototype by cabi
-void  bind(mode* self, byte* at, item* name, meta* func, u32i argc, bool ext) {
+void  bind(const mode* self, byte* at, const item* name, const meta* func, u32i argc, bool ext) {
   if(!func || (func->kind != call && func->kind != pend))
     flaw(self, "no function '%.*s'\n", nick(name));
   if(!ext && func->ext) flaw(self, "'%.*s' is C code, link it before the call\n", nick(name));
@@ -451,7 +451,7 @@ s32i  room(mode* self, u32i size);
 oper  hand(mode* self, item* name, meta* func) {
   meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->more));
   if(func->lib) { spot(self, port(self, func)); emit(self, read, 8); return acc(t); }
-  meta* body = func->addr? func: find(self, 0, name); // past a prototype
+  const meta* body = func->addr? func: find(self, 0, name); // past a prototype
   if(!body || body->kind != call || !body->addr)
     flaw(self, "'%.*s' is not defined yet: define or link it before taking its address\n", nick(name));
   byte* at = self->text->body;
@@ -798,7 +798,7 @@ meta* plan(mode* self, meta* type) {
   for(; !twin(self, ')'); argc++, twin(self, ',')) {
     if(twin(self, tokd('.', '.', '.'))) { more = 1; skip(self, ')'); break; }
     item* n;
-    meta* t = coil(self, sort(self), &n);
+    const meta* t = coil(self, sort(self), &n);
     if(!n && !t->size && !argc && twin(self, ')')) break; // (void)
     if(argc < 6 && wide(t)) longs |= 1 << argc;
   }
@@ -856,7 +856,7 @@ meta* dims(mode* self, meta* type) {
 }
 
 // the declared type of name with its array sizes, which must have a size
-meta* full(mode* self, meta* type, item* name) {
+meta* full(mode* self, meta* type, const item* name) {
   type = dims(self, type);
   if(!type->size) flaw(self, "'%.*s' has no size\n", nick(name));
   return type;
@@ -870,7 +870,7 @@ meta* noun(mode* self, meta* base, item** name) {
 
 // size bytes at slot from src in stores of 4, 2 or 1 bytes, or zeros when
 // src is NULL
-void  bits(mode* self, s32i slot, byte* src, u32i size) {
+void  bits(mode* self, s32i slot, const byte* src, u32i size) {
   if(!src && size) emit(self, move, 0);
   for(u32i n; size; slot += n, size -= n) {
     n = size >= 8 && !src? 8: size >= 4? 4: size >= 2? 2: 1;
@@ -889,7 +889,7 @@ typedef struct { meta* type; meta* memb; u32i i, off; } tier;
 #define TIERS 16
 
 // a tier for type at off, at its first part
-tier  dive(mode* self, u32i depth, meta* type, u32i off) {
+tier  dive(const mode* self, u32i depth, meta* type, u32i off) {
   if(depth == TIERS) flaw(self, "initializer nested too deep\n");
   return (tier){type, type->kind == list? type->type: NULL, 0, off};
 }
@@ -928,7 +928,7 @@ void  aim(mode* self, tier* n) {
 // (.name, [index]) picks; a part that is a struct or array takes the values
 // that come when they are not in braces. A value or a string may be in braces
 void  seal(mode* self, meta* type, byte* at, s32i slot) {
-  meta* t = type->kind == many? type->type: NULL;
+  const meta* t = type->kind == many? type->type: NULL;
   if(at && bulky(type)) for(u32i i = 0; i < type->size; i++) at[i] = 0; // as a whole, again
   bool  brace = twin(self, '{');
   if(brace && (!bulky(type) || text(self, type))) {
@@ -1031,8 +1031,8 @@ void  vars(mode* self) {
 // before, is of this unit, or, unless the new one is static (own), of another
 // that makes it public, but not as a weak definition. Nor may another unit
 // define it as public when the new one is
-void  once(mode* self, meta* prev, item* name, bool own) {
-  meta* x = own? NULL: find(self, 0, name);
+void  once(mode* self, const meta* prev, item* name, bool own) {
+  const meta* x = own? NULL: find(self, 0, name);
   if((prev && (prev->kind == glob || prev->kind == call)
       && (prev->unit == self->unit || (!own && !prev->weak)))
      || (x && (x->kind == glob || x->kind == call) && heft(x) == 4))
@@ -1173,7 +1173,7 @@ void  stmt(mode* self) {
   else if(same(self, "return")) {
     chop(self);
     if(home(self)->talk.kind != ';') {
-      meta* t = self->func->type;
+      const meta* t = self->func->type;
       oper  x = expr(self, 1);
       if(!wide(t) != !wide(load(self, x).type)) { if(wide(t)) sext(self, x); else emit(self, cast, 0); }
     }
@@ -1191,7 +1191,7 @@ void  stmt(mode* self) {
 // the last load, or of "c". prev, what the name meant before, may be the same
 // import, which keeps its slot, or C code of an object or an archive, which x
 // gives a prototype: the calls go to the definition (cabi)
-void  hire(mode* self, meta* x, meta* prev) {
+void  hire(mode* self, meta* x, const meta* prev) {
   x->ext = 1;
   if(x->kind == call && prev && (prev->kind == pend || (prev->kind == call && prev->ext && !prev->lib)))
     return;
@@ -1242,7 +1242,7 @@ void  decl(mode* self) {
   // type name "(" args ")" "{" stmt "}"     // callable decl
   // type name "(" args ")" ";"               // import
   if(twin(self, '(')) {
-    meta* prev = find(self, self->unit, name);
+    const meta* prev = find(self, self->unit, name);
     seed(self, .name=name, .type=type, .kind=call, .own=own);
     meta* func = self->func = self->pile + self->top - 1;
     u32i  top  = self->top;
@@ -1284,7 +1284,7 @@ void  decl(mode* self) {
   // globals: type name ([n])* (= init)? (, declarator)* ;
   for(type = full(self, type, name);; type = noun(self, base, &name)) {
     if(ext) {
-      meta* prev = find(self, self->unit, name);
+      const meta* prev = find(self, self->unit, name);
       seed(self, .name=name, .type=type, .kind=glob, .own=own);
       hire(self, self->pile + self->top - 1, prev);
       if(!twin(self, ',')) break;
@@ -1307,7 +1307,7 @@ void  decl(mode* self) {
 void  feed(mode* self, u32i at) {
   file* code = self->units[at].code; // nest may move the units
   byte  kind = self->units[at].kind;
-  char* path = self->units[at].path;
+  const char* path = self->units[at].path;
   u32i  fixs = self->fixs, back = self->unit;
   self->unit = at;
   if(kind == un_arch) {
@@ -1327,8 +1327,8 @@ void  feed(mode* self, u32i at) {
 // the file at path, read in code, into the pass as a unit of kind unless it
 // is in already: 1 when it was not. The unit joins the list as it starts, so
 // a cycle back into it sees what it has defined so far
-bool  join(mode* self, char* path, u64i size, file* code, byte kind) {
-  for(unit* u = self->units + 1; kind != un_memb && u < self->units + self->unitn; u++)
+bool  join(mode* self, const char* path, u64i size, file* code, byte kind) {
+  for(const unit* u = self->units + 1; kind != un_memb && u < self->units + self->unitn; u++)
     if(u->kind != un_memb && alike(u->path, path, size + 1)) { self->heap(code, 0); return 0; }
   feed(self, nest(self, (unit){.path = path, .code = code, .kind = kind}));
   return 1;
@@ -1346,7 +1346,7 @@ bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
 
 // the file at name, named on the command line, as a unit of kind; read when
 // code is NULL, fatal when it cannot be
-void  lead(mode* self, char* name, file* code, byte kind) {
+void  lead(mode* self, const char* name, file* code, byte kind) {
   u64i  size = slen(name);
   char* path = self->heap(NULL, size + 1);
   copy((byte*)path, name, size + 1);

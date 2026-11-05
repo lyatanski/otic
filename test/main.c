@@ -146,7 +146,7 @@ static char* shown(int value, char* buf) {
 
 // compile src both ways: NULL when exec gives run and -e gives want, else why
 // not
-static char* tried(char* src, int run, int want) {
+static char* tried(const char* src, int run, int want) {
   mkdir("bins", 0755);
   sprintf(src_at, "bins/" TAG "-%03zu.c", test_count);
   sprintf(exe_at, "bins/" TAG "-%03zu" EXE, test_count);
@@ -178,7 +178,7 @@ static char* tried(char* src, int run, int want) {
   if((error = tried(src, run, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
 // a module at bins/name.c, beside the cases, for link "name"
-static void module(char* name, char* src) {
+static void module(const char* name, const char* src) {
   char at[64];
   snprintf(at, sizeof at, "bins/%s.c", name);
   FILE* fp = fopen(at, "wb");
@@ -189,7 +189,7 @@ static void module(char* name, char* src) {
 // host's cc without a stack protector (it calls libc) into bins/name-i.o: its
 // path, or NULL when it could not be built. The sources are not .c files, so
 // link "name-i" finds the object
-static char* archive(char* name, char** src) {
+static char* archive(const char* name, char** src) {
   static char at[64];
   char cmd[512], run[640];
   int  n = snprintf(cmd, sizeof cmd, "ar rcs bins/%s.a", name);
@@ -211,7 +211,7 @@ static char* archive(char* name, char** src) {
 // src as a library written by tic, bins/libname.so, or with -s (stat)
 // bins/name.o, then the C program drv built with it by the host's cc (with
 // cflags) and run: its exit code, bad when tic failed, odd when cc did
-static int  library(char* name, char* src, bool stat, char* cflags, char* drv) {
+static int  library(const char* name, const char* src, bool stat, const char* cflags, const char* drv) {
   char at[64], out[64], cmd[512];
   snprintf(at, sizeof at, "bins/%s.c", name);
   snprintf(out, sizeof out, stat? "bins/%s.o": "bins/lib%s.so", name);
@@ -254,7 +254,7 @@ static int  apple(void) {
 // compiled by clang and linked with it by ld64.lld against a stub of
 // libSystem: 0 when it links, bad when tic failed, odd when the build did.
 // Nothing here runs macOS code
-static int  machlib(char* name, char* src, bool stat, char* arch, char* drv) {
+static int  machlib(const char* name, const char* src, bool stat, char* arch, const char* drv) {
   char  at[64], out[64], cmd[512];
   char* cpu = arch[0] == 'a'? "arm64": "x86_64";
   FILE* fp = fopen("bins/libSystem.tbd", "wb");

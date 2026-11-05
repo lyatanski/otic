@@ -27,21 +27,21 @@ typedef struct {
   byte* next;
 } ario_part;
 
-static u64i ario_num(char* at, u32i size) {
+static u64i ario_num(const char* at, u32i size) {
   u64i n = 0;
   for(; size && *at >= '0' && *at <= '9'; size--) n = n * 10 + *at++ - '0';
   return n;
 }
 
 // a number of size bytes at at, big endian (GNU) or little endian (BSD)
-static u64i ario_word(byte* at, u32i size, bool big) {
+static u64i ario_word(const byte* at, u32i size, bool big) {
   u64i n = 0;
   for(u32i i = 0; i < size; i++) n = n << 8 | at[big? i: size - 1 - i];
   return n;
 }
 
 // the member whose header is at at, in the archive f at path
-static ario_part ario_read(char* path, file* f, byte* at) {
+static ario_part ario_read(const char* path, file* f, byte* at) {
   ario_head* h = (ario_head*)at;
   ario_part  p = {.name = h->name, .body = at + sizeof(*h)};
   if((u64i)(f->tail - at) < sizeof(*h) || h->seal[0] != '`' || h->seal[1] != '\n')
@@ -73,7 +73,7 @@ static ario_part ario_read(char* path, file* f, byte* at) {
 // name, len bytes, defined by the member whose header is off bytes into the
 // archive: an archive name x, unless an earlier member defines it
 static void ario_name(mode* self, meta* x, char* name, u64i len, u64i off) {
-  file* f = home(self)->code;
+  const file* f = home(self)->code;
   if(off < 8 || off >= (u64i)(f->tail - f->head) || off >> 31 || !len)
     fail("bad archive index: %s\n", home(self)->path);
   item* s = hget(self, self->unit, name, len);
@@ -84,7 +84,7 @@ static void ario_name(mode* self, meta* x, char* name, u64i len, u64i off) {
 
 // whether x goes before y: by member offset, then by place in defs, so that
 // the order is the same on every host
-static bool ario_less(meta* x, meta* y) {
+static bool ario_less(const meta* x, const meta* y) {
   return x->slot < y->slot || (x->slot == y->slot && x < y);
 }
 
@@ -108,7 +108,7 @@ static void ario_sort(meta** by, u64i n) {
 
 // the names of each member, of the n in defs, linked in a ring (meta.hide):
 // ario_pull takes them out of the table without a scan of it
-static void ario_ring(mode* self, meta* defs, u64i n) {
+static void ario_ring(const mode* self, meta* defs, u64i n) {
   meta** by = self->heap(NULL, n * sizeof(meta*) + 1);
   u64i k = 0;
   for(u64i i = 0; i < n; i++) if(defs[i].kind == pend) by[k++] = defs + i;
@@ -123,12 +123,12 @@ static void ario_ring(mode* self, meta* defs, u64i n) {
 // the symbol index of the archive f, the unit being joined, into its table.
 // Nothing is copied into text or data
 void ario_load(mode* self, file* f) {
-  char* path = home(self)->path;
+  const char* path = home(self)->path;
   if(f->tail - f->head < 8 || !alike(f->head, "!<arch>\n", 8))
     fail("not an archive: %s\n", path);
   if(f->tail == f->head + 8) return;
   ario_part p = ario_read(path, f, f->head + 8);
-  char* h = (char*)f->head + 8;
+  const char* h = (char*)f->head + 8;
   bool  bsd = p.nlen >= 9 && alike(p.name, "__.SYMDEF", 9);
   u32i  w = alike(h, "/ ", 2)? 4: alike(h, "/SYM64/ ", 8)? 8:
             bsd? p.nlen >= 12 && alike(p.name + 9, "_64", 3)? 8: 4: 0;
@@ -140,7 +140,7 @@ void ario_load(mode* self, file* f) {
     n = ario_word(b, w, 1);
     if(n > (size - w) / (w + 1)) fail("bad archive index: %s\n", path);
     char* name = (char*)b + w + n * w;
-    char* end  = (char*)b + size;
+    const char* end  = (const char*)b + size;
     meta* defs = home(self)->defs = zero(self, (n + 1) * sizeof(meta));
     for(u64i i = 0; i < n; i++) {
       u64i len = 0;

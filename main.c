@@ -49,7 +49,7 @@ void* heap(void* memory, size_t size) {
   return memory;
 }
 
-file* scan(char* name) {
+file* scan(const char* name) {
   FILE* fp = fopen(name, "rb");
   if(!fp) return NULL;
   fseek(fp, 0, SEEK_END);
@@ -109,7 +109,7 @@ void* drop(void* memory, size_t size) {
 
 // the library s of a load ("c" is libc: tic's own on Unix), as given or
 // decorated (m: libm.so, libm.dylib, m.dll)
-void* bring(item* s) {
+void* bring(const item* s) {
   char  name[256];
   int   n = (int)s->size - 2; // without the quotes
   if(n > 200) fail("library name too long: %.*s\n", nick(s));
@@ -139,12 +139,12 @@ void* bring(item* s) {
 #endif
 }
 
-bool  have(item* s) {
+bool  have(const item* s) {
   return bring(s) != NULL;
 }
 
 // the address of each import in its slot, from the libraries it loads
-void  plug(mode* self, u64i* slot) {
+void  plug(const mode* self, u64i* slot) {
   char  name[256];
   for(u32i i = 0; i < self->impn; i++) {
     meta* x = self->imps[i];
@@ -202,7 +202,7 @@ void  save(mode* self) {
 }
 
 typedef struct opts opts;
-typedef void (*move)(mode*, opts*, char*);
+typedef void (*move)(mode*, const opts*, const char*);
 struct opts {
   char* name;
   char* full;
@@ -212,7 +212,7 @@ struct opts {
         args:1;
 };
 
-static void help(mode* m, opts* self, char* para) {
+static void help(mode* m, const opts* self, const char* para) {
   (void)m; (void)para;
   printf("usage: %s [options] file\n", "tic");
   printf("options:\n");
@@ -227,18 +227,18 @@ static void help(mode* m, opts* self, char* para) {
 }
 
 // x is the string y, none when y is NULL
-static bool is(char* x, char* y) {
+static bool is(const char* x, const char* y) {
   return y && alike(x, y, slen(y) + 1);
 }
 
-static void arch(mode* self, opts* opt, char* para) {
+static void arch(mode* self, const opts* opt, const char* para) {
   (void)opt;
   if(is(para, "ia64")) self->arch = ia64;
   else if(is(para, "arm8")) self->arch = arm8;
   else fail("architecture '%s' not supported\n", para);
 }
 
-static void wrap(mode* self, opts* opt, char* para) {
+static void wrap(mode* self, const opts* opt, const char* para) {
   (void)opt;
   if(is(para, "elfs")) self->form = elfs;
   else if(is(para, "mach")) self->form = mach;
@@ -246,34 +246,34 @@ static void wrap(mode* self, opts* opt, char* para) {
   else fail("form '%s' not supported\n", para);
 }
 
-static void dest(mode* self, opts* opt, char* para) {
+static void dest(mode* self, const opts* opt, const char* para) {
   (void)opt;
   self->outp = para;
   self->show = save;
   if(!self->libs) self->libs = lb_dyno;
 }
 
-static void flat(mode* self, opts* opt, char* para) {
+static void flat(mode* self, const opts* opt, const char* para) {
   (void)opt; (void)para;
   self->libs = lb_relo;
 }
 
-static void seek(mode* self, opts* opt, char* para) {
+static void seek(mode* self, const opts* opt, const char* para) {
   (void)opt;
   if(self->dirn == sizeof self->dirs / sizeof *self->dirs) fail("too many -L directories\n");
   self->dirs[self->dirn++] = para;
 }
 
 // the source: its link and load lines name the objects and libraries
-static void apos(mode* self, opts* opt, char* para) {
+static void apos(mode* self, const opts* opt, const char* para) {
   (void)opt;
   self->name = para;
 }
 
-static void parse(mode* self, opts* opt, int argc, char** argv, move call) {
+static void parse(mode* self, const opts* opt, int argc, char** argv, move call) {
   for(int i = 1; i < argc; i++) {
     bool match = 0;
-    for(opts* back = opt; back->name; back++) {
+    for(const opts* back = opt; back->name; back++) {
       if(is(argv[i], back->name) || is(argv[i], back->full)) {
         match = 1;
         if(back->call) {

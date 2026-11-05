@@ -15,7 +15,7 @@ static void  begin(void) {
 }
 
 // a section of size bytes from src: its index
-static u32i  section(u32i type, u64i flags, void* src, u64i size, u64i align) {
+static u32i  section(u32i type, u64i flags, const void* src, u64i size, u64i align) {
   o.n = (o.n + 7) & -8;
   o.sh[o.shn] = (sh64){.type = type, .flags = flags, .offset = o.n, .size = size, .align = align};
   if(type != SHT_NOBITS) { memcpy(o.at + o.n, src, size); o.n += size; }
@@ -23,7 +23,7 @@ static u32i  section(u32i type, u64i flags, void* src, u64i size, u64i align) {
 }
 
 // the symbols s, named in strs: the index of their table
-static u32i  symbols(sym64* s, u32i n, char* strs, u32i size) {
+static u32i  symbols(const sym64* s, u32i n, const char* strs, u32i size) {
   u32i str = section(SHT_STRTAB, 0, strs, size, 1);
   u32i tab = section(SHT_SYMTAB, 0, s, n * sizeof(sym64), 8);
   o.sh[tab].link = str;
@@ -32,7 +32,7 @@ static u32i  symbols(sym64* s, u32i n, char* strs, u32i size) {
 }
 
 // relocations r of section at, by the symbols of table tab
-static void  relocate(rela64* r, u32i n, u32i at, u32i tab) {
+static void  relocate(const rela64* r, u32i n, u32i at, u32i tab) {
   u32i i = section(SHT_RELA, 0, r, n * sizeof(rela64), 8);
   o.sh[i].link = tab;
   o.sh[i].info = at;
@@ -88,7 +88,7 @@ static bool  took(file* f) {
   elfs.take(&ours, f);
   return 1;
 }
-static bool  refused(file* f, char* why) {
+static bool  refused(file* f, const char* why) {
   if(!took(f) && strstr(said, why)) return 1;
   printf("    want %s\n    got  %s\n", why, said[0]? said: "no error\n");
   return 0;
@@ -120,11 +120,11 @@ static void  cord_(cord c) { knits[cordn++] = c; }
 #define HEAD(out) ((eh64*)((out)->head + sizeof(elfs_id)))
 #define SECT(out) ((sh64*)((out)->head + HEAD(out)->shoff))
 static sym64*  sym_(file* out, u32i tab, u32i i) { return (sym64*)(out->head + SECT(out)[tab].offset) + i; }
-static char*   name_(file* out, u32i tab, sym64* s) {
+static char*   name_(file* out, u32i tab, const sym64* s) {
   return (char*)out->head + SECT(out)[SECT(out)[tab].link].offset + s->name;
 }
 static rela64* rel_(file* out, u32i sec, u32i i) { return (rela64*)(out->head + SECT(out)[sec].offset) + i; }
-static bool    rela_(rela64* r, u64i offset, u32i type, u32i sym, s64i addend) {
+static bool    rela_(const rela64* r, u64i offset, u32i type, u32i sym, s64i addend) {
   if(r->offset == offset && r->type == type && r->sym == sym && r->addend == addend) return 1;
   printf("    want %llx %u %u %lld\n    got  %llx %u %u %lld\n", (unsigned long long)offset, type, sym,
          (long long)addend, (unsigned long long)r->offset, r->type, r->sym, (long long)r->addend);

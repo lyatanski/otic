@@ -16,7 +16,7 @@ static void  start(void) {
 }
 
 // the bytes emitted since start are want, else both are shown
-static bool  hex(char* want) {
+static bool  hex(const char* want) {
   char got[512] = "";
   u32i n = 0;
   for(byte* p = t->head; p < t->body && n < sizeof got - 4; p++)

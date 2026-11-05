@@ -65,7 +65,7 @@ static byte* be32(byte* at, u32i v) {
   return at;
 }
 
-static void sha256(byte* msg, u64i len, byte* out) {
+static void sha256(const byte* msg, u64i len, byte* out) {
   static const u32i k[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -123,7 +123,7 @@ static void  mach_seal(byte* o, u64i limit, u64i text, bool exe) {
   };
   byte* at = o + limit;
   for(u32i i = 0; i < sizeof(blob) / sizeof(*blob); i++) at = be32(at, blob[i]);
-  at = copy(at, (void*)mach_name, sizeof(mach_name));
+  at = copy(at, mach_name, sizeof(mach_name));
   for(u64i i = 0; i < slots; i++, at += 32) // the last page up to limit
     sha256(o + (i << 12), limit - (i << 12) < 4096? limit - (i << 12): 4096, at);
 }
@@ -182,7 +182,7 @@ typedef struct {
 } mach_syms;
 
 // the index of name among the undefined ones, added when new
-static u32i  mach_need(mode* self, mach_syms* t, item* name, bool weak) {
+static u32i  mach_need(const mode* self, mach_syms* t, item* name, bool weak) {
   u32i i = 0;
   for(; i < t->nund && !(t->unds[i].name->size == name->size
                          && alike(t->unds[i].name->name, name->name, name->size)); i++);
@@ -204,12 +204,12 @@ static void  mach_sign(mode* self, mach_syms* t) {
 // sym, the symbols of t, their names in str after a NUL: a definition in
 // section 1 (text), 2 (data) or 3 (bss) at its address there, an undefined
 // name with the flags und
-static void  mach_put(mode* self, mach_syms* t, nl64* sym, byte* str,
+static void  mach_put(const mode* self, const mach_syms* t, nl64* sym, byte* str,
                       u64i text, u64i data, u64i bss, u16i und) {
   u64i at = 1;
   str[0] = 0;
   for(u32i i = 0; i < t->ndef + t->nund; i++, sym++) {
-    item* s = i < t->ndef? t->defs[i]->name: t->unds[i - t->ndef].name;
+    const item* s = i < t->ndef? t->defs[i]->name: t->unds[i - t->ndef].name;
     *sym = (nl64){.strx = (u32i)at};
     str[at++] = '_';
     copy(str + at, s->name, s->size);
@@ -220,7 +220,7 @@ static void  mach_put(mode* self, mach_syms* t, nl64* sym, byte* str,
       sym->desc = und | (t->unds[i - t->ndef].weak? n_weak_ref: 0);
       continue;
     }
-    meta* m = t->defs[i];
+    const meta* m = t->defs[i];
     bool  f = m->kind == call, z = !f && m->slot & ZERO;
     sym->type  = n_sect | n_ext;
     sym->sect  = f? 1: z? 3: 2;
@@ -242,7 +242,7 @@ static u32i  mach_log(u64i step) { // log2 of an alignment
 
 // the section of seat s in an object, 1 text, 2 data (then the import slots,
 // at slots) or 3 bss, and its address there: data at data, bss at bss
-static u32i  mach_part(mode* self, seat s, u64i data, u64i slots, u64i bss, u64i* addr) {
+static u32i  mach_part(const mode* self, seat s, u64i data, u64i slots, u64i bss, u64i* addr) {
   if(s.at) { *addr = s.at - self->text->head; return 1; }
   if(s.off & ZERO) { *addr = bss + (s.off & ~ZERO); return 3; }
   *addr = data + (s.off & SLOT? slots + 8 * (s.off & ~SLOT): s.off);
@@ -322,7 +322,7 @@ static file* mach_relo(mode* self) {
 }
 
 // a before b, NUL ended names, by their bytes
-static bool  mach_less(byte* a, byte* b) {
+static bool  mach_less(const byte* a, const byte* b) {
   for(; *a && *a == *b; a++, b++);
   return *a < *b;
 }
@@ -331,7 +331,7 @@ static bool  mach_less(byte* a, byte* b) {
 // symbols by its whole name, each to a node with its address. dyld follows the
 // first edge that begins the name it looks for, so a name comes before those
 // that are its prefixes: by name, last first. Its end
-static byte* mach_trie(mode* self, byte* at, nl64* sym, u32i n, byte* str) {
+static byte* mach_trie(const mode* self, byte* at, const nl64* sym, u32i n, byte* str) {
   u32i* by = self->heap(NULL, n * sizeof(u32i) + 1);
   u64i  node = 1;
   for(u32i i = 0; i < n; i++) {
@@ -346,13 +346,13 @@ static byte* mach_trie(mode* self, byte* at, nl64* sym, u32i n, byte* str) {
   *at++ = 0; // no symbol at the root
   at = uleb(at, n);
   for(u32i i = 0; i < n; i++) { // the edges, their nodes' offsets in 4 bytes
-    char* s = (char*)str + sym[by[i]].strx;
+    const char* s = (const char*)str + sym[by[i]].strx;
     at = copy(at, s, slen(s) + 1);
     for(u32i b = 0; b < 4; b++) *at++ = (node >> 7 * b & 0x7f) | (b < 3? 0x80: 0);
     node += 3 + (uleb(k, sym[by[i]].value) - k);
   }
   for(u32i i = 0; i < n; i++) { // its size, flags (weak), address, no edges
-    nl64* m = sym + by[i];
+    const nl64* m = sym + by[i];
     *at++ = (byte)(1 + (uleb(k, m->value) - k));
     *at++ = m->desc & n_weak_def? 0x4: 0;
     at = uleb(at, m->value);
@@ -374,8 +374,8 @@ static file* mach_dyno(mode* self) {
   mach_syms t;
   mach_sign(self, &t);
   const u32i nsym = t.ndef + t.nund;
-  char* name = self->outp? self->outp: "";
-  for(char* c = name; *c; c++) if(*c == '/') name = c + 1;
+  const char* name = self->outp? self->outp: "";
+  for(const char* c = name; *c; c++) if(*c == '/') name = c + 1;
   const u64i idsz = (24 + 7 + slen(name) + 1 + 7) & -8;
 
   const u64i top  = sizeof(mach_mh) + 3 * sizeof(seg64) + 3 * sizeof(sec64) + sizeof(mach_info)
@@ -398,7 +398,7 @@ static file* mach_dyno(mode* self) {
     *b++ = 0x51; // type: pointer
     for(u32i i = 0; i < self->impn; i++) {
       *b++ = 0x40; // its name, then __DATA and the slot's offset there
-      char* s = (char*)str + sym[t.ndef + i].strx;
+      const char* s = (const char*)str + sym[t.ndef + i].strx;
       b = copy(b, s, slen(s) + 1);
       *b++ = 0x71;
       b = uleb(b, slots + 8 * i);

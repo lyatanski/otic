@@ -25,9 +25,9 @@ u64i  tidy(char* path, u64i size) {
 
 // the file name with end e (".c", ".o", or ".a" as libname.a) in dir, or
 // beside this source when dir is NULL, joined as a unit: 0 when it is not there
-static bool nigh(mode* self, item* s, char* dir, u32i e) {
+static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
   static char* const ends[] = {".c", ".o", ".a"};
-  char* at = dir? dir: home(self)->path;
+  const char* at = dir? dir: home(self)->path;
   u32i  d = 0, n = quote(s, NULL) - 1, b = 0, lib = e == 2? 3: 0;
   if(dir) d = (u32i)slen(dir);
   else for(u32i i = 0; at[i]; i++) if(at[i] == '/') d = i + 1;
@@ -70,14 +70,14 @@ u32i  nest(mode* self, unit x) {
 }
 
 // the same name, maybe in the tables of two units
-bool  akin(item* x, item* y) {
+bool  akin(const item* x, const item* y) {
   return x == y || (x->size == y->size && alike(x->name, y->name, x->size));
 }
 
 // how x defines its name to the other units: 0 not at all (a static, a
 // local), 1 declared (an import, a prototype of C code), 2 in an archive
 // member not pulled yet, 3 weak (or tentative), 4 defined
-u32i  heft(meta* x) {
+u32i  heft(const meta* x) {
   if(x->own || x->kind == data) return 0;
   if(x->kind == pend) return 2;
   if(x->lib || (x->kind == call && !x->addr)) return 1;
@@ -154,7 +154,7 @@ void  tie(mode* self, u32i from, bool last) {
   u32i keep = from, unit = self->unit;
   u64i line = home(self)->line;
   for(fix* f = self->link + from; f < self->link + self->fixs; f++) {
-    meta* func = find(self, f->ext? 0: f->unit, f->name);
+    const meta* func = find(self, f->ext? 0: f->unit, f->name);
     if(!last && (!func || func->kind != call || !func->addr)) { self->link[keep++] = *f; continue; }
     self->unit = f->unit;
     home(self)->line = f->line;
@@ -168,7 +168,7 @@ void  tie(mode* self, u32i from, bool last) {
 }
 
 // m is a global, or with code a function with a body, but not an import
-static bool real(meta* m, bool code) {
+static bool real(const meta* m, bool code) {
   return m && !m->lib && (m->kind == glob || (code && m->kind == call && m->addr));
 }
 
@@ -188,7 +188,7 @@ u64i  pose(mode* self, seat s, u64i at, u64i bss) {
          s.off & WANT? pose(self, goal(self, 0, self->asks[s.off & ~WANT], 0), at, bss): at + s.off;
 }
 
-u64i  gap(mode* self) {
+u64i  gap(const mode* self) {
   return self->most > 16? self->most: 16;
 }
 
@@ -245,7 +245,7 @@ u32i  knit(mode* self, cord** out) {
   for(seat* s = self->aims; s < self->aims + self->seats; s++, c++) {
     *c = (cord){.site = {s->at, 0}, .aim = {NULL, s->off}, .kind = cd_glob};
     if(!(s->off & WANT) || s->off & (SLOT | ZERO)) continue;
-    meta* m = find(self, 0, c->name = self->asks[s->off & ~WANT]);
+    const meta* m = find(self, 0, c->name = self->asks[s->off & ~WANT]);
     if(real(m, 0)) { c->aim = (seat){NULL, m->slot}; c->name = NULL; }
   }
   for(hook* h = self->hooks; h < self->hooks + self->hookn; h++, c++) {

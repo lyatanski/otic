@@ -33,7 +33,7 @@ static void  begin(void) {
 
 // a member: its header name, as written, and size bytes of body, padded to an
 // even size. Where its header is
-static u32i  member(char* name, void* body, u32i size) {
+static u32i  member(const char* name, const void* body, u32i size) {
   char h[64];
   u32i at = archn;
   snprintf(h, sizeof h, "%-16s%-12s%-6s%-6s%-8s%-10u`\n", name, "0", "0", "0", "644", size);
@@ -46,7 +46,7 @@ static u32i  member(char* name, void* body, u32i size) {
 
 // a BSD member with a long name, "#1/n": the name, NUL padded to n bytes,
 // opens the body
-static u32i  longer(char* name, u32i n, void* body, u32i size) {
+static u32i  longer(const char* name, u32i n, const void* body, u32i size) {
   char h[16];
   byte b[1024] = {0};
   snprintf(h, sizeof h, "#1/%u", n);
@@ -57,7 +57,7 @@ static u32i  longer(char* name, u32i n, void* body, u32i size) {
 
 // the body of a GNU index of w-byte numbers: count, n offsets (0 until
 // aimed), the n names. Where its offsets are
-static byte* gnu(char* head, u32i w, u32i n, char* names) {
+static byte* gnu(const char* head, u32i w, u32i n, char* names) {
   byte b[1024] = {0};
   u32i size = w + n * w, len;
   put(b, w, n, 1);
@@ -69,7 +69,7 @@ static byte* gnu(char* head, u32i w, u32i n, char* names) {
 // the body of a BSD index of w-byte numbers: bytes of the pairs, the (name,
 // offset) pairs, bytes of the names, the names. With a long header name when
 // head is "#1/". Where its pairs are
-static byte* bsd(char* head, u32i w, u32i n, char* names) {
+static byte* bsd(const char* head, u32i w, u32i n, const char* names) {
   byte b[1024] = {0};
   u32i strs = 0, len;
   put(b, w, 2 * w * n, 0);
@@ -84,13 +84,13 @@ static byte* bsd(char* head, u32i w, u32i n, char* names) {
 }
 
 // the offsets of an index: name i is defined by the member at at[i]
-static void  point(byte* offs, u32i w, u32i stride, bool big, u32i n, u32i* at) {
+static void  point(byte* offs, u32i w, u32i stride, bool big, u32i n, const u32i* at) {
   for(u32i i = 0; i < n; i++) put(offs + i * stride + (big? 0: w), w, at[i], big);
 }
 
 // the front end: the root and the archive, its members taken by the mock form
 static mode  self;
-typedef struct { char* path; byte kind; file* code; } took_t;
+typedef struct { const char* path; byte kind; file* code; } took_t;
 static took_t taken[8];
 static u32i  takes;
 
@@ -122,20 +122,20 @@ static bool  loads(void) {
   join(&self, "lib.a", 5, f, un_arch);
   return 1;
 }
-static bool  rejects(char* why) {
+static bool  rejects(const char* why) {
   if(!loads() && strstr(said, why)) return 1;
   printf("    want %s\n    got  %s\n", why, said[0]? said: "no error\n");
   return 0;
 }
 
 // what name means in the archive's table
-static meta* named(char* name) {
+static meta* named(const char* name) {
   item* s = hsee(self.units + 1, name, strlen(name), clue(name, strlen(name)));
   return s? s->data: NULL;
 }
 
 // the member that defines name taken: 1, else 0 and said tells why
-static bool  pulls(char* name) {
+static bool  pulls(const char* name) {
   meta* x = named(name);
   if(!x) { printf("    %s is not in the table\n", name); return 0; }
   if(setjmp(bail)) return 0;
@@ -144,7 +144,7 @@ static bool  pulls(char* name) {
 }
 
 // the member last taken is path with body
-static bool  took(char* path, char* body) {
+static bool  took(const char* path, const char* body) {
   if(takes && !strcmp(taken[takes - 1].path, path) && taken[takes - 1].kind == un_memb) {
     file* f = taken[takes - 1].code;
     if((u64i)(f->tail - f->head) == strlen(body) && alike(f->head, body, strlen(body))) return 1;

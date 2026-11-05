@@ -30,7 +30,7 @@ static void  mock_dock(mode* m, u64i at, u64i org) {
   docked.at = at;
   docked.org = org;
 }
-static u64i  mock_gap(mode* self) { return self->most > 16? self->most: 16; }
+static u64i  mock_gap(const mode* self) { return self->most > 16? self->most: 16; }
 static u32i  mock_lay(mode* self, u32i size, bool zero, u32i align) {
   laid++;
   if(zero) {
@@ -61,7 +61,7 @@ static meta* mock_find(mode* m, u32i at, item* name) {
   if(at && name->data) return name->data;
   return elsewhere[name - items];
 }
-static u32i  mock_heft(meta* x) { return x->kind == pend? 2: x->lib? 1: x->weak? 3: 4; }
+static u32i  mock_heft(const meta* x) { return x->kind == pend? 2: x->lib? 1: x->weak? 3: 4; }
 static u32i  mock_ask(mode* m, meta* x) { (void)m; asks[asked] = x; return asked++; }
 
 // another unit defines name as x
@@ -95,7 +95,7 @@ static u32i  mock_knit(mode* m, cord** out) {
 
 // a fresh mode for cpu: code and data as given, main at main bytes into code
 // (a library: then set main to NULL)
-static void  start(chip cpu, char* code, u32i size, char* data, u32i dsize, u32i main) {
+static void  start(chip cpu, const char* code, u32i size, const char* data, u32i dsize, u32i main) {
   static file* text = (file*)texts;
   static file* data_ = (file*)datas;
   free(ours.hooks);
@@ -131,7 +131,7 @@ static file* packed(form f) {
 }
 
 // the bytes at p are want, in hex, else both are shown
-static bool  bytes(byte* p, char* want) {
+static bool  bytes(const byte* p, const char* want) {
   char got[256] = "";
   u32i n = 0;
   for(u32i i = 0; i < (strlen(want) + 1) / 3 && n < sizeof got - 4; i++)

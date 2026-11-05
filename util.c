@@ -2,38 +2,38 @@
 #include "core.h"
 
 // the byte helpers of every part, declared in core.h
-byte* copy(byte* dst, void* src, u64i size) {
-  for(byte* s = src; size--; *dst++ = *s++);
+byte* copy(byte* dst, const void* src, u64i size) {
+  for(const byte* s = src; size--; *dst++ = *s++);
   return dst;
 }
 
-u64i  slen(char* s) {
+u64i  slen(const char* s) {
   u64i n = 0;
   while(s[n]) n++;
   return n;
 }
 
-void* swell(mode* self, void* p, u32i n, u32i* cap, u64i size, u32i least) {
+void* swell(const mode* self, void* p, u32i n, u32i* cap, u64i size, u32i least) {
   if(n < *cap) return p;
   *cap = *cap * 2 + least;
   return self->heap(p, *cap * size);
 }
 
-void* zero(mode* self, u64i size) {
+void* zero(const mode* self, u64i size) {
   byte* p = self->heap(NULL, size);
   for(u64i i = 0; i < size; p[i++] = 0);
   return p;
 }
 
-bool  alike(void* x, void* y, u64i size) {
-  byte *a = x, *b = y;
+bool  alike(const void* x, const void* y, u64i size) {
+  const byte *a = x, *b = y;
   for(; size && *a == *b; size--, a++, b++);
   return !size;
 }
 
 
 // string hash, computed once for every table a name is looked up in
-u64i  clue(char* mark, u64i size) {
+u64i  clue(const char* mark, u64i size) {
   u64i clue = 0x01;
   for(u64i i = 0; i < size; clue += (clue << 5) + (clue >> 27) + mark[i++]);
   return clue;
@@ -41,7 +41,7 @@ u64i  clue(char* mark, u64i size) {
 
 // the slot of the name in the table, or the free slot where it goes; NULL
 // when 10 probes fail. The step is odd: it reaches every slot
-static item** hpos(unit* self, char* mark, u64i size, u64i clue) {
+static item** hpos(unit* self, const char* mark, u64i size, u64i clue) {
   u64i step = (clue >> 16) | 1;
   for(u64i i = 0; i < 10 && self->size; i++) {
     item** at = self->pool + ((clue + i * step) & (self->size - 1));
@@ -50,13 +50,13 @@ static item** hpos(unit* self, char* mark, u64i size, u64i clue) {
   return NULL;
 }
 
-item* hsee(unit* self, char* mark, u64i size, u64i clue) {
+item* hsee(unit* self, const char* mark, u64i size, u64i clue) {
   item** at = hpos(self, mark, size, clue);
   return at? *at: NULL;
 }
 
 // double the table, again until each item is within 10 probes
-static void  hgrow(mode* m, unit* self) {
+static void  hgrow(const mode* m, unit* self) {
   item** pool = self->pool;
   u32i   size = self->size, i;
   self->size = size? size: 32;
@@ -76,7 +76,7 @@ static void  hgrow(mode* m, unit* self) {
 
 // the table grows when 3/4 full or when 10 probes fail. Items are allocated
 // apart from it and never move: metas, words and fixes point to them
-static item* hput(mode* m, unit* self, char* mark, u64i size, u64i k) {
+static item* hput(const mode* m, unit* self, char* mark, u64i size, u64i k) {
   static item* spare;
   static u32i  left;
   item** at = hpos(self, mark, size, k);

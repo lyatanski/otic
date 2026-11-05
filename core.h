@@ -23,8 +23,8 @@ typedef  uint8_t byte;
 #define tokc(x, y, z, ...) ((x) | (y) << 8 | (z) << 16)
 #define tokd(...) tokc(__VA_ARGS__, 0, 0, 0)
 
-byte* copy(byte* dst, void* src, u64i size); // returns dst + size
-u64i  slen(char* s); // bytes before the NUL
+byte* copy(byte* dst, const void* src, u64i size); // returns dst + size
+u64i  slen(const char* s); // bytes before the NUL
 
 // the symbol tables
 typedef struct unit unit;
@@ -40,14 +40,14 @@ struct item {
   u32i  unit; // the unit whose table it is in
 };
 
-u64i  clue(char* mark, u64i size);
-item* hsee(unit*, char* mark, u64i size, u64i clue); // NULL when not in
+u64i  clue(const char* mark, u64i size);
+item* hsee(unit*, const char* mark, u64i size, u64i clue); // NULL when not in
 item* hget(mode*, u32i at, char* mark, u64i size);   // in unit at, made when not in
 
 // p, an array of *cap elements of size bytes with n in use, with room for one
 // more: it grows to twice its size plus least
-void* swell(mode*, void* p, u32i n, u32i* cap, u64i size, u32i least);
-void* zero(mode*, u64i size); // size zeroed bytes from mode.heap
+void* swell(const mode*, void* p, u32i n, u32i* cap, u64i size, u32i least);
+void* zero(const mode*, u64i size); // size zeroed bytes from mode.heap
 
 typedef struct {
   byte*  body;
@@ -72,7 +72,7 @@ typedef struct {
 // source can be joined from the middle of it
 enum { un_root, un_code, un_objs, un_arch, un_memb };
 struct unit {
-  char*  path; // tidy'd, one name per file
+  const char* path; // tidy'd, one name per file
   item** pool; // its symbol table, small and growable: the items stay put
   u32i   size; // slots in pool, a power of 2
   u32i   used;
@@ -99,7 +99,7 @@ typedef struct {
   void (*peek)(file*, s32i slot, u32i size);       // tmp = slot
   void (*addr)(file*, s32i slot);                  // acc = address of slot
   void (*glob)(file*);                             // acc = address of data, patched by site
-  void (*site)(file*, byte* glob, s64i dist);      // point a glob dist bytes past itself
+  void (*site)(const file*, byte* glob, s64i dist); // point a glob dist bytes past itself
   void (*read)(file*, u32i size);                  // acc = [acc]
   void (*fill)(file*, u32i size);                  // [acc] = tmp, acc = tmp
   void (*push)(file*);                             // push acc
@@ -109,30 +109,30 @@ typedef struct {
   void (*calc)(file*, u32i op, bool cnst, s32i n); // acc = acc op (n or tmp), op may be WIDE
   void (*when)(file*, bool nz);                    // branch on acc, patched by back
   void (*jump)(file*);                             // forward jump, patched by back
-  void (*back)(file*, byte* prev);                 // point a forward branch here
-  void (*loop)(file*, byte* dest);                 // jump back to an address
+  void (*back)(const file*, byte* prev);           // point a forward branch here
+  void (*loop)(file*, const byte* dest);           // jump back to an address
   void (*open)(file*);                             // prologue, the frame size is patched by size
-  void (*size)(file*, byte* func, s32i size);
+  void (*size)(const file*, byte* func, s32i size);
   void (*parm)(file*, u32i i, s32i slot);          // slot = argument register i
   void (*args)(file*, u32i i);                     // pop argument register i
   void (*dial)(file*);                             // call, patched by link
   void (*trap)(file*, u32i argc);                  // pop the arguments and the number, syscall
   void (*done)(file*);                             // epilogue and return
   void (*boot)(file*);                             // entry stub: call main
-  void (*link)(file*, byte* boot, byte* main);     // point a call at its function
+  void (*link)(const file*, byte* boot, const byte* main); // point a call at its function
   // call C code at func, or at the address in [acc] (an import slot), the C
   // way of os: pop the argc pushed arguments, the first fixed of them named.
   // The call to func, which link may point elsewhere, NULL through [acc]
-  byte* (*ffi)(file*, byte* func, u32i argc, u32i fixed, osys os);
+  byte* (*ffi)(file*, const byte* func, u32i argc, u32i fixed, osys os);
   // entry of a C library, called by boot: start(main, argc, argv, 0, 0, 0)
   // with argc and argv from the initial stack
-  void (*crt)(file*, byte* main, byte* start);
+  void (*crt)(file*, const byte* main, const byte* start);
   void (*flag)(file*, u32i op);                    // acc = 1 when the comparison op of a TEST calc held, else 0
   void (*cond)(file*, u32i op, bool hold);         // branch when it held (hold) or failed, patched by back
   // a left operand in acc kept while the right one is computed: pushed, with
   // room for lift to make it a move to scratch k when no call came between
   void (*keep)(file*);
-  void (*lift)(file*, byte* keep, u32i k);
+  void (*lift)(const file*, byte* keep, u32i k);
   void (*take)(file*, u32i k);                     // tmp = acc, acc = scratch k
   void (*pass)(file*, u32i i);                     // argument register i = acc
   // an entry for C code of os to call the function that follows it: nothing
@@ -145,7 +145,7 @@ typedef struct {
 #define VARY (~0u) // meta.size of a function from an object
 typedef void* (*poke)(void*, size_t);
 typedef void  (*pack)(mode*);
-typedef file* (*grab)(char*); // a source file, NUL terminated, NULL when it cannot be opened
+typedef file* (*grab)(const char*); // a source file, NUL terminated, NULL when it cannot be opened
 
 // container
 typedef struct {
@@ -251,11 +251,11 @@ typedef struct {
 // imports), knit the references, both into arrays from mode.heap: their count
 typedef struct {
   void  (*dock)(mode*, u64i at, u64i org);
-  u64i  (*gap)(mode*);
+  u64i  (*gap)(const mode*);
   u32i  (*lay)(mode*, u32i size, bool zero, u32i align);
   item* (*name)(mode*, u32i at, char* mark, u64i size);
   meta* (*find)(mode*, u32i at, item* name);
-  u32i  (*heft)(meta* x);
+  u32i  (*heft)(const meta* x);
   u32i  (*ask)(mode*, meta* x);
   u32i  (*sign)(mode*, meta*** out);
   u32i  (*knit)(mode*, cord** out);
@@ -266,8 +266,8 @@ typedef struct {
 enum { lb_none, lb_dyno, lb_relo };
 
 struct mode {
-  char* name; // input
-  char* outp; // output
+  const char* name; // input
+  const char* outp; // output
   u32i  unit; // the unit being parsed
   u32i  unitn, unitc;
   unit* units; // in join order, the root first
@@ -295,7 +295,7 @@ struct mode {
   poke  heap;
   pack  show;
   grab  scan;
-  bool  (*have)(item*); // running: whether the host has shared library s
+  bool  (*have)(const item*); // running: whether the host has shared library s
 
   u32i  top;
   meta  pile[256];
@@ -319,15 +319,15 @@ struct mode {
   u32i  askn, askc, askd;
   item** asks;     // archive names used, their members pulled up to askd
   u32i  dirn;
-  char* dirs[16];  // libraries locations
+  const char* dirs[16]; // libraries locations
   u32i  hookn, hookc;
   hook* hooks;
 };
 
 void  make(mode*);
 void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it, text at org
-u64i  gap(mode*); // alignment of data and of bss after it
-bool  alike(void* x, void* y, u64i size);
+u64i  gap(const mode*); // alignment of data and of bss after it
+bool  alike(const void* x, const void* y, u64i size);
 u32i  lay(mode*, u32i size, bool zero, u32i align);
 
 // the unit being parsed
@@ -340,18 +340,18 @@ u32i  lay(mode*, u32i size, bool zero, u32i align);
 
 // core.c, for link.c
 meta* mint(mode*, meta x);
-u32i  wide(meta*);
-u32i  quote(item* s, byte* out);
-void  bind(mode*, byte* at, item* name, meta* func, u32i argc, bool ext);
-bool  join(mode*, char* path, u64i size, file* code, byte kind);
+u32i  wide(const meta*);
+u32i  quote(const item* s, byte* out);
+void  bind(const mode*, byte* at, const item* name, const meta* func, u32i argc, bool ext);
+bool  join(mode*, const char* path, u64i size, file* code, byte kind);
 bool  land(mode*, char* path, u64i size, file* code, byte kind);
 
 // link.c
 u64i  tidy(char* path, u64i size);
 void  haul(mode*, item* s);
 u32i  nest(mode*, unit x);
-bool  akin(item* x, item* y);
-u32i  heft(meta* x);
+bool  akin(const item* x, const item* y);
+u32i  heft(const meta* x);
 meta* find(mode*, u32i at, item* name);
 u32i  ask(mode*, meta* x);
 void  reel(mode*);

@@ -21,7 +21,7 @@ static char    said[256]; // what fail said
 static char  trace[1024];
 static u32i  traced;
 
-static void  note(char* what, char* arg, s64i a, s64i b) {
+static void  note(char* what, const char* arg, s64i a, s64i b) {
   char* sep = traced? ", ": "";
   if(arg) traced += snprintf(trace + traced, sizeof trace - traced, "%s%s %s", sep, what, arg);
   else traced += snprintf(trace + traced, sizeof trace - traced, "%s%s %lld %lld", sep, what,
@@ -32,15 +32,15 @@ static void  note(char* what, char* arg, s64i a, s64i b) {
 static byte  texts[256];
 static file* text = (file*)texts;
 // where p is in text
-static s64i  in(byte* p) { return p? p - text->head: -1; }
+static s64i  in(const byte* p) { return p? p - text->head: -1; }
 
-static void  mock_link(file* t, byte* at, byte* to) { (void)t; note("link", NULL, in(at), in(to)); }
-static void  mock_site(file* t, byte* glob, s64i dist) { (void)t; note("site", NULL, in(glob), dist); }
+static void  mock_link(const file* t, byte* at, const byte* to) { (void)t; note("link", NULL, in(at), in(to)); }
+static void  mock_site(const file* t, byte* glob, s64i dist) { (void)t; note("site", NULL, in(glob), dist); }
 
 // the files there are, by path
 static char* there[8];
 static u32i  theren;
-static file* mock_scan(char* path) {
+static file* mock_scan(const char* path) {
   note("scan", path, 0, 0);
   for(u32i i = 0; i < theren; i++) {
     if(strcmp(there[i], path)) continue;
@@ -53,7 +53,7 @@ static file* mock_scan(char* path) {
   return NULL;
 }
 static bool  hosts; // the host has every shared library
-static bool  mock_have(item* s) { note("have", NULL, s->size, 0); return hosts; }
+static bool  mock_have(const item* s) { note("have", NULL, s->size, 0); return hosts; }
 static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
 static void  mock_take(mode* m, file* f) { (void)m; (void)f; }
 static void  mock_load(mode* m, file* f) { (void)m; (void)f; }
@@ -86,20 +86,20 @@ static void  start(char* path) {
 }
 
 // the trace is exactly calls, else it is shown
-static bool  is(char* all) {
+static bool  is(const char* all) {
   if(!strcmp(trace, all)) return 1;
   printf("    want %s\n    got  %s\n", all, trace);
   return 0;
 }
 // it failed with why
-static bool  says(char* why) {
+static bool  says(const char* why) {
   if(strstr(said, why)) return 1;
   printf("    want %s\n    got  %s\n", why, said[0]? said: "no error\n");
   return 0;
 }
 
 // path, tidy'd, is want
-static bool  tidies(char* path, char* want) {
+static bool  tidies(const char* path, const char* want) {
   char buf[64];
   u64i n = tidy(strcpy(buf, path), strlen(path));
   if(!strcmp(buf, want) && n == strlen(want)) return 1;

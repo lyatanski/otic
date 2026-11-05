@@ -46,11 +46,11 @@ static void note(file* text, byte op, char* fmt, ...) {
 }
 
 // what a patch points at: the op emitted there
-static char* at(file* text, byte* x) {
+static char* at(const file* text, const byte* x) {
   return x >= text->head && x < text->body? ops[*x]: "nowhere";
 }
 // the op whose branch a patch mends: the one before the mark
-static char* before(file* text, byte* x) {
+static char* before(const file* text, const byte* x) {
   return x > text->head && x <= text->body? ops[x[-1]]: "nowhere";
 }
 
@@ -60,7 +60,7 @@ static void mock_stor(file* t, s32i slot, u32i size)   { note(t, op_stor, " %d:%
 static void mock_peek(file* t, s32i slot, u32i size)   { note(t, op_peek, " %d:%u", slot, size); }
 static void mock_addr(file* t, s32i slot)              { note(t, op_addr, " %d", slot); }
 static void mock_glob(file* t)                         { note(t, op_glob, ""); }
-static void mock_site(file* t, byte* g, s64i dist)     { note(NULL, op_site, " %ld", (long)dist); (void)t; (void)g; }
+static void mock_site(const file* t, byte* g, s64i dist) { note(NULL, op_site, " %ld", (long)dist); (void)t; (void)g; }
 static void mock_read(file* t, u32i size)              { note(t, op_read, " %u", size); }
 static void mock_fill(file* t, u32i size)              { note(t, op_fill, " %u", size); }
 static void mock_push(file* t)                         { note(t, op_push, ""); }
@@ -80,30 +80,30 @@ static void mock_calc(file* t, u32i op, bool cnst, s32i n) {
 }
 static void mock_when(file* t, bool nz)                { note(t, op_when, nz? " nz": " z"); }
 static void mock_jump(file* t)                         { note(t, op_jump, ""); }
-static void mock_back(file* t, byte* prev)             { note(NULL, op_back, " %s", before(t, prev)); }
-static void mock_loop(file* t, byte* dest)             { note(t, op_loop, " %s", at(t, dest)); }
+static void mock_back(const file* t, byte* prev)       { note(NULL, op_back, " %s", before(t, prev)); }
+static void mock_loop(file* t, const byte* dest)       { note(t, op_loop, " %s", at(t, dest)); }
 static void mock_open(file* t)                         { note(t, op_open, ""); }
-static void mock_size(file* t, byte* func, s32i size)  { note(NULL, op_size, " %s %d", at(t, func), size); }
+static void mock_size(const file* t, byte* func, s32i size) { note(NULL, op_size, " %s %d", at(t, func), size); }
 static void mock_parm(file* t, u32i i, s32i slot)      { note(t, op_parm, " %u %d", i, slot); }
 static void mock_args(file* t, u32i i)                 { note(t, op_args, " %u", i); }
 static void mock_dial(file* t)                         { note(t, op_dial, ""); }
 static void mock_trap(file* t, u32i argc)              { note(t, op_trap, " %u", argc); }
 static void mock_done(file* t)                         { note(t, op_done, ""); }
 static void mock_boot(file* t)                         { note(t, op_boot, ""); }
-static void mock_link(file* t, byte* from, byte* to)   { note(NULL, op_link, " %s %s", at(t, from), at(t, to)); }
-static byte* mock_ffi(file* t, byte* func, u32i argc, u32i fixed, osys os) {
+static void mock_link(const file* t, byte* from, const byte* to) { note(NULL, op_link, " %s %s", at(t, from), at(t, to)); }
+static byte* mock_ffi(file* t, const byte* func, u32i argc, u32i fixed, osys os) {
   (void)os;
   byte* site = t->body;
   note(t, op_ffi, " %u/%u%s", fixed, argc, func? "": " slot");
   return func? site: NULL;
 }
-static void mock_crt(file* t, byte* main, byte* start) {
+static void mock_crt(file* t, const byte* main, const byte* start) {
   note(t, op_crt, " %s %s", at(t, main), at(t, start));
 }
 static void mock_flag(file* t, u32i op)                { char o[4]; note(t, op_flag, " %s", mock_op(op, o)); }
 static void mock_cond(file* t, u32i op, bool hold)     { char o[4]; note(t, op_cond, " %s%s", hold? "": "!", mock_op(op, o)); }
 static void mock_keep(file* t)                         { note(t, op_keep, ""); }
-static void mock_lift(file* t, byte* keep, u32i k)     { note(NULL, op_lift, " %s %u", at(t, keep), k); }
+static void mock_lift(const file* t, byte* keep, u32i k) { note(NULL, op_lift, " %s %u", at(t, keep), k); }
 static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, " %u", k); }
 static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
 static void mock_hail(file* t, osys os)                { (void)t; (void)os; }
@@ -125,7 +125,7 @@ typedef struct { char* path; char* src; } named;
 static named files[8];
 static u32i  filen;
 
-static file* mock_scan(char* path) {
+static file* mock_scan(const char* path) {
   for(u32i i = 0; i < filen; i++) {
     if(strcmp(files[i].path, path)) continue;
     u64i  n = strlen(files[i].src);
@@ -173,13 +173,13 @@ static int  make_(char* src) {
 }
 
 // the trace has this run of calls, else it is shown
-static bool has(char* run) {
+static bool has(const char* run) {
   if(strstr(trace, run)) return 1;
   printf("    want %s\n    in   %s\n", run, trace);
   return 0;
 }
 // the trace is exactly calls, else it is shown
-static bool is(char* all) {
+static bool is(const char* all) {
   if(!strcmp(trace, all)) return 1;
   printf("    want %s\n    got  %s\n", all, trace);
   return 0;
@@ -192,7 +192,7 @@ static bool compiles(char* src) {
   return 0;
 }
 // src fails with why
-static bool rejects(char* src, char* why) {
+static bool rejects(char* src, const char* why) {
   if(!make_(src) && strstr(said, why)) return 1;
   printf("    want %s\n    got  %s\n", why, said[0]? said: "no error\n");
   return 0;

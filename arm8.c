@@ -281,7 +281,7 @@ void arm8_keep(file* data) {
   arm8_save(data);
 }
 
-void arm8_lift(file* data, byte* keep, u32i k) {
+void arm8_lift(const file* data, byte* keep, u32i k) {
   (void)data;
   *(uint32_t*)keep = X | I3510_ORR | r0 << 16 | 31 << 5 | (9 + k); // mov x9+k, x0
 }
@@ -332,7 +332,7 @@ void arm8_glob(file* data) {
   arm8_put(data, X | I3502_ADD | r16 << 16);                        // add x0, x0, x16
 }
 
-void arm8_site(file* data, byte* glob, s64i dist) {
+void arm8_site(const file* data, byte* glob, s64i dist) {
   (void)data;
   if(dist < 0) { dist = -dist; ((uint32_t*)glob)[3] |= 1 << 30; } // sub x0, x0, x16
   if(dist >> 32) fail("data too far\n");
@@ -358,7 +358,7 @@ void arm8_open(file* data) {
   arm8_put(data, 0xd10003ff);                                       // sub sp, sp, #0, patched by size
 }
 
-void arm8_size(file* data, byte* func, s32i size) {
+void arm8_size(const file* data, byte* func, s32i size) {
   (void)data;
   if(size > 0xfff) fail("frame too large: %d bytes\n", size);
   ((uint32_t*)func)[2] |= size << 10;
@@ -425,7 +425,7 @@ void arm8_jump(file* data) {
   arm8_put(data, I3206_B);                                          // b, patched by mend
 }
 
-void arm8_loop(file* data, byte* dest) {
+void arm8_loop(file* data, const byte* dest) {
   arm8_put(data, I3206_B | (((dest - data->body) >> 2) & 0x3ffffff)); // b dest
 }
 
@@ -435,7 +435,7 @@ void arm8_done(file* data) {
   arm8_put(data, form(brur, ret, .rn=r30));                         // ret
 }
 // prev is the end of a cbz or b
-void arm8_mend(file* data, byte* prev) {
+void arm8_mend(const file* data, byte* prev) {
   uint32_t* inst = (uint32_t*)prev - 1;
   s64i dist = (data->body - (byte*)inst) >> 2;
   if((*inst & 0xfc000000) == I3206_B) {
@@ -455,13 +455,13 @@ void arm8_boot(file* data) {
   arm8_put(data, 0xd4000001);     // svc #0
 }
 
-void arm8_link(file* data, byte* boot, byte* main) {
+void arm8_link(const file* data, byte* boot, const byte* main) {
   (void)data;
   *(uint32_t*)boot = I3206_BL | (((main - boot) >> 2) & 0x3ffffff);
 }
 
 // called by boot, which leaves sp as it was: [sp] is argc, argv follows it
-void arm8_crt(file* data, byte* main, byte* start) {
+void arm8_crt(file* data, const byte* main, const byte* start) {
   s64i d = main - data->body - 8;
   if(d < -(1 << 20)) fail("main too far: %lld bytes\n", (long long)d);
   arm8_put(data, 0xf94003e1);                                       // ldr x1, [sp]
@@ -476,7 +476,7 @@ void arm8_crt(file* data, byte* main, byte* start) {
 
 // AAPCS64: arguments in x0-x5, sp is always 16-byte aligned here. Apple passes
 // the variadic ones on the stack instead, 8 bytes each, through x9-x14
-byte* arm8_ffi(file* data, byte* func, u32i argc, u32i fixed, osys os) {
+byte* arm8_ffi(file* data, const byte* func, u32i argc, u32i fixed, osys os) {
   u32i vary = os == os_mac && fixed < argc? argc - fixed: 0, room = (vary * 8 + 15) & -16;
   if(!func) arm8_put(data, 0xf9400010);                             // ldr x16, [x0]
   for(u32i i = argc; i--; )

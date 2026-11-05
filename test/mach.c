@@ -8,7 +8,7 @@
 #define PAGE 0x4000
 
 // sha256 of the size bytes at msg is want, in hex
-static bool  hashes(char* msg, u64i size, char* want) {
+static bool  hashes(char* msg, u64i size, const char* want) {
   byte out[32];
   sha256((byte*)msg, size, out);
   char got[65];
@@ -18,7 +18,7 @@ static bool  hashes(char* msg, u64i size, char* want) {
   return 0;
 }
 
-static u32i  be(byte* at) { return (u32i)at[0] << 24 | at[1] << 16 | at[2] << 8 | at[3]; }
+static u32i  be(const byte* at) { return (u32i)at[0] << 24 | at[1] << 16 | at[2] << 8 | at[3]; }
 
 // a library of the image start lays out: CODE, then a lea at 12; 16 bytes of
 // data; 32 of bss. It defines lf at 0 in text, lv at 4 in data and lz, weak,
@@ -56,18 +56,18 @@ static sec64* sec_(seg64* seg, u32i i) { return (sec64*)(seg + 1) + i; }
 static nl64*  sym_(file* out, u32i i) {
   return (nl64*)(out->head + ((mach_symtab*)cmd_(out, lc_symtab))->symoff) + i;
 }
-static char*  name_(file* out, nl64* s) {
+static char*  name_(file* out, const nl64* s) {
   return (char*)out->head + ((mach_symtab*)cmd_(out, lc_symtab))->stroff + s->strx;
 }
-static u64i   uleb_(byte* at) { // a ULEB128 number
+static u64i   uleb_(const byte* at) { // a ULEB128 number
   u64i v = 0;
   for(u32i k = 0; k == 0 || at[-1] & 0x80; k += 7) v |= (u64i)(*at++ & 0x7f) << k;
   return v;
 }
-static mrel*  rel_(file* out, sec64* sec, u32i i) { return (mrel*)(out->head + sec->reloff) + i; }
+static mrel*  rel_(file* out, const sec64* sec, u32i i) { return (mrel*)(out->head + sec->reloff) + i; }
 // relocation r: at addr, to symbol or section sym, pc-relative, of 2^len bytes,
 // external, of type
-static bool   rel_is(mrel* r, s32i addr, u32i sym, bool pcrel, u32i len, bool ext, u32i type) {
+static bool   rel_is(const mrel* r, s32i addr, u32i sym, bool pcrel, u32i len, bool ext, u32i type) {
   u32i want = sym | pcrel << 24 | len << 25 | ext << 27 | type << 28;
   if(r->addr == addr && r->info == want) return 1;
   printf("    want %x %08x\n    got  %x %08x\n", addr, want, r->addr, r->info);

@@ -141,7 +141,7 @@ void ia64_ret(file* text) {
 }
 
 // prev is the end of a rel32 branch
-void ia64_mend(file* text, byte* prev) {
+void ia64_mend(const file* text, byte* prev) {
   s32i dist = (s32i)(text->body - prev);
   copy(prev - 4, &dist, sizeof(dist));
 }
@@ -151,7 +151,7 @@ void ia64_jump(file* text) {
   id(text, 0); // reserve space for distance
 }
 
-void ia64_loop(file* text, byte* dest) {
+void ia64_loop(file* text, const byte* dest) {
   s64i dist = dest - (text->body + 2);
   if((int8_t)dist == dist) { ib(text, 0xeb); ib(text, dist); }
   else                     { ib(text, 0xe9); id(text, dist - 3); }
@@ -299,7 +299,7 @@ void ia64_keep(file* text) {
   iw(text, 0x9066);                             // xchg ax, ax: room for lift
 }
 
-void ia64_lift(file* text, byte* keep, u32i k) {
+void ia64_lift(const file* text, byte* keep, u32i k) {
   (void)text;
   keep[0] = 0x49; keep[1] = 0x89; keep[2] = modrm(.mod=3, .reg=eax.reg.enc, .rm=k); // mov r8+k, rax
 }
@@ -360,7 +360,7 @@ void ia64_glob(file* text) {
   id(text, 0);
 }
 
-void ia64_site(file* text, byte* glob, s64i dist) {
+void ia64_site(const file* text, byte* glob, s64i dist) {
   (void)text;
   s32i rel = (s32i)(dist - 7);                  // relative to the end of the lea
   if(rel != dist - 7) fail("data too far\n");
@@ -392,7 +392,7 @@ void ia64_open(file* text) {
   ib(text, 0x48); iw(text, 0xec81); id(text, 0); // sub rsp, imm32, patched by size
 }
 
-void ia64_size(file* text, byte* func, s32i size) {
+void ia64_size(const file* text, byte* func, s32i size) {
   (void)text;
   copy(func + 7, &size, sizeof(size));
 }
@@ -422,14 +422,14 @@ void ia64_boot(file* text) {
   iw(text, 0x050f);                           // syscall
 }
 
-void ia64_link(file* text, byte* boot, byte* main) {
+void ia64_link(const file* text, byte* boot, const byte* main) {
   (void)text;
   s32i rel = (s32i)(main - (boot + 5));       // call rel32 is relative to its end
   copy(boot + 1, &rel, sizeof(rel));
 }
 
 // called by boot: [rsp+8] is argc, argv follows it
-void ia64_crt(file* text, byte* main, byte* start) {
+void ia64_crt(file* text, const byte* main, const byte* start) {
   id(text, 0x0824748b);                           // mov esi, [rsp+8]
   id(text, 0x24548d48); ib(text, 0x10);           // lea rdx, [rsp+16]
   ib(text, 0x48); iw(text, 0x3d8d);               // lea rdi, [rip+main]
@@ -449,7 +449,7 @@ void ia64_crt(file* text, byte* main, byte* start) {
 // past 32 bytes of shadow space. Both want rsp 16-byte aligned, which pushed
 // operands may break: the old rsp is pushed twice, then rsp rounded down, so
 // one copy is at [rsp+8] either way
-byte* ia64_ffi(file* text, byte* func, u32i argc, u32i fixed, osys os) {
+byte* ia64_ffi(file* text, const byte* func, u32i argc, u32i fixed, osys os) {
   (void)fixed;
   static const byte win[] = { 1, 2, 8, 9, 10, 0 }; // r10 and rax go on the stack
   byte room = os == os_win? argc > 4? 48: 32: 0;
