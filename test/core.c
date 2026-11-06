@@ -140,7 +140,12 @@ static file* mock_scan(const char* path) {
 static void* mock_hold(void* p, size_t size)  { (void)p; return malloc(size); }
 static void* mock_drop(void* p, size_t size)  { (void)p; (void)size; return NULL; } // text: freed by the next make_
 static void* mock_heap(void* p, size_t size)  { if(size) return realloc(p, size); free(p); return NULL; }
-static void  mock_show(mode* m)               { shows++; laid = m->data->body - m->data->head; }
+static u64i  tail8; // the last 8 bytes of data when shown
+static void  mock_show(mode* m) {
+  shows++;
+  laid = m->data->body - m->data->head;
+  if(laid >= 8) memcpy(&tail8, m->data->body - 8, 8);
+}
 
 static mode self;
 
@@ -371,6 +376,35 @@ spec("core") {
       check(compiles("int g = 7; int main() { return g; }"));
       check(has("glob, read 4") && self.seats == 1);
       check(laid >= 4);
+    }
+    it("makes each pointer, array, function and bit-field type once") {
+      check(compiles("int main() { return 0; }"));
+      meta* t = find(&self, 0, sget(&self, "long"));
+      u32i  n = self.defn;
+      for(u32i i = 0; i < 5000; i++) knot(&self, many, t, 8 * (i + 1));
+      check(self.defn == n + 5000 && knot(&self, many, t, 8) != href(&self, t));
+      for(u32i i = 0; i < 5000; i++)
+        if(knot(&self, many, t, 8 * (i + 1)) != pin(self.defs, n + i)) { check(0); break; }
+      meta* f = mold(&self, t, 2, 1, 0);
+      check(mold(&self, t, 2, 1, 0) == f && mold(&self, t, 2, 3, 0) != f && mold(&self, t, 2, 1, 1) != f);
+      meta* b = nibs(&self, t, 3, 5);
+      check(nibs(&self, t, 3, 5) == b && nibs(&self, t, 4, 5) != b && b->size == 8);
+      check(href(&self, t) == href(&self, t) && self.defn == n + 5000 + 1 + 3 + 2); // arrays, long*, f..., b...
+    }
+    it("grows past any count of names, types, data, code, calls and breaks") {
+      static char src[1 << 20];
+      u32i n = 0;
+      for(u32i i = 0; i < 1000; i++) // a name, an array type and i + 1 bytes each
+        n += sprintf(src + n, "byte a%u[%u] = {%u};\n", i, i + 1, i % 100);
+      n += sprintf(src + n, "long last = 19088743;\nint main() {\n  int t = 0;\n");
+      for(u32i i = 0; i < 300; i++) n += sprintf(src + n, "  t = t + f();\n");
+      for(u32i i = 0; i < 30000; i++) n += sprintf(src + n, "  t = t + 1;\n");
+      n += sprintf(src + n, "  while(t) {\n");
+      for(u32i i = 0; i < 100; i++) n += sprintf(src + n, "    when(t == %u) break;\n", i);
+      sprintf(src + n, "  }\n  return t;\n}\nint f() { return 1; }\n");
+      check(compiles(src));
+      check(self.top > 1000 && self.defn >= 1000 && laid > 1000 * 1001 / 2 && tail8 == 19088743);
+      check(self.text->body - self.text->head > 1 << 16 && calls[op_link] >= 300);
     }
   }
 

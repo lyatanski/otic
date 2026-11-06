@@ -107,12 +107,17 @@ meta* find(mode* self, u32i at, item* name) {
 
 // ask for the member that defines archive name x: it is pulled by reel. The
 // index of the ask, for a seat (WANT)
+static bool  asked(const void* ctx, u32i i) {
+  const mode* self = ((const void**)ctx)[0];
+  return self->asks[i] == ((const void**)ctx)[1];
+}
 u32i  ask(mode* self, meta* x) {
-  u32i i = 0;
-  for(; i < self->askn && self->asks[i] != x->name; i++);
-  if(i < self->askn) return i;
+  const void* ctx[] = {self, x->name};
+  u32i* at = dsee(self, &self->askx, (u64i)(uintptr_t)x->name, asked, ctx);
+  if(*at) return *at - 1;
   self->asks = swell(self, self->asks, self->askn, &self->askc, sizeof(item*), 64);
   self->asks[self->askn] = x->name;
+  *at = self->askn + 1;
   return self->askn++;
 }
 
@@ -131,7 +136,6 @@ void  reel(mode* self) {
 meta* rack(mode* self, item* s) {
   meta* x = find(self, 0, s);
   if(x) return x;
-  if(self->defn == sizeof self->defs / sizeof *self->defs) flaw(self, "too many libraries\n");
   x = mint(self, (meta){.name = s, .kind = dlib, .unit = self->unit});
   s->data = x;
   return x;
@@ -140,7 +144,7 @@ meta* rack(mode* self, item* s) {
 // the seat of the slot of import x, made when it is first used
 u32i  port(mode* self, meta* x) {
   if(!x->slot) {
-    if(self->impn == sizeof self->imps / sizeof *self->imps) flaw(self, "too many imports\n");
+    self->imps = swell(self, self->imps, self->impn, &self->impc, sizeof(meta*), 16);
     self->imps[self->impn++] = x;
     x->slot = self->impn;
   }

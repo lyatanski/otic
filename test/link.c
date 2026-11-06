@@ -69,7 +69,11 @@ static mode  self;
 static void  start(char* path) {
   free(self.units);
   free(self.asks);
+  free(self.askx.slot);
   free(self.hooks);
+  free(self.link);
+  free(self.aims);
+  free(self.imps);
   memset(&self, 0, sizeof self);
   memset(texts, 0, sizeof texts);
   text->body = text->head + 64;
@@ -81,6 +85,8 @@ static void  start(char* path) {
     .arch = {.link = mock_link, .site = mock_site},
     .form = {NULL, mock_take, os_linux}, .ario = {mock_load, mock_pull},
   };
+  self.link = calloc(self.fixc = 16, sizeof(fix)); // the cases fill them in place
+  self.aims = calloc(self.seatc = 16, sizeof(seat));
   nest(&self, (unit){.kind = un_root, .path = path});
   self.unit = nest(&self, (unit){.kind = un_code, .path = path});
 }
@@ -306,6 +312,16 @@ spec("link") {
       say(1, "g", &g);
       check(ask(&self, &f) == 0 && ask(&self, &g) == 1 && ask(&self, &f) == 0 && self.askn == 2);
     }
+    it("tells apart many names asked, in the order first asked") {
+      start("main.c");
+      static item names[5000];
+      static meta x[5000];
+      for(u32i i = 0; i < 5000; i++) x[i] = (meta){.name = names + i, .kind = pend};
+      for(u32i i = 0; i < 5000; i++) ask(&self, x + (i * 7 % 5000)); // 7 is prime to 5000: each once
+      bool same = self.askn == 5000;
+      for(u32i i = 0; i < 5000; i++) same &= ask(&self, x + (i * 7 % 5000)) == i;
+      check(same && self.askn == 5000);
+    }
     it("reels in the members asked for, and those they ask for") {
       start("main.c");
       meta f = PEND, gg = PEND, h = PEND;
@@ -349,11 +365,12 @@ spec("link") {
       check(port(&self, &f) == (SLOT | 0) && port(&self, &g) == (SLOT | 1));
       check(port(&self, &f) == (SLOT | 0) && self.impn == 2 && self.imps[1] == &g);
     }
-    it("fails past the import slots") {
+    it("grows the import slots as they are used") {
       start("main.c");
-      meta f[257] = {0};
-      if(!setjmp(bail)) for(u32i i = 0; i < 257; i++) port(&self, f + i);
-      check(self.impn == 256 && says("main.c:1: too many imports"));
+      static meta f[1000];
+      memset(f, 0, sizeof f);
+      for(u32i i = 0; i < 1000; i++) port(&self, f + i);
+      check(self.impn == 1000 && self.imps[999] == f + 999 && port(&self, f + 999) == (SLOT | 999));
     }
   }
 

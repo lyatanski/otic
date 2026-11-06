@@ -264,19 +264,27 @@ typedef struct {
   meta**    defs;
   elfs_und* unds;
   u32i      ndef, nund, cund;
+  dex       undx; // the undefined ones, by spelling
   u64i      strs;
 } elfs_syms;
 
 // the index of name among the undefined ones, added when new
+// whether undefined name i of the syms ctx[0] is spelled as the item ctx[1]
+static bool  elfs_same(const void* ctx, u32i i) {
+  const elfs_syms* t = ((const void**)ctx)[0];
+  const item* name = ((const void**)ctx)[1];
+  return t->unds[i].name->size == name->size && alike(t->unds[i].name->name, name->name, name->size);
+}
+
 static u32i  elfs_need(const mode* self, elfs_syms* t, item* name, bool weak, byte type) {
-  u32i i = 0;
-  for(; i < t->nund && !(t->unds[i].name->size == name->size
-                         && alike(t->unds[i].name->name, name->name, name->size)); i++);
-  if(i < t->nund) { t->unds[i].weak &= weak; return i; }
+  const void* ctx[] = {t, name};
+  u32i* at = dsee(self, &t->undx, clue(name->name, name->size), elfs_same, ctx);
+  if(*at) { t->unds[*at - 1].weak &= weak; return *at - 1; }
+  *at = t->nund + 1;
   t->unds = swell(self, t->unds, t->nund, &t->cund, sizeof(elfs_und), 16);
   t->unds[t->nund++] = (elfs_und){name, weak, type};
   t->strs += name->size + 1;
-  return i;
+  return t->nund - 1;
 }
 
 // the definitions of a library (a program has none: nothing links to it), and
@@ -447,6 +455,7 @@ static file* elfs_relo(mode* self) {
   for(u32i k = 0; k < 2; k++) self->heap(rel[k], 0);
   self->heap(t.defs, 0);
   self->heap(t.unds, 0);
+  self->heap(t.undx.slot, 0);
   return out;
 }
 
@@ -581,6 +590,7 @@ static file* elfs_dyno(mode* self) {
   self->heap(cords, 0);
   self->heap(t.defs, 0);
   self->heap(t.unds, 0);
+  self->heap(t.undx.slot, 0);
   return out;
 }
 

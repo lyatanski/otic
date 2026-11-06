@@ -49,6 +49,14 @@ item* hget(mode*, u32i at, char* mark, u64i size);   // in unit at, made when no
 void* swell(const mode*, void* p, u32i n, u32i* cap, u64i size, u32i least);
 void* zero(const mode*, u64i size); // size zeroed bytes from mode.heap
 
+// an index by hash over the things of a caller's array: a slot holds the
+// place of a thing plus 1 (0 when free) and its hash. dsee is the slot of the
+// thing hashed h for which is(ctx, place) holds, else a free one, then taken:
+// the caller puts its new thing there. The index doubles when half full
+typedef struct { u32i place, hash; } dent;
+typedef struct { dent* slot; u32i size, used; } dex;
+u32i* dsee(const mode*, dex*, u64i h, bool (*is)(const void* ctx, u32i place), const void* ctx);
+
 typedef struct {
   byte*  body;
   byte*  tail;
@@ -190,6 +198,13 @@ struct meta {
   u32i  unit; // the unit that defines it
 };
 
+// metas in chunks of PART that never move, as names and types point at them:
+// pin is meta i of part, cell the same with its chunk made when new (n chunks
+// so far), for i at most one past the last
+#define PART 1024
+meta* cell(const mode*, meta*** part, u32i* n, u32i i);
+static inline meta* pin(meta* const* part, u32i i) { return part[i / PART] + i % PART; }
+
 // call to a function not seen yet, or to C code in an archive member not
 // pulled yet (ext, through ffi), patched when the run ends
 typedef struct {
@@ -297,8 +312,8 @@ struct mode {
   grab  scan;
   bool  (*have)(const item*); // running: whether the host has shared library s
 
-  u32i  top;
-  meta  pile[256];
+  u32i  top, piles;
+  meta** pile;     // the names in scope, in chunks (cell): top of them, piles chunks
   u32i  held;      // left operands kept: the next one goes to scratch held
   u32i  dials;     // calls emitted: a kept operand stays on the stack across one
   s32i  slot;      // frame bytes in use
@@ -306,18 +321,23 @@ struct mode {
   s32i  lits;      // frame bytes the compound literals of the block keep
   meta* func;      // the function being compiled
   byte* cont;      // continue target, NULL outside loops
-  u32i  ends;      // pending break jumps
-  byte* quit[64];
-  u32i  fixs;
-  fix   link[256];
-  u32i  seats;
-  seat  aims[1024];
-  u32i  defn;
-  meta  defs[512]; // pointer, array and struct types, members, libraries
-  u32i  impn;
-  meta* imps[256]; // imports in use, each an 8-byte slot the loader fills
+  u32i  ends, endc;
+  byte** quit;     // pending break jumps
+  u32i  fixs, fixc;
+  fix*  link;      // forward calls
+  u32i  seats, seatc;
+  seat* aims;      // references to globals
+  u32i  defn, defp;
+  meta** defs;     // pointer, array and struct types, members, libraries, in
+                   // chunks (cell): defn of them, defp chunks
+  u32i  maden, madec;
+  meta** made;     // the pointer, array, function and bit-field types of defs,
+                   // by what they are made of (sole): a table of madec slots
+  u32i  impn, impc;
+  meta** imps;     // imports in use, each an 8-byte slot the loader fills
   u32i  askn, askc, askd;
   item** asks;     // archive names used, their members pulled up to askd
+  dex   askx;      // the asks, by name
   u32i  dirn;
   const char* dirs[16]; // libraries locations
   u32i  hookn, hookc;

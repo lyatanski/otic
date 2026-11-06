@@ -2,8 +2,11 @@
 #include "core.h"
 
 enum { tend, ttag, tnum };
-#define CODE (1 << 16)
-#define DATA (1 << 16)
+// text is held at its most, the pages touched as it fills: code points into
+// it. Data starts at DATA and doubles as needed, up to below WANT: what points
+// into it is an offset
+#define CODE (1u << 30)
+#define DATA (1u << 16)
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
@@ -140,17 +143,48 @@ int rank(int op) {
 
 // types: NULL is an int value
 meta* mint(mode* self, meta x) {
-  if(self->defn == sizeof self->defs / sizeof *self->defs)
-    flaw(self, "too many types\n");
-  self->defs[self->defn] = x;
-  return self->defs + self->defn++;
+  meta* m = cell(self, &self->defs, &self->defp, self->defn++);
+  *m = x;
+  return m;
+}
+
+// what the type x is made of, hashed: its kind, the type it is over, its
+// size, and slot, longs and more (a function's parameters, a bit-field's bits)
+static u64i  sire(const meta* x) {
+  u64i h = (u64i)(uintptr_t)x->type ^ (u64i)x->kind << 56 ^ (u64i)x->size << 24;
+  h = (h ^ (u64i)(u32i)x->slot << 32 ^ (u64i)x->longs << 8 ^ x->more) * 0x9e3779b97f4a7c15ull;
+  return h ^ h >> 31;
+}
+
+// the slot of the type made of what x is, or the free one where it goes
+static meta** lode(const mode* self, const meta* x) {
+  u64i  mask = self->madec - 1;
+  for(u64i i = sire(x) & mask;; i = (i + 1) & mask) {
+    meta* y = self->made[i];
+    if(!y || (y->kind == x->kind && y->type == x->type && y->size == x->size && y->slot == x->slot
+              && y->longs == x->longs && y->more == x->more)) return self->made + i;
+  }
+}
+
+// the pointer, array, function or bit-field type made of what x is, made
+// once. The table doubles when half full
+meta* sole(mode* self, meta x) {
+  if(2 * (self->maden + 1) > self->madec) {
+    meta** was = self->made;
+    u32i   n = self->madec;
+    self->madec = n? 2 * n: 64;
+    self->made = zero(self, self->madec * sizeof(meta*));
+    for(u32i i = 0; i < n; i++) if(was[i]) *lode(self, was[i]) = was[i];
+    self->heap(was, 0);
+  }
+  meta** at = lode(self, &x);
+  if(!*at) { *at = mint(self, x); self->maden++; }
+  return *at;
 }
 
 // a pointer or array type of size bytes over type, made once
 meta* knot(mode* self, what kind, meta* type, u32i size) {
-  for(meta* x = self->defs; x < self->defs + self->defn; x++)
-    if(x->kind == kind && x->type == type && x->size == size) return x;
-  return mint(self, (meta){.kind = kind, .type = type, .size = size});
+  return sole(self, (meta){.kind = kind, .type = type, .size = size});
 }
 
 // pointer to type
@@ -159,10 +193,7 @@ meta* href(mode* self, meta* type) { return knot(self, refs, type, 8); }
 // the type of a function returning type, of argc parameters (-1: unknown),
 // the 64-bit ones in longs, variadic when more, made once
 meta* mold(mode* self, meta* type, s32i argc, byte longs, bool more) {
-  for(meta* x = self->defs; x < self->defs + self->defn; x++)
-    if(x->kind == proc && x->type == type && x->slot == argc && x->longs == longs && x->more == more)
-      return x;
-  return mint(self, (meta){.kind = proc, .type = type, .slot = argc, .longs = longs, .more = more});
+  return sole(self, (meta){.kind = proc, .type = type, .slot = argc, .longs = longs, .more = more});
 }
 
 // a pointer to a function type, NULL for the rest
@@ -182,23 +213,31 @@ typedef struct { vkind kind; s32i ival; meta* type; } oper;
 #define cnst(n) ((oper){vnum, (n), NULL})
 #define acc(t)  ((oper){vacc, 0, (t)})
 
-// size bytes of data, or of bss when zero: their offset
+// size bytes of data, or of bss when zero: their offset. Data may move: keep
+// the offset, not an address into it
 u32i  lay(mode* self, u32i size, bool zero, u32i align) {
   if(zero) {
     self->zero = ((self->zero + align - 1) & ~(u64i)(align - 1)) + size;
+    if(self->zero >= ZERO) fail("bss section overflow\n");
     return (u32i)(self->zero - size) | ZERO;
   }
   file* d = self->data;
-  u32i  off = ((u32i)(d->body - d->head) + align - 1) & ~(align - 1);
-  if(off + size > (u64i)(d->tail - d->head)) fail("data section overflow\n");
+  u64i  off = ((u64i)(d->body - d->head) + align - 1) & ~(u64i)(align - 1), cap = d->tail - d->head;
+  if(off + size >= WANT) fail("data section overflow\n");
+  if(off + size > cap) {
+    u64i  was = cap;
+    while(cap < off + size) cap *= 2;
+    self->data = d = self->heap(d, sizeof(file) + cap);
+    for(u64i i = was; i < cap; d->head[i++] = 0);
+    d->tail = d->head + cap;
+  }
   d->body = d->head + off + size;
-  return off;
+  return (u32i)off;
 }
 
 // acc = address of data at off
 void  spot(mode* self, u32i off) {
-  if(self->seats == sizeof self->aims / sizeof *self->aims)
-    flaw(self, "too many global references\n");
+  self->aims = swell(self, self->aims, self->seats, &self->seatc, sizeof(seat), 64);
   self->aims[self->seats++] = (seat){self->text->body, off};
   emit(self, glob);
 }
@@ -367,7 +406,7 @@ oper  expr(mode* self, int least);
 
 // add a forward call: name, called at at with argc arguments, the C way when ext
 void  post(mode* self, item* name, byte* at, u32i argc, bool ext) {
-  if(self->fixs == sizeof self->link / sizeof *self->link) flaw(self, "too many forward calls\n");
+  self->link = swell(self, self->link, self->fixs, &self->fixc, sizeof(fix), 64);
   self->link[self->fixs++] = (fix){name, at, argc, home(self)->line, self->unit, ext};
 }
 
@@ -735,12 +774,11 @@ void  gate(mode* self) {
 
 #define seed(self, ...) {\
   meta x = { __VA_ARGS__ }; \
-  if(self->top == sizeof self->pile / sizeof *self->pile) \
-    flaw(self, "too many names\n"); \
+  meta* y = cell((self), &(self)->pile, &(self)->piles, (self)->top++); \
   x.unit = self->unit; \
   x.hide = x.name->data; \
-  x.name->data = self->pile+self->top; \
-  self->pile[self->top++] = x; }
+  x.name->data = y; \
+  *y = x; }
 
 #define crux(slef, str, ...) \
   seed((self), .kind = base, .name = sget((self), (str)), __VA_ARGS__)
@@ -748,7 +786,7 @@ void  gate(mode* self) {
 // leave a scope: the names declared since top mean what they did before
 void  bury(mode* self, u32i top) {
   while(self->top > top) {
-    meta* x = self->pile + --self->top;
+    meta* x = pin(self->pile, --self->top);
     x->name->data = x->hide;
   }
 }
@@ -922,17 +960,19 @@ void  aim(mode* self, tier* n) {
 }
 
 // the initializer of type: { a list }, the rest zero, a string for a char
-// array, or a value; a global's is a constant written to at, a local's is
-// stored to slot (at is NULL). A list goes over the members of a struct or
-// the elements of an array in order, or from the part a designator chain
-// (.name, [index]) picks; a part that is a struct or array takes the values
-// that come when they are not in braces. A value or a string may be in braces
-void  seal(mode* self, meta* type, byte* at, s32i slot) {
+// array, or a value; a global's (glob) is a constant written to data at
+// offset slot, a local's is stored to frame slot. A list goes over the members
+// of a struct or the elements of an array in order, or from the part a
+// designator chain (.name, [index]) picks; a part that is a struct or array
+// takes the values that come when they are not in braces. A value or a string
+// may be in braces
+void  seal(mode* self, meta* type, bool glob, s32i slot) {
   const meta* t = type->kind == many? type->type: NULL;
-  if(at && bulky(type)) for(u32i i = 0; i < type->size; i++) at[i] = 0; // as a whole, again
+  if(glob && bulky(type)) // as a whole, again
+    for(u32i i = 0; i < type->size; i++) self->data->head[slot + i] = 0;
   bool  brace = twin(self, '{');
   if(brace && (!bulky(type) || text(self, type))) {
-    seal(self, type, at, slot);
+    seal(self, type, glob, slot);
     twin(self, ',');
     skip(self, '}');
   }
@@ -961,18 +1001,18 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
         if(!(p = pick(k + d++, &off))) flaw(self, "too many initializers\n");
       }
       u32i  to = off + (p->kind == bitf? p->size: 0); // a bit-field reads its unit
-      if(!at && end < to) bits(self, slot + end, NULL, to - end);
-      seal(self, p, at? at + off: NULL, slot + off);
+      if(!glob && end < to) bits(self, slot + end, NULL, to - end);
+      seal(self, p, glob, slot + off);
       if(end < off + p->size) end = off + p->size;
       step(k + d - 1);
       if(!twin(self, ',')) { skip(self, '}'); break; }
     }
-    if(!at) bits(self, slot + end, NULL, type->size - end);
+    if(!glob) bits(self, slot + end, NULL, type->size - end);
   }
   else if(text(self, type)) {
     u32i n = quote(home(self)->talk.hash, NULL);
     if(n > type->size) flaw(self, "string too long\n");
-    if(at) quote(home(self)->talk.hash, at);
+    if(glob) quote(home(self)->talk.hash, self->data->head + slot);
     else {
       byte* b = self->heap(NULL, n);
       quote(home(self)->talk.hash, b);
@@ -982,8 +1022,9 @@ void  seal(mode* self, meta* type, byte* at, s32i slot) {
     }
     chop(self);
   }
-  else if(at) {
+  else if(glob) {
     oper x = expr(self, 1);
+    byte* at = self->data->head + slot; // after expr: a string in it moves data
     if(x.kind != vnum || t || type->kind == list)
       flaw(self, "expected a constant\n");
     s64i v = x.ival;
@@ -1009,7 +1050,7 @@ oper  lit(mode* self) {
   if(home(self)->talk.kind != '{') flaw(self, "expected a compound literal\n");
   s32i  slot = room(self, type->size);
   self->lits = self->slot;
-  seal(self, type, NULL, slot);
+  seal(self, type, 0, slot);
   return (oper){vloc, slot, type};
 }
 
@@ -1022,7 +1063,7 @@ void  vars(mode* self) {
     meta* type = noun(self, base, &name);
     s32i  slot = room(self, type->size);
     seed(self, .name=name, .type=type, .kind=data, .slot=slot);
-    if(twin(self, '=')) seal(self, type, NULL, slot);
+    if(twin(self, '=')) seal(self, type, 0, slot);
   } while(twin(self, ','));
   skip(self, ';');
 }
@@ -1041,9 +1082,7 @@ void  once(mode* self, const meta* prev, item* name, bool own) {
 
 // the type of a bit-field of integer type t, width bits from bit at in its unit
 meta* nibs(mode* self, meta* t, u32i at, u32i width) {
-  for(meta* x = self->defs; x < self->defs + self->defn; x++)
-    if(x->kind == bitf && x->type == t && (u32i)x->slot == at && x->longs == width) return x;
-  return mint(self, (meta){.kind = bitf, .type = t, .size = t->size, .slot = at, .longs = (byte)width});
+  return sole(self, (meta){.kind = bitf, .type = t, .size = t->size, .slot = at, .longs = (byte)width});
 }
 
 // { type declarator (: width)? (, declarator (: width)?)* ; ... } after
@@ -1056,7 +1095,7 @@ meta* bulk(mode* self, item* name) {
   if(name) { // seeded first: members may point to it
     once(self, find(self, self->unit, name), name, 0);
     seed(self, .name=name, .kind=list);
-    type = self->pile + self->top - 1;
+    type = pin(self->pile, self->top - 1);
   }
   else type = mint(self, (meta){.kind = list});
   meta** next = &type->type;
@@ -1160,9 +1199,8 @@ void  stmt(mode* self) {
   else if(same(self, "break")) {
     chop(self); skip(self, ';');
     if(!self->cont) flaw(self, "break outside a loop\n");
-    if(self->ends == sizeof self->quit / sizeof *self->quit)
-      flaw(self, "too many breaks\n");
     emit(self, jump);
+    self->quit = swell(self, self->quit, self->ends, &self->endc, sizeof(byte*), 16);
     self->quit[self->ends++] = self->text->body;
   }
   else if(same(self, "skip")) {
@@ -1244,7 +1282,7 @@ void  decl(mode* self) {
   if(twin(self, '(')) {
     const meta* prev = find(self, self->unit, name);
     seed(self, .name=name, .type=type, .kind=call, .own=own);
-    meta* func = self->func = self->pile + self->top - 1;
+    meta* func = self->func = pin(self->pile, self->top - 1);
     u32i  top  = self->top;
     bool  anon = 0;
     self->slot = self->deep = self->lits = 0;
@@ -1272,7 +1310,7 @@ void  decl(mode* self) {
     func->addr = self->text->body;
     func->hail = hail != func->addr? hail: NULL;
     emit(self, open);
-    for(u32i i = 0; i < func->size; i++) emit(self, parm, i, self->pile[top + i].slot);
+    for(u32i i = 0; i < func->size; i++) emit(self, parm, i, pin(self->pile, top + i)->slot);
     stmt(self);
     emit(self, move, 0); emit(self, done); // implicit return 0
     emit(self, size, func->addr, (self->deep + 15) & -16);
@@ -1286,13 +1324,13 @@ void  decl(mode* self) {
     if(ext) {
       const meta* prev = find(self, self->unit, name);
       seed(self, .name=name, .type=type, .kind=glob, .own=own);
-      hire(self, self->pile + self->top - 1, prev);
+      hire(self, pin(self->pile, self->top - 1), prev);
       if(!twin(self, ',')) break;
       continue;
     }
     once(self, find(self, self->unit, name), name, own);
     u32i off = lay(self, type->size, home(self)->talk.kind != '=', 8);
-    if(twin(self, '=')) seal(self, type, self->data->head + off, 0);
+    if(twin(self, '=')) seal(self, type, 1, (s32i)off);
     seed(self, .name=name, .type=type, .kind=glob, .slot=off, .own=own);
     if(!twin(self, ',')) break;
   }
@@ -1373,7 +1411,7 @@ void  make(mode* self) {
   crux(self, "bool", .size=1);
   crux(self, "byte", .size=1);
   crux(self, "char", .size=1);
-  self->rune = self->pile + self->top - 1;
+  self->rune = pin(self->pile, self->top - 1);
   crux(self, "nu16", .size=2);
   crux(self, "int",  .size=4);
   crux(self, "long", .size=8);

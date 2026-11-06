@@ -25,6 +25,38 @@ void* zero(const mode* self, u64i size) {
   return p;
 }
 
+meta* cell(const mode* self, meta*** part, u32i* n, u32i i) {
+  u32i c = i / PART;
+  if(c == *n) {
+    if(!(c & (c - 1))) *part = self->heap(*part, (c? 2 * c: 1) * sizeof(meta*));
+    (*part)[(*n)++] = self->heap(NULL, PART * sizeof(meta));
+  }
+  return pin(*part, i);
+}
+
+u32i* dsee(const mode* self, dex* d, u64i h, bool (*is)(const void* ctx, u32i place), const void* ctx) {
+  u32i k = (u32i)((h * 0x9e3779b97f4a7c15ull) >> 32);
+  if(2 * (d->used + 1) > d->size) {
+    dent* was = d->slot;
+    u32i  n = d->size;
+    d->size = n? 2 * n: 64;
+    d->slot = zero(self, d->size * sizeof(dent));
+    for(u32i i = 0; i < n; i++) {
+      if(!was[i].place) continue;
+      u32i j = was[i].hash & (d->size - 1);
+      while(d->slot[j].place) j = (j + 1) & (d->size - 1);
+      d->slot[j] = was[i];
+    }
+    self->heap(was, 0);
+  }
+  u32i j = k & (d->size - 1);
+  for(; d->slot[j].place; j = (j + 1) & (d->size - 1))
+    if(d->slot[j].hash == k && is(ctx, d->slot[j].place - 1)) return &d->slot[j].place;
+  d->slot[j].hash = k;
+  d->used++;
+  return &d->slot[j].place;
+}
+
 bool  alike(const void* x, const void* y, u64i size) {
   const byte *a = x, *b = y;
   for(; size && *a == *b; size--, a++, b++);

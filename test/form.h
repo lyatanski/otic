@@ -96,6 +96,7 @@ static u32i  mock_knit(mode* m, cord** out) {
 // a fresh mode for cpu: code and data as given, main at main bytes into code
 // (a library: then set main to NULL)
 static void  start(chip cpu, const char* code, u32i size, const char* data, u32i dsize, u32i main) {
+  static meta* imps[4]; // a case fills them in place
   static file* text = (file*)texts;
   static file* data_ = (file*)datas;
   free(ours.hooks);
@@ -113,7 +114,7 @@ static void  start(chip cpu, const char* code, u32i size, const char* data, u32i
   units[1].path = "obj.o";
   ours = (mode){
     .text = text, .data = data_, .main = text->head + main,
-    .units = units, .unit = 1, .unitn = 2,
+    .units = units, .unit = 1, .unitn = 2, .imps = imps, .impc = 4,
     .arch = {.cpu = cpu},
     .heap = mock_heap,
     .core = {mock_dock, mock_gap, mock_lay, mock_name, mock_find, mock_heft, mock_ask,
