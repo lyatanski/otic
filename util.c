@@ -25,13 +25,13 @@ void* zero(const mode* self, u64i size) {
   return p;
 }
 
-meta* cell(const mode* self, meta*** part, u32i* n, u32i i) {
+meta* cell(const mode* self, meta*** p, u32i* n, u32i i) {
   u32i c = i / PART;
   if(c == *n) {
-    if(!(c & (c - 1))) *part = self->heap(*part, (c? 2 * c: 1) * sizeof(meta*));
-    (*part)[(*n)++] = self->heap(NULL, PART * sizeof(meta));
+    if(!(c & (c - 1))) *p = self->heap(*p, (c? 2 * c: 1) * sizeof(meta*));
+    (*p)[(*n)++] = self->heap(NULL, PART * sizeof(meta));
   }
-  return pin(*part, i);
+  return pin(*p, i);
 }
 
 u32i* dsee(const mode* self, dex* d, u64i h, bool (*is)(const void* ctx, u32i place), const void* ctx) {

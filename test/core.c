@@ -38,6 +38,7 @@ static void note(file* text, byte op, char* fmt, ...) {
   va_list ap;
   calls[op]++;
   traced += snprintf(trace + traced, sizeof trace - traced, "%s%s", traced? ", ": "", ops[op]);
+  if(traced >= sizeof trace) traced = sizeof trace - 1; // snprintf counts what it cut: keep the next size positive
   va_start(ap, fmt);
   traced += vsnprintf(trace + traced, sizeof trace - traced, fmt, ap);
   va_end(ap);

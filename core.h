@@ -202,8 +202,8 @@ struct meta {
 // pin is meta i of part, cell the same with its chunk made when new (n chunks
 // so far), for i at most one past the last
 #define PART 1024
-meta* cell(const mode*, meta*** part, u32i* n, u32i i);
-static inline meta* pin(meta* const* part, u32i i) { return part[i / PART] + i % PART; }
+meta* cell(const mode*, meta*** p, u32i* n, u32i i);
+static inline meta* pin(meta* const* p, u32i i) { return p[i / PART] + i % PART; }
 
 // call to a function not seen yet, or to C code in an archive member not
 // pulled yet (ext, through ffi), patched when the run ends
