@@ -113,15 +113,22 @@ static item** hpos_make(const mode* m, unit* self, const char* mark, u64i size, 
 }
 
 // the item of the name, made when new. Items are allocated apart from the
-// table and never move: metas, words and fixes point to them
+// table and never move: metas, words and fixes point to them. A new one has
+// its own copy of the bytes of the name, so the file it is in can go
 static item* hput(const mode* m, unit* self, char* mark, u64i size, u64i k) {
   static item* spare;
   static u32i  left;
+  static char* bytes;
+  static u64i  room;
   item** at = hpos_make(m, self, mark, size, k);
   if(*at) return *at;
   if(!left) spare = m->heap(NULL, (left = 256) * sizeof(item));
+  if(room < size) bytes = m->heap(NULL, room = size > 1 << 16? size: 1 << 16);
+  copy((byte*)bytes, mark, size);
   *at = spare + --left;
-  **at = (item){.size = size, .name = mark};
+  **at = (item){.size = size, .name = bytes};
+  bytes += size;
+  room -= size;
   return *at;
 }
 

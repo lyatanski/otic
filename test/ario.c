@@ -90,13 +90,20 @@ static void  point(byte* offs, u32i w, u32i stride, bool big, u32i n, const u32i
 
 // the front end: the root and the archive, its members taken by the mock form
 static mode  self;
-typedef struct { const char* path; byte kind; file* code; } took_t;
+// a member taken: its path, kind and body, whether it was NUL ended, at the
+// start of its file and apart from the archive (unit 1)
+typedef struct { const char* path; byte kind; char body[64]; u64i size; bool nul, fresh; } took_t;
 static took_t taken[8];
 static u32i  takes;
 
 static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
+// a copy of the member: the core frees it once taken
 static void  mock_take(mode* m, file* f) {
-  taken[takes++] = (took_t){home(m)->path, home(m)->kind, f};
+  took_t* t = taken + takes++;
+  const file* a = m->units[1].code;
+  *t = (took_t){home(m)->path, home(m)->kind, .size = f->tail - f->head, .nul = !*f->tail,
+                .fresh = f->body == f->head && (f->head < a->head || f->head >= a->tail)};
+  memcpy(t->body, f->head, t->size < sizeof t->body? t->size: sizeof t->body);
 }
 
 static void  start(void) {
@@ -146,13 +153,12 @@ static bool  pulls(const char* name) {
 // the member last taken is path with body
 static bool  took(const char* path, const char* body) {
   if(takes && !strcmp(taken[takes - 1].path, path) && taken[takes - 1].kind == un_memb) {
-    file* f = taken[takes - 1].code;
-    if((u64i)(f->tail - f->head) == strlen(body) && alike(f->head, body, strlen(body))) return 1;
+    const took_t* t = taken + takes - 1;
+    if(t->size == strlen(body) && alike(t->body, body, t->size) && t->nul) return 1;
   }
   printf("    want %s: %s\n", path, body);
-  if(takes) printf("    got  %s: %.*s\n", taken[takes - 1].path,
-                   (int)(taken[takes - 1].code->tail - taken[takes - 1].code->head),
-                   taken[takes - 1].code->head);
+  if(takes) printf("    got  %s: %.*s\n", taken[takes - 1].path, (int)taken[takes - 1].size,
+                   taken[takes - 1].body);
   else printf("    got  nothing\n");
   return 0;
 }
@@ -299,8 +305,7 @@ spec("ario") {
       u32i a = member("a.o/", "AAAAA", 5);
       point(ix, 4, 4, 1, 1, (u32i[]){a});
       check(loads() && pulls("one") && took("lib.a(a.o)", "AAAAA"));
-      file* f = taken[0].code;
-      check(f->body == f->head && *f->tail == 0 && f->head != self.units[1].code->head + a + 60);
+      check(taken[0].nul && taken[0].fresh); // a copy, not the bytes in the archive
     }
     it("finds a member past an odd one, padded") {
       begin();

@@ -1340,8 +1340,8 @@ void  decl(mode* self) {
 // the unit at, its file read in code: an object is taken, the symbol index of
 // an archive read, a source parsed: when it ends, its forward calls to
 // functions now known are bound. The unit being parsed is back after: each
-// source keeps its own place (line, talk, from) in its unit. Names point into
-// code, which is kept
+// source keeps its own place (line, talk, from) in its unit. The file goes
+// once read, its names have their own bytes; an archive's when the run ends
 void  feed(mode* self, u32i at) {
   file* code = self->units[at].code; // nest may move the units
   byte  kind = self->units[at].kind;
@@ -1355,9 +1355,13 @@ void  feed(mode* self, u32i at) {
   else if(kind != un_code) {
     if(!self->form.take) fail("%s: no objects in this form\n", path);
     self->form.take(self, code);
+    self->heap(code, 0);
+    self->units[at].code = NULL;
   } else {
     for(chop(self); home(self)->talk.kind; ) decl(self);
     tie(self, fixs, 0);
+    self->heap(code, 0);
+    self->units[at].code = NULL;
   }
   self->unit = back;
 }
@@ -1428,6 +1432,15 @@ void  make(mode* self) {
     libc = find(self, 0, libc->name);
   }
   tie(self, 0, 1);
+
+  // nothing is pulled or called forward from here on: the archives and the
+  // lists of asks and forward calls can go
+  for(unit* u = self->units + 1; u < self->units + self->unitn; u++)
+    if(u->kind == un_arch) { self->heap(u->code, 0); u->code = NULL; }
+  self->askx.slot = self->heap(self->askx.slot, 0);
+  self->askx.size = self->askx.used = 0;
+  self->link = self->heap(self->link, 0);
+  self->fixc = 0;
 
   // without main, a library: the boot stub stays unused at the start of text
   meta* func = find(self, 0, sget(self, "main"));

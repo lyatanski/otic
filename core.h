@@ -233,8 +233,8 @@ typedef struct {
   seat  site;
   seat  aim;
   item* name;
-  u32i  unit;
   s64i  add;
+  u32i  unit;
   bool  wide; // 64-bit absolute, else 32-bit pc-relative
   bool  weak;
   bool  load; // a GOT load made a REX lea: mov reg, 0 for address 0

@@ -88,12 +88,12 @@ static item* elfs_name(mode* self, byte* o, const sh64* str, const sym64* s) {
   return len? self->core.name(self, self->unit, at, len): NULL;
 }
 
-// a relocatable object, the unit being joined, aligned for its headers, NUL
-// ended and kept: its table points at its names. Its code goes after text,
-// its data and bss are laid out, its globals defined in its table, its
-// undefined names ask for the archive members that define them, and its
-// references are hooked for dock. Only x86-64 so far: no thread-locals or
-// constructors
+// a relocatable object, the unit being joined, aligned for its headers and
+// NUL ended: it can go once taken, its names have their own bytes. Its code
+// goes after text, its data and bss are laid out, its globals defined in its
+// table, its undefined names ask for the archive members that define them,
+// and its references are hooked for dock. Only x86-64 so far: no
+// thread-locals or constructors
 void elfs_take(mode* self, file* f) {
   u64i  size = f->tail - f->head;
   byte* o = f->head;
@@ -191,7 +191,15 @@ void elfs_take(mode* self, file* f) {
     if(m && m->kind == pend) self->core.ask(self, m);
   }
 
-  // references: by name to globals, which a later definition may replace
+  // references: by name to globals, which a later definition may replace.
+  // Room for all of them first, so that hooks fits a large object
+  u64i  refs = self->hookn;
+  for(u32i i = 0; i < n; i++) if(sh[i].type == SHT_RELA) refs += sh[i].size / sizeof(rela64);
+  if(refs >> 31) flop("too many relocations\n");
+  if(refs > self->hookc) {
+    self->hookc = refs > 2 * (u64i)self->hookc? (u32i)refs: 2 * self->hookc;
+    self->hooks = self->heap(self->hooks, self->hookc * sizeof(hook));
+  }
   for(u32i i = 0; i < n; i++) {
     if(sh[i].type != SHT_RELA || sh[i].info >= n || put[sh[i].info].off == GONE.off) continue;
     const sh64*   t = sh + sh[i].info;
