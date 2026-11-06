@@ -181,6 +181,16 @@ spec("elfs") {
       check(ph[4].type == PT_DYNAMIC && ph[4].filesz == 9 * sizeof(dyn64));
       check(d[0].tag == DT_HASH && d[8].tag == DT_NULL);
     }
+    it("exports nothing, its imports its only symbols") {
+      start(cpu_ia64, CODE, 6, "", 0, 0);
+      signs[0] = &(meta){.name = named("main"), .kind = call, .addr = ours.text->head};
+      signn = 1;
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call};
+      ours.impn = 1;
+      check((out = packed(elfs)) && SECT(out)[2].size == 2 * sizeof(sym64));
+      sym64* s = sym_(out, 2, 1);
+      check(!strcmp(name_(out, 2, s), "puts") && s->shidx == SHN_UNDEF);
+    }
     it("keeps data and bss in the writable segment") {
       start(cpu_ia64, CODE, 6, "abcd", 4, 0);
       ours.zero = 100;

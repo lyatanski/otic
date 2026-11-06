@@ -271,8 +271,8 @@ struct mode {
   u32i  unit; // the unit being parsed
   u32i  unitn, unitc;
   unit* units; // in join order, the root first
-  unit  names; // each spelling in any unit's table: data, the first of its
-               // items in join order (item.next)
+  unit  names; // each spelling in any unit's table: the first of its items
+               // in join order, the others after it (item.next)
   emit  arch;
   form  form;
   ario  ario;

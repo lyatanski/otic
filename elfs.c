@@ -279,10 +279,11 @@ static u32i  elfs_need(const mode* self, elfs_syms* t, item* name, bool weak, by
   return i;
 }
 
-// the definitions, and the imports as undefined names
+// the definitions of a library (a program has none: nothing links to it), and
+// the imports as undefined names
 static void  elfs_sign(mode* self, elfs_syms* t) {
   *t = (elfs_syms){.strs = 1};
-  t->ndef = self->core.sign(self, &t->defs);
+  if(!self->main) t->ndef = self->core.sign(self, &t->defs);
   for(u32i i = 0; i < t->ndef; i++) t->strs += t->defs[i]->name->size + 1;
   for(u32i i = 0; i < self->impn; i++)
     elfs_need(self, t, self->imps[i]->name, 0, self->imps[i]->kind == call? STT_FUNC: STT_OBJECT);
@@ -454,8 +455,8 @@ static file* elfs_relo(mode* self) {
 // writable one, 64 KB further in memory. A shared library (without main)
 // exports its public definitions, has its imports bound by the loader through
 // their slots, and its addresses in data relocated by the load address. A
-// program is the same image entered at the start of text, with no soname,
-// and names its loader (PT_INTERP), after the table describing itself
+// program is the same image entered at the start of text, with no soname and
+// no exports, and names its loader (PT_INTERP), after the table describing itself
 // (PT_PHDR). Neither can have an address in code
 static file* elfs_dyno(mode* self) {
   static char names[] = "\0.hash\0.dynsym\0.dynstr\0.rela.dyn\0.text\0.dynamic\0.data\0.bss\0.shstrtab";

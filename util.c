@@ -40,10 +40,11 @@ u64i  clue(const char* mark, u64i size) {
 }
 
 // the slot of the name in the table, or the free slot where it goes; NULL
-// when 10 probes fail. The step is odd: it reaches every slot
+// when the table is empty. The step is odd: it reaches every slot, and the
+// table, at most 3/4 full, has a free one
 static item** hpos(unit* self, const char* mark, u64i size, u64i clue) {
   u64i step = (clue >> 16) | 1;
-  for(u64i i = 0; i < 10 && self->size; i++) {
+  for(u64i i = 0; self->size; i++) {
     item** at = self->pool + ((clue + i * step) & (self->size - 1));
     if(!*at || ((*at)->size == size && alike((*at)->name, mark, size))) return at;
   }
@@ -55,52 +56,53 @@ item* hsee(unit* self, const char* mark, u64i size, u64i clue) {
   return at? *at: NULL;
 }
 
-// double the table, again until each item is within 10 probes
+// double the table
 static void  hgrow(const mode* m, unit* self) {
   item** pool = self->pool;
-  u32i   size = self->size, i;
-  self->size = size? size: 32;
-  do {
-    self->size *= 2;
-    self->pool = zero(m, self->size * sizeof(item*));
-    for(i = 0; i < size; i++) {
-      if(!pool[i]) continue;
-      item** at = hpos(self, pool[i]->name, pool[i]->size, clue(pool[i]->name, pool[i]->size));
-      if(!at) break;
-      *at = pool[i];
-    }
-    if(i < size) m->heap(self->pool, 0);
-  } while(i < size);
+  u32i   size = self->size;
+  self->size = size? 2 * size: 64;
+  self->pool = zero(m, self->size * sizeof(item*));
+  for(u32i i = 0; i < size; i++)
+    if(pool[i]) *hpos(self, pool[i]->name, pool[i]->size, clue(pool[i]->name, pool[i]->size)) = pool[i];
   m->heap(pool, 0);
 }
 
-// the table grows when 3/4 full or when 10 probes fail. Items are allocated
-// apart from it and never move: metas, words and fixes point to them
-static item* hput(const mode* m, unit* self, char* mark, u64i size, u64i k) {
-  static item* spare;
-  static u32i  left;
+// the slot of the name, counted as used when it is free: the table grows
+// first when that makes it more than 3/4 full
+static item** hpos_make(const mode* m, unit* self, const char* mark, u64i size, u64i k) {
   item** at = hpos(self, mark, size, k);
-  if(at && *at) return *at;
-  while(!at || 4 * (self->used + 1) > 3 * self->size) {
+  if(at && *at) return at;
+  if(4 * (self->used + 1) > 3 * self->size) {
     hgrow(m, self);
     at = hpos(self, mark, size, k);
   }
-  if(!left) spare = m->heap(NULL, (left = 256) * sizeof(item));
   self->used++;
+  return at;
+}
+
+// the item of the name, made when new. Items are allocated apart from the
+// table and never move: metas, words and fixes point to them
+static item* hput(const mode* m, unit* self, char* mark, u64i size, u64i k) {
+  static item* spare;
+  static u32i  left;
+  item** at = hpos_make(m, self, mark, size, k);
+  if(*at) return *at;
+  if(!left) spare = m->heap(NULL, (left = 256) * sizeof(item));
   *at = spare + --left;
   **at = (item){.size = size, .name = mark};
   return *at;
 }
 
 // a new item also joins the items of its spelling, in join order, so that
-// find visits only the units that have the name
+// find visits only the units that have the name. The slot of the spelling in
+// mode.names holds the first of them
 item* hget(mode* self, u32i at, char* mark, u64i size) {
   u64i  k = clue(mark, size);
   unit* u = self->units + at;
   u32i  used = u->used;
   item* s = hput(self, u, mark, size, k);
   if(u->used == used) return s;
-  item** p = (item**)&hput(self, &self->names, mark, size, k)->data;
+  item** p = hpos_make(self, &self->names, mark, size, k);
   for(; *p && (*p)->unit < at; p = &(*p)->next);
   s->unit = at;
   s->next = *p;

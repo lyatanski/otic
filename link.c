@@ -92,8 +92,8 @@ u32i  heft(const meta* x) {
 meta* find(mode* self, u32i at, item* name) {
   meta* x = at? name->data: NULL;
   if(x && !x->weak) return x;
-  item* all = hsee(&self->names, name->name, name->size, clue(name->name, name->size));
-  item* s = all? all->data: NULL, *root = s && !s->unit? s: NULL;
+  item* s = hsee(&self->names, name->name, name->size, clue(name->name, name->size));
+  item* root = s && !s->unit? s: NULL;
   u32i  top = x? 3: 0;
   for(; s; s = s->next) {
     meta* m = s->unit && s->unit != at? s->data: NULL;
