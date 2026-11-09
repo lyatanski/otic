@@ -392,7 +392,7 @@ void ia64_open(file* text) {
   ib(text, 0x48); iw(text, 0xec81); id(text, 0); // sub rsp, imm32, patched by size
 }
 
-void ia64_size(const file* text, byte* func, s32i size) {
+void ia64_size(file* text, byte* func, s32i size) {
   (void)text;
   copy(func + 7, &size, sizeof(size));
 }

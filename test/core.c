@@ -84,7 +84,7 @@ static void mock_jump(file* t)                         { note(t, op_jump, ""); }
 static void mock_back(const file* t, byte* prev)       { note(NULL, op_back, " %s", before(t, prev)); }
 static void mock_loop(file* t, const byte* dest)       { note(t, op_loop, " %s", at(t, dest)); }
 static void mock_open(file* t)                         { note(t, op_open, ""); }
-static void mock_size(const file* t, byte* func, s32i size) { note(NULL, op_size, " %s %d", at(t, func), size); }
+static void mock_size(file* t, byte* func, s32i size) { note(NULL, op_size, " %s %d", at(t, func), size); }
 static void mock_parm(file* t, u32i i, s32i slot)      { note(t, op_parm, " %u %d", i, slot); }
 static void mock_args(file* t, u32i i)                 { note(t, op_args, " %u", i); }
 static void mock_dial(file* t)                         { note(t, op_dial, ""); }

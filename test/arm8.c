@@ -7,6 +7,11 @@
 
 #define e arm8
 
+// a text past the reach of a conditional branch, and its words
+static byte  farb[sizeof(file) + (1 << 21)];
+static file* far = (file*)farb;
+static u32i  at32(const byte* p) { u32i w; memcpy(&w, p, 4); return w; }
+
 spec("arm8") {
   context("values") {
     it("moves an immediate, in halves past 16 bits") {
@@ -28,6 +33,13 @@ spec("arm8") {
     }
     it("takes the address of a slot") {
       check(emits("a0 23 00 d1", e.addr(t, -8)));      // sub x0, x29, #8
+    }
+    it("reaches a slot past 4K in two subs, past 16M through x16") {
+      // sub x16, x29, #0x1, lsl #12; sub x16, x16, #0x238; ldur w0, [x16]
+      check(emits("b0 07 40 d1 10 e2 08 d1 00 02 40 b8", e.load(t, -0x1238, 4)));
+      check(emits("a0 13 40 d1", e.addr(t, -0x4000))); // sub x0, x29, #0x4, lsl #12
+      // mov x16, #0x5678; movk x16, #0x1234, lsl #16; sub x0, x29, x16
+      check(emits("10 cf 8a d2 90 46 a2 f2 a0 63 30 cb", e.addr(t, -0x12345678)));
     }
     it("sign extends to 64 bits") {
       check(emits("00 7c 40 93", e.cast(t, 1)));       // sxtw x0, w0
@@ -88,18 +100,29 @@ spec("arm8") {
   context("branches") {
     byte* m;
     it("branches on zero past what follows, once mended") {
-      // cbz x0, +8; mov w0, #1
-      check(emits("40 00 00 b4 20 00 80 52", e.when(t, 0), m = here, e.move(t, 1), e.back(t, m)));
+      // cbz x0, +12; nop; mov w0, #1
+      check(emits("60 00 00 b4 1f 20 03 d5 20 00 80 52", e.when(t, 0), m = here, e.move(t, 1), e.back(t, m)));
     }
     it("branches on non zero") {
-      check(emits("00 00 00 b5", e.when(t, 1)));       // cbnz x0
+      check(emits("00 00 00 b5 1f 20 03 d5", e.when(t, 1))); // cbnz x0; nop
     }
     it("branches on the flags when a comparison fails, once mended") {
-      // b.ge +8; mov w0, #1
-      check(emits("4a 00 00 54 20 00 80 52", e.cond(t, '<', 0), m = here, e.move(t, 1), e.back(t, m)));
+      // b.ge +12; nop; mov w0, #1
+      check(emits("6a 00 00 54 1f 20 03 d5 20 00 80 52", e.cond(t, '<', 0), m = here, e.move(t, 1), e.back(t, m)));
     }
     it("branches on the flags when a comparison holds") {
-      check(emits("0b 00 00 54", e.cond(t, '<', 1)));  // b.lt
+      check(emits("0b 00 00 54 1f 20 03 d5", e.cond(t, '<', 1))); // b.lt; nop
+    }
+    it("branches past 1M as the opposite branch over a b") {
+      far->tail = farb + sizeof farb;
+      far->body = far->head;
+      e.when(far, 0), m = far->body, far->body += 1 << 20, e.back(far, m);
+      check(at32(far->head) == 0xb5000040);          // cbnz x0, +8
+      check(at32(far->head + 4) == 0x14040001);      // b +0x100004
+      far->body = far->head;
+      e.cond(far, '<', 0), m = far->body, far->body += 1 << 20, e.back(far, m);
+      check(at32(far->head) == 0x5400004b);          // b.lt +8
+      check(at32(far->head + 4) == 0x14040001);      // b +0x100004
     }
     it("jumps forward, once mended") {
       check(emits("02 00 00 14 20 00 80 52", e.jump(t), m = here, e.move(t, 1), e.back(t, m))); // b +8; mov w0, #1
@@ -109,12 +132,31 @@ spec("arm8") {
     }
   }
 
+  context("start") {
+    it("reaches main past 1M from the C start through x16") {
+      far->tail = farb + sizeof farb;
+      far->body = far->head + (1 << 20);
+      e.crt(far, far->head, far->head);
+      byte* p = far->head + (1 << 20) + 8;          // ldr x1, [sp]; add x2, sp, #8; then
+      u32i  d = (at32(p + 4) >> 5 & 0xffff) | (at32(p + 8) >> 5 & 0xffff) << 16;
+      check(at32(p) == 0x10000000);                  // adr x0, .
+      check(d == (1 << 20) + 8);                     // mov x16, #lo; movk x16, #hi, lsl #16
+      check(at32(p + 12) == 0xcb100000);             // sub x0, x0, x16
+    }
+  }
+
   context("functions") {
     byte* f;
     byte* d;
     it("opens a frame, sized later") {
       // stp x29, x30, [sp, #-16]!; mov x29, sp; sub sp, sp, #32
       check(emits("fd 7b bf a9 fd 03 00 91 ff 83 00 d1", f = here, e.open(t), e.size(t, f, 32)));
+    }
+    it("grows a frame past 4K after the function, and comes back") {
+      // stp x29, x30, [sp, #-16]!; mov x29, sp; b +16; mov sp, x29; ldp x29, x30, [sp], #16; ret;
+      // sub sp, sp, #0x12, lsl #12; sub sp, sp, #0x340; b -20
+      check(emits("fd 7b bf a9 fd 03 00 91 04 00 00 14 bf 03 00 91 fd 7b c1 a8 c0 03 5f d6 "
+                  "ff 4b 40 d1 ff 03 0d d1 fb ff ff 17", f = here, e.open(t), e.done(t), e.size(t, f, 0x12340)));
     }
     it("unwinds and returns") {
       // mov sp, x29; ldp x29, x30, [sp], #16; ret

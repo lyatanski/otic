@@ -120,7 +120,7 @@ typedef struct {
   void (*back)(const file*, byte* prev);           // point a forward branch here
   void (*loop)(file*, const byte* dest);           // jump back to an address
   void (*open)(file*);                             // prologue, the frame size is patched by size
-  void (*size)(const file*, byte* func, s32i size);
+  void (*size)(file*, byte* func, s32i size);
   void (*parm)(file*, u32i i, s32i slot);          // slot = argument register i
   void (*args)(file*, u32i i);                     // pop argument register i
   void (*dial)(file*);                             // call, patched by link

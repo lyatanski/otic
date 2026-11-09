@@ -291,6 +291,16 @@ static int  machlib(const char* name, const char* src, bool stat, char* arch, co
              "{ int a[2]; } { int a[2]; } { int a[2]; } { int a[2]; } "
 #define ARR64 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8
 
+// fmt with each %s a body of n "s += 1; ": over 1M of code for 70000 on arm8
+static const char* bulk(const char* fmt, unsigned n) {
+  static char src[1 << 21];
+  static char body[(1 << 20) - 64];
+  unsigned k = 0;
+  while(n-- && k + 8 < sizeof body) k += (unsigned)snprintf(body + k, sizeof body - k, "s += 1; ");
+  snprintf(src, sizeof src, fmt, body, body, body);
+  return src;
+}
+
 spec(TAG) {
   context("declarations") {
     it("returns a constant")
@@ -318,6 +328,13 @@ spec(TAG) {
       expect(5, "int main() { return 0b101; }\n");
     it("reads octal numbers")
       expect(15, "int main() { return 0o17; }\n");
+  }
+
+  context("far branches") {
+    it("branches past 1M of code on a comparison, on a value and in a loop")
+      expect(4, bulk("int main() { int s = 0; int k = 1;\n"
+                     "  when(k == 1) { %s }\n  when(k) { %s } else { s = 0; }\n"
+                     "  while(k < 3) { k += 1; %s }\n  return (s == 280000) + k; }\n", 70000));
   }
 
   context("when") {
@@ -568,6 +585,9 @@ spec(TAG) {
                  "  while(i < 3) { s += a[i][0] * 2 + a[i][1]; i += 1; }\n  return s + a[2][1] + 3; }\n");
     it("reuses array types")
       expect(0, "int main() { " ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 ARR64 "return 0; }\n");
+    it("indexes a local array past a 4K frame, its address taken")
+      expect(9, "int main() { int a[5000]; int b = 3; int* p = &b;\n"
+                "  a[4999] = 4; a[0] = 2; return a[4999] + a[0] + *p; }\n");
     it("nests arrays")
       expect(13, "int g[2][3];\nint main() {\n  int a[2][3];\n  a[1][2] = 4;\n  g[1][0] = 5;\n"
                  "  int* p = a;\n  return a[1][2] + g[1][0] + p[5];\n}\n");

@@ -253,6 +253,25 @@ void arm8_put(file* data, uint32_t inst) {
   *(uint32_t*)data->body = inst; data->body += 4;
 }
 
+// the word distance from at to dest in a field of bits, signed
+static u32i arm8_span(const void* at, const void* dest, int bits) {
+  s64i d = ((const byte*)dest - (const byte*)at) >> 2;
+  if(d < -((s64i)1 << (bits - 1)) || d >= (s64i)1 << (bits - 1)) fail("jump too far: %lld words\n", (long long)d);
+  return (u32i)d & ((1u << bits) - 1);
+}
+
+// rd = rn - off, 31 being sp: one sub below 4K, two below 16M, else through x16
+static void arm8_less(file* data, int rd, int rn, u32i off) {
+  if(off >> 24) {
+    arm8_put(data, X | dati_movz | (off & 0xffff) << 5 | r16);            // movz x16, #lo
+    arm8_put(data, X | dati_movk | 1 << 21 | (off >> 16) << 5 | r16);     // movk x16, #hi, lsl 16
+    arm8_put(data, 0xcb206000 | r16 << 16 | rn << 5 | rd);                // sub rd, rn, x16, uxtx
+    return;
+  }
+  if(off >> 12) { arm8_put(data, 0xd1400000 | (off >> 12) << 10 | rn << 5 | rd); rn = rd; } // sub rd, rn, #hi, lsl 12
+  if(off & 0xfff || !(off >> 12)) arm8_put(data, 0xd1000000 | (off & 0xfff) << 10 | rn << 5 | rd); // sub rd, rn, #lo
+}
+
 void arm8_imm(file* data, int rd, uint32_t num) {
   arm8_put(data, form(dati, movz, .imm=num & 0xffff, .rd=rd));      // movz wd, #lo
   if(num >> 16)
@@ -302,9 +321,8 @@ void arm8_disp(file* data, uint32_t inst, u32i size, int rt, int rn, s32i off) {
 
 // the slot reaches 256 bytes below the frame pointer, further through x16
 void arm8_slot(file* data, uint32_t inst, u32i size, int rt, s32i slot) {
-  if(slot < -0xfff) fail("frame too large: %d bytes\n", -slot);
   if(slot >= -256) { arm8_disp(data, inst, size, rt, r29, slot); return; }
-  arm8_put(data, 0xd1000000 | -slot << 10 | r29 << 5 | r16);        // sub x16, x29, #-slot
+  arm8_less(data, r16, r29, -(u32i)slot);                           // x16 = x29 - -slot
   arm8_disp(data, inst, size, rt, r16, 0);
 }
 
@@ -319,8 +337,7 @@ void arm8_fill(file* data, u32i size) {
 }
 
 void arm8_addr(file* data, s32i slot) {
-  if(slot < -0xfff) fail("frame too large: %d bytes\n", -slot);
-  arm8_put(data, 0xd1000000 | -slot << 10 | r29 << 5 | r0);         // sub x0, x29, #-slot
+  arm8_less(data, r0, r29, -(u32i)slot);                            // x0 = x29 - -slot
 }
 
 // x0 = pc + a 32-bit distance, patched by site: a negative distance, to code
@@ -358,10 +375,14 @@ void arm8_open(file* data) {
   arm8_put(data, 0xd10003ff);                                       // sub sp, sp, #0, patched by size
 }
 
-void arm8_size(const file* data, byte* func, s32i size) {
-  (void)data;
-  if(size > 0xfff) fail("frame too large: %d bytes\n", size);
-  ((uint32_t*)func)[2] |= size << 10;
+// a frame past 4K: the sub becomes a b to code after the function that grows
+// sp and comes back
+void arm8_size(file* data, byte* func, s32i size) {
+  uint32_t* sub = (uint32_t*)func + 2;
+  if(size <= 0xfff) { *sub |= size << 10; return; }
+  *sub = I3206_B | arm8_span(sub, data->body, 26);                  // b grow
+  arm8_less(data, 31, 31, size);                                    // grow: sp -= size
+  arm8_put(data, I3206_B | arm8_span(data->body, sub + 1, 26));     // b back
 }
 
 // Linux syscall: number in x8, arguments in x0-x5
@@ -386,8 +407,11 @@ void arm8_flag(file* data, u32i op) {
   arm8_put(data, I3506_CSINC | 31 << 16 | (arm8_cc(op) ^ 1) << 12 | 31 << 5 | r0); // cset w0, cc
 }
 
+// a conditional branch reaches 1M: a nop after it leaves room for mend to
+// turn it into the opposite one over a b
 void arm8_bcnd(file* data, u32i op, bool hold) {
   arm8_put(data, 0x54000000 | (arm8_cc(op) ^ !hold));              // b.cc, patched by mend
+  arm8_put(data, NOP);
 }
 
 // w0 = w0 op (cnst? num: w1), comparisons give 0 or 1; x0, x1 when WIDE.
@@ -419,6 +443,7 @@ void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
 
 void arm8_when(file* data, bool nz) {
   arm8_put(data, X | (nz? I3201_CBNZ: I3201_CBZ) | r0);             // cb(n)z x0, patched by mend
+  arm8_put(data, NOP);                                              // as for bcnd
 }
 
 void arm8_jump(file* data) {
@@ -426,7 +451,7 @@ void arm8_jump(file* data) {
 }
 
 void arm8_loop(file* data, const byte* dest) {
-  arm8_put(data, I3206_B | (((dest - data->body) >> 2) & 0x3ffffff)); // b dest
+  arm8_put(data, I3206_B | arm8_span(data->body, dest, 26));       // b dest
 }
 
 void arm8_done(file* data) {
@@ -434,18 +459,17 @@ void arm8_done(file* data) {
   arm8_put(data, 0xa8c17bfd);                                       // ldp x29, x30, [sp], #16
   arm8_put(data, form(brur, ret, .rn=r30));                         // ret
 }
-// prev is the end of a cbz or b
+// prev is the end of a b, or of a cb(n)z or b.cc and its nop: past 1M, the
+// latter become the opposite branch over a b
 void arm8_mend(const file* data, byte* prev) {
   uint32_t* inst = (uint32_t*)prev - 1;
+  if((*inst & 0xfc000000) == I3206_B) { *inst |= arm8_span(inst, data->body, 26); return; }
+  inst--;
   s64i dist = (data->body - (byte*)inst) >> 2;
-  if((*inst & 0xfc000000) == I3206_B) {
-    if(dist >= 1 << 25) fail("jump too far: %lld words\n", (long long)dist);
-    *inst |= dist & 0x3ffffff;
-  }
-  else {
-    if(dist >= 1 << 18) fail("jump too far: %lld words\n", (long long)dist);
-    *inst |= (dist & 0x7ffff) << 5;
-  }
+  if(dist < 1 << 18) { *inst |= (dist & 0x7ffff) << 5; return; }
+  *inst ^= (*inst & 0xff000010) == 0x54000000? 1: 1 << 24;          // b.!cc or cb(!n)z
+  *inst |= 2 << 5;                                                  // over the b
+  inst[1] = I3206_B | arm8_span(inst + 1, data->body, 26);
 }
 
 // program entry: exit(main())
@@ -457,16 +481,16 @@ void arm8_boot(file* data) {
 
 void arm8_link(const file* data, byte* boot, const byte* main) {
   (void)data;
-  *(uint32_t*)boot = I3206_BL | (((main - boot) >> 2) & 0x3ffffff);
+  *(uint32_t*)boot = I3206_BL | arm8_span(boot, main, 26);
 }
 
 // called by boot, which leaves sp as it was: [sp] is argc, argv follows it
 void arm8_crt(file* data, const byte* main, const byte* start) {
-  s64i d = main - data->body - 8;
-  if(d < -(1 << 20)) fail("main too far: %lld bytes\n", (long long)d);
   arm8_put(data, 0xf94003e1);                                       // ldr x1, [sp]
   arm8_put(data, 0x910023e2);                                       // add x2, sp, #8
-  arm8_put(data, I3406_ADR | (d & 3) << 29 | ((d >> 2) & 0x7ffff) << 5 | r0); // adr x0, main
+  s64i d = main - data->body;
+  if(d >= -(1 << 20)) arm8_put(data, I3406_ADR | (d & 3) << 29 | ((d >> 2) & 0x7ffff) << 5 | r0); // adr x0, main
+  else { byte* at = data->body; arm8_glob(data); arm8_site(data, at, d); } // past 1M: x0 = pc - distance
   for(u32i r = 3; r < 6; r++) arm8_put(data, X | dati_movz | r);    // mov xr, #0
   byte* at = data->body;
   arm8_dial(data);
