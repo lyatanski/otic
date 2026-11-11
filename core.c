@@ -13,6 +13,9 @@ enum { tend, ttag, tnum };
 // a string literal in the table of the unit being parsed
 #define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
 
+// the character an escape \v stands for: \n, \t, \r, \0, else v itself
+char  esc(char v) { return v == 'n'? '\n': v == 't'? '\t': v == 'r'? '\r': v == '0'? 0: v; }
+
 void chop(mode* self) {
   s64i  ival = 0;
   s64i  fval = 0;
@@ -52,8 +55,14 @@ void chop(mode* self) {
         default: kind = (c[1] == '='? tok2(c): tok1(c));
       }
       break;
-    //case '\'':
-    //  kind = '"'; c+=2; break;
+    case '\'': // a character is its number
+      c++;
+      if(*c == '\\' && c[1]) ival = (byte)esc(*++c);
+      else if(*c && *c != '\n' && *c != '\'') ival = (byte)*c;
+      else flaw(self, "expected one character between ' and '\n");
+      if(*++c != '\'') flaw(self, "expected one character between ' and '\n");
+      c++;
+      kind = tnum; break;
     case '"':
       for(c++; *c != '"'; c++) {
         if(!*c || *c == '\n') flaw(self, "unterminated string\n");
@@ -247,7 +256,7 @@ u32i  quote(const item* s, byte* out) {
   u32i n = 0;
   for(const char* c = s->name + 1; c < s->name + s->size - 1; c++, n++) {
     char v = *c;
-    if(v == '\\') v = (v = *++c) == 'n'? '\n': v == 't'? '\t': v == 'r'? '\r': v == '0'? 0: v;
+    if(v == '\\') v = esc(*++c);
     if(out) out[n] = v;
   }
   if(out) out[n] = 0;
@@ -543,6 +552,10 @@ kept  keep(mode* self, oper* x) {
 
 oper  pair(mode* self, u32i op, oper x, oper y, kept mark);
 oper  lit(mode* self);
+meta* sort(mode* self);
+meta* coil(mode* self, meta* type, item** name);
+meta* dims(mode* self, meta* type);
+oper  atom(mode* self);
 
 // the type the word names, NULL when it names none
 meta* ilk(mode* self) {
@@ -551,6 +564,38 @@ meta* ilk(mode* self) {
 }
 
 #define type(self) (same(self, "struct") || ilk(self))
+
+// sizeof's operand: (a type name) with its pointers and arrays, a string
+// literal, else a unary expression whose code is dropped. Its bytes
+s32i  gist(mode* self) {
+  if(home(self)->talk.kind == '"') {
+    s32i n = (s32i)quote(home(self)->talk.hash, NULL);
+    chop(self);
+    return n;
+  }
+  meta* t;
+  if(home(self)->talk.kind == '(') { // a type name or a parenthesized operand: one token decides
+    byte* at = home(self)->code->body;
+    u64i  line = home(self)->line;
+    word  talk = home(self)->talk;
+    chop(self);
+    if(type(self)) {
+      item* name;
+      t = dims(self, coil(self, sort(self), &name));
+      if(name) flaw(self, "expected a type name, got '%.*s'\n", nick(name));
+      skip(self, ')');
+      goto sized;
+    }
+    home(self)->code->body = at, home(self)->line = line, home(self)->talk = talk;
+  }
+  byte* mark = self->text->body;
+  t = atom(self).type;
+  trim(self, mark);
+  if(!t) return 4; // an int
+sized:
+  if(!t->size || t->kind == proc) flaw(self, "sizeof of a type without a size\n");
+  return (s32i)t->size;
+}
 
 oper  atom(mode* self) {
   u32i op = home(self)->talk.kind;
@@ -566,6 +611,7 @@ oper  atom(mode* self) {
       break;
     }
     case ttag: {
+      if(same(self, "sizeof")) { chop(self); return cnst(gist(self)); }
       item* name = home(self)->talk.hash;
       chop(self);
       meta* var = find(self, self->unit, name);

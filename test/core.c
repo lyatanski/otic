@@ -300,6 +300,15 @@ spec("core") {
       check(compiles("int main() { return 2 + 3 * 4; }"));
       check(has("open, move 14, done") && calls[op_calc] == 0);
     }
+    it("folds sizeof and characters like numbers") {
+      check(compiles("int main() { return sizeof(long) * 'a' + sizeof \"ab\"; }"));
+      check(has("open, move 779, done") && calls[op_calc] == 0);
+    }
+    it("drops the code of the operand of sizeof") {
+      check(compiles("int g; int main() { return sizeof(g = 7); }"));
+      check(has("fill 4, move 4, done")); // emitted, then trimmed from text
+      check(self.main[0] == op_open && self.main[1] == op_move && self.main[2] == op_done);
+    }
     it("computes locals at run time, a constant operand inline") {
       check(compiles("int main() { int a = 2; return a + 3; }"));
       check(has("load -8:4, calc + 3, done") && calls[op_push] == 0);

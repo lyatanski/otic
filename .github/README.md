@@ -83,6 +83,8 @@ int main() {
   work both ways (on Windows x86-64 an otic function's address is a small
   Win64 entry); a global can't be initialized with one yet
 - statements: `when`/`else`, `while`, `break`, `skip`, `return`
+- `sizeof` of a type name or an operand (not computed); character literals
+  (`'a'`, `'\n'`) are numbers
 - initializers with designators, compound literals, `static`, `extern`
 - `syscall(n, ...)` goes straight to the kernel
 

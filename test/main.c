@@ -362,6 +362,40 @@ spec(TAG) {
       expect(5, "int main() { return 0b101; }\n");
     it("reads octal numbers")
       expect(15, "int main() { return 0o17; }\n");
+    it("reads a character as its number")
+      expect(97, "int main() { char c = 'a'; return c; }\n");
+    it("reads escaped characters")
+      expect(149, "int main() { return '\\n' + '\\t' + '\\'' + '\\\\' + '\\0' - 1; }\n");
+    it("rejects an empty character")
+      expect(bad, "int main() { return ''; }\n");
+    it("rejects two characters in quotes")
+      expect(bad, "int main() { return 'ab'; }\n");
+    it("rejects an unterminated character")
+      expect(bad, "int main() { return '\\");
+  }
+
+  context("sizeof") {
+    it("gives the size of a type name")
+      expect(53, "struct v { int x; int y; };\nstruct n { int v; n* next; char tag; };\n"
+                 "int main() { return sizeof(int) + sizeof(long) + sizeof(char) + sizeof(n*)"
+                 " + sizeof(struct v) + sizeof(n); }\n");
+    it("gives the size of an array type")
+      expect(24, "int main() { return sizeof(int[3][2]); }\n");
+    it("gives the size of an operand without computing it")
+      expect(47, "int main() { int a = 2; long b[4]; char c = 1;\n"
+                 "  return sizeof a + sizeof(b) + sizeof c + sizeof(a = 9) - a + sizeof b[1]; }\n");
+    it("gives the count of an array with sizeof x / sizeof x[0]")
+      expect(5, "int t[5];\nint main() { return sizeof t / sizeof t[0]; }\n");
+    it("gives the size of what a pointer points to")
+      expect(20, "struct n { int v; n* next; };\nint main() { n* p = 0; return sizeof *p + sizeof p->v; }\n");
+    it("counts a string literal with its NUL")
+      expect(4, "int main() { return sizeof \"a\\nb\"; }\n");
+    it("drops the code of a call in its operand")
+      expect(4, "int n;\nint f() { n += 1; return 1; }\nint main() { return sizeof f() + n; }\n");
+    it("rejects a type without a size")
+      expect(bad, "int main() { return sizeof(void); }\n");
+    it("rejects a name in the type")
+      expect(bad, "int main() { return sizeof(int x); }\n");
   }
 
   context("far branches") {
