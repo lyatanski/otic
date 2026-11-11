@@ -37,6 +37,7 @@ chmod +x hello && ./hello
 | `-e`, `--emit` | write a file instead of running the code |
 | `-s`, `--static` | without `main`, write an object instead of a shared library |
 | `-p`, `--path` | directory to look for modules (`.c`, `.o`) and libraries |
+| `-l`, `--libc` | C library of a Linux program: `glibc`, `musl` (default: the host's) |
 | `-h`, `--help` | display help |
 
 ## Language

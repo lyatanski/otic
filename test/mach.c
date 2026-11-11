@@ -6,6 +6,7 @@
 
 #define CODE "\xb8\x07\x00\x00\x00\xc3" "\xb8\x2a\x00\x00\x00\xc3" // f, main
 #define PAGE 0x4000
+#define TOP  (sizeof(mach_head) + sizeof(mach_blob)) // an executable's load commands, without imports
 
 // sha256 of the size bytes at msg is want, in hex
 static bool  hashes(char* msg, u64i size, const char* want) {
@@ -82,6 +83,7 @@ spec("mach") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
       check((out = packed(mach)) && (h = (mach_head*)out->head));
       check(h->mh.magic == mh_magic && h->mh.type == mh_exec && h->mh.ncmds == 11);
+      check(h->mh.size == TOP - sizeof(mach_mh) && h->mh.flags & mh_noundefs);
       check(h->mh.cpu == 0x01000007 && h->mh.sub == 3 && h->mh.flags & mh_pie);
       start(cpu_arm8, CODE, 12, "", 0, 6);
       check((out = packed(mach)) && ((mach_head*)out->head)->mh.cpu == 0x0100000c);
@@ -89,36 +91,65 @@ spec("mach") {
     it("loads the code after its headers, entering at main through LC_MAIN") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
       check((out = packed(mach)) && (h = (mach_head*)out->head));
-      check(bytes(out->head + sizeof(mach_head), "b8 07 00 00 00 c3 b8 2a"));
-      check(h->main.entry == sizeof(mach_head) + 6);
-      check(h->code.off == sizeof(mach_head) && h->code.size == 12);
+      check(bytes(out->head + TOP, "b8 07 00 00 00 c3 b8 2a"));
+      check(h->main.entry == TOP + 6);
+      check(h->code.off == TOP && h->code.size == 12);
       check(h->text.addr == 0x100000000 && h->text.fsz == PAGE);
     }
     it("docks once, data on the page after the code") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
       check(packed(mach));
-      check(docked.calls == 1 && docked.at == PAGE - sizeof(mach_head) && docked.org == 0);
+      check(docked.calls == 1 && docked.at == PAGE - TOP && docked.org == 0);
     }
     it("puts data and bss in __DATA") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
       ours.zero = 100;
       check((out = packed(mach)) && (h = (mach_head*)out->head));
       check(!strcmp(h->data.name, "__DATA") && h->data.off == PAGE && h->data.fsz == 4);
-      check(h->data.addr == 0x100000000 + PAGE && h->data.vmsz == PAGE);
+      check(h->data.addr == 0x100000000 + PAGE && h->data.vmsz == PAGE && h->data.nsec == 2);
       check(bytes(out->head + PAGE, "61 62 63 64"));
+      check(!strcmp(h->vars[0].name, "__data") && h->vars[0].addr == h->data.addr && h->vars[0].size == 4);
+      check(h->vars[0].off == PAGE && h->vars[1].flags == s_zerofill);
+      check(h->vars[1].addr == h->data.addr + 16 && h->vars[1].size == 104); // 100, to 8 bytes
     }
     it("ends with a signature of each 4 KB page") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
       check((out = packed(mach)) && (h = (mach_head*)out->head));
-      byte* blob = out->head + h->sign.off;
-      check(h->sign.off == 2 * PAGE && blob + h->sign.fsz == out->body);
+      mach_blob* sign = cmd_(out, lc_signature);
+      byte* blob = out->head + sign->off;
+      check(sign && sign->off == 2 * PAGE && blob + sign->fsz == out->body);
       check(be(blob) == 0xfade0cc0 && be(blob + 20) == 0xfade0c02);
       byte* hash = blob + 20 + 88 + sizeof(mach_name); // the code directory's slots
       byte  want[32];
-      for(u32i i = 0; i < h->sign.off >> 12; i++) {
+      for(u32i i = 0; i < sign->off >> 12; i++) {
         sha256(out->head + i * 4096, 4096, want);
         check(!memcmp(hash + 32 * i, want, 32));
       }
+    }
+    it("binds each import through its slot after bss, by its library's ordinal") {
+      start(cpu_ia64, CODE, 12, "abcd", 4, 6);
+      ours.zero = 100;
+      meta c = {.name = named("\"c\"")}, z = {.name = named("\"z\"")}, q = {.name = named("\"/opt/libq.dylib\"")};
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &c};
+      ours.imps[1] = &(meta){.name = named("crc32"), .kind = call, .lib = &z};
+      ours.imps[2] = &(meta){.name = named("q"), .kind = call, .lib = &q};
+      ours.imps[3] = &(meta){.name = named("environ"), .kind = glob, .lib = &c};
+      ours.impn = 4;
+      check((out = packed(mach)) && (h = (mach_head*)out->head));
+      check(h->mh.ncmds == 11 + 1 + 2 && !(h->mh.flags & mh_noundefs));
+      check(h->vars[1].size == 104 + 4 * 8 && h->data.vmsz == PAGE);
+      mach_dylib* d = (mach_dylib*)((byte*)(h + 1) + sizeof(mach_info));
+      check(d[0].cmd == lc_dylib && !strcmp((char*)d + d->name, "libz.dylib") && d->size == 40);
+      d = (mach_dylib*)((byte*)d + d->size);
+      check(d->cmd == lc_dylib && !strcmp((char*)d + d->name, "/opt/libq.dylib"));
+      check((byte*)d + d->size == out->head + h->code.off - sizeof(mach_blob));
+      mach_info* info = cmd_(out, lc_dyld_info);
+      byte* b = out->head + info->bind;
+      check(info && info->bind == h->link.off && !info->rebase && !info->trie);
+      // pointers; libSystem _puts at 0x78 (16 + 104), libz _crc32, the third dylib's _q, then _environ
+      check(bytes(b, "51 11 40 5f 70 75 74 73 00 72 78 90 12 40 5f 63 72 63 33 32 00 72 80 01 90"));
+      check(bytes(b + 25, "13 40 5f 71 00 72 88 01 90 11 40 5f 65 6e 76 69 72 6f 6e 00 72 90 01 90 00"));
+      check(info->nbind == 50 && ((mach_blob*)cmd_(out, lc_signature))->off == ((info->bind + 50 + 15) & -16));
     }
   }
 

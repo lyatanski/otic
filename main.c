@@ -34,6 +34,12 @@ void  ario_pull(mode*, meta*);
 #else // __x86_64__
 #define base ia64
 #endif
+// a Linux host's C library: glibc unless it is musl (bionic is not supported)
+#if defined(__linux__) && !defined(__GLIBC__) && !defined(__ANDROID__)
+#define MUSL 1
+#else
+#define MUSL 0
+#endif
 #ifdef __APPLE__
 #define host mach
 #elif defined(_WIN32)
@@ -143,8 +149,10 @@ bool  have(const item* s) {
   return bring(s) != NULL;
 }
 
-// the address of each import in its slot, from the libraries it loads
-void  plug(const mode* self, u64i* slot) {
+// the address of each import in its slot, from the libraries it loads. On
+// Windows a name may be exported behind an underscore: spell makes the import
+// that name, for a program written to load it
+void  plug(const mode* self, u64i* slot, bool spell) {
   char  name[256];
   for(u32i i = 0; i < self->impn; i++) {
     meta* x = self->imps[i];
@@ -159,9 +167,19 @@ void  plug(const mode* self, u64i* slot) {
     if(!at && x->name->size + 1 < sizeof name) {
       snprintf(name, sizeof name, "_%.*s", nick(x->name));
       at = (void*)GetProcAddress(lib, name);
+      if(at && spell) { // a copy of the item: the name stays in its table
+        u64i  n = slen(name);
+        item* s = self->heap(NULL, sizeof(item) + n + 1);
+        *s = *x->name;
+        s->name = (char*)(s + 1);
+        copy((byte*)s->name, name, n + 1);
+        s->size = n;
+        x->name = s;
+      }
       snprintf(name, sizeof name, "%.*s", nick(x->name)); // the failure names it as written
     }
 #else
+    (void)spell;
     void* at = dlsym(lib, name);
 #endif
     if(!at) fail("undefined: %s in %.*s\n", name, nick(l->name));
@@ -185,14 +203,22 @@ void  exec(mode* self) {
   dock(self, at, (u64i)run);
   copy(run, self->text->head, code);
   copy(run + at, self->data->head, size);
-  plug(self, (u64i*)(run + all) - self->impn);
+  plug(self, (u64i*)(run + all) - self->impn, 0);
   if(at) prep(run, at); // text only: data and bss stay writable
   int return_code = ((func)(run + (self->hail - self->text->head)))();
   printf("%d\n", return_code);
 }
 
+// a program written for the host, with its C library: each import is looked
+// up as running it would, so that one its library lacks fails now rather than
+// when the program loads
 void  save(mode* self) {
-  if(self->impn && self->main && self->form.os != os_linux) fail("cannot call a library from this form yet\n");
+  if(self->impn && self->main && self->form.os == host.os && self->arch.cpu == base.cpu
+     && (self->form.os != os_linux || self->musl == MUSL)) {
+    u64i* slot = self->heap(NULL, 8 * self->impn);
+    plug(self, slot, 1);
+    self->heap(slot, 0);
+  }
   file* out = self->form.pack(self);
   FILE* fp = fopen(self->outp, "wb");
   if(!fp) fail("cannot write: %s\n", self->outp);
@@ -253,6 +279,13 @@ static void dest(mode* self, const opts* opt, const char* para) {
   if(!self->libs) self->libs = lb_dyno;
 }
 
+static void libc(mode* self, const opts* opt, const char* para) {
+  (void)opt;
+  if(is(para, "glibc")) self->musl = 0;
+  else if(is(para, "musl")) self->musl = 1;
+  else fail("C library '%s' not supported\n", para);
+}
+
 static void flat(mode* self, const opts* opt, const char* para) {
   (void)opt; (void)para;
   self->libs = lb_relo;
@@ -297,6 +330,8 @@ int   main(int argc, char** argv) {
     .arch = base,
     .form = host,
     .ario = {ario_load, ario_pull},
+    .have = have,
+    .musl = MUSL,
   };
   nest(&self, (unit){.kind = un_root}); // unit 0, the builtins
 
@@ -306,13 +341,14 @@ int   main(int argc, char** argv) {
     {"-e", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
     {"-s", "--static", .desc = "without main, write an object instead of a shared library", .call = flat},
     {"-p", "--path", .args = 1, .desc = "directory to look for modules and libraries", .call = seek},
+    {"-l", "--libc", .args = 1, .desc = "C library of a Linux program: glibc, musl", .call = libc},
     {"-h", "--help", .desc = "display help", .call = help}, {0},
   };
   parse(&self, args, argc, argv, apos);
   if(!self.name) fail("no input file\n");
   if(self.show == exec && self.arch.cpu != base.cpu)
     fail("cannot run foreign code, write it with -e\n");
-  if(self.show == exec) self.have = have, self.libs = lb_none; // running needs main
+  if(self.show == exec) self.libs = lb_none; // running needs main
 
   make(&self);
 

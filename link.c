@@ -46,18 +46,28 @@ static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
   return 0;
 }
 
+// the host's shared library s, as the library of the next imports
+static bool  shared(mode* self, item* s) {
+  if(!self->have || !self->have(s)) return 0;
+  home(self)->from = rack(self, s);
+  return 1;
+}
+
 // link "name": the first of name.c, name.o and libname.a beside this source,
 // then name.c and name.o in the library directories (mode.dirs), each in
-// order, then, when running, the host's shared library name, as load "name"
-// takes it, then libname.a in the library directories. Code in a directory
+// order, then the host's shared library name, as load "name" takes it, and
+// libname.a in the library directories: the archive first when writing a
+// file, as a C library linked in cannot run in memory. Code in a directory
 // comes before the host's library, so running and writing a file pick the
 // same module
 void  haul(mode* self, item* s) {
+  bool run = self->libs == lb_none;
   for(u32i e = 0; e < 3; e++) if(nigh(self, s, NULL, e)) return;
   for(u32i i = 0; i < self->dirn; i++)
     for(u32i e = 0; e < 2; e++) if(nigh(self, s, self->dirs[i], e)) return;
-  if(self->have && self->have(s)) { home(self)->from = rack(self, s); return; }
+  if(run && shared(self, s)) return;
   for(u32i i = 0; i < self->dirn; i++) if(nigh(self, s, self->dirs[i], 2)) return;
+  if(!run && shared(self, s)) return;
   flaw(self, "cannot find %.*s\n", nick(s));
 }
 

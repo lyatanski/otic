@@ -43,17 +43,18 @@ typedef struct { u32i cmd, size, rebase, nrebase, bind, nbind, weak, nweak, lazy
 typedef struct { u32i strx; byte type, sect; u16i desc; u64i value; } nl64;
 typedef struct { s32i addr; u32i info; } mrel; // info: symbol, pc-relative, length, extern, type
 
-// every load command, in file order: none needs padding
+// the load commands of an executable, in file order: none needs padding.
+// With imports, the binds' (LC_DYLD_INFO_ONLY) and a dylib per library
+// besides libSystem follow, then the signature's
 typedef struct {
   mach_mh mh;
-  seg64 zero, text; sec64 code; seg64 data, link;
+  seg64 zero, text; sec64 code; seg64 data; sec64 vars[2]; seg64 link;
   mach_symtab syms;
   mach_dysym dsym;
   struct { u32i cmd, size, name; char path[20]; } dyld;
   struct { u32i cmd, size; u64i entry, stack; } main;
   mach_build build;
   mach_dylib libs;
-  mach_blob sign;
 } mach_head;
 
 static const char mach_name[] = "tic"; // the signature's identifier
@@ -128,43 +129,127 @@ static void  mach_seal(byte* o, u64i limit, u64i text, bool exe) {
     sha256(o + (i << 12), limit - (i << 12) < 4096? limit - (i << 12): 4096, at);
 }
 
+static byte* uleb(byte* at, u64i v) {
+  do { *at++ = (v & 0x7f) | (v > 0x7f? 0x80: 0); v >>= 7; } while(v);
+  return at;
+}
+
+static u32i  mach_log(u64i step) { // log2 of an alignment
+  u32i k = 0;
+  while(((u64i)1 << k) < step) k++;
+  return k;
+}
+
+// the dylib of library l of a load, into out when given: its length, 0 for c
+// and m, which libSystem has. As written when it has a slash or a dot, else
+// lib<name>.dylib, which dyld looks for in its fallback paths
+static u32i  mach_lib(const meta* l, char* out) {
+  const char* s = l->name->name + 1; // without the quotes
+  u32i n = (u32i)l->name->size - 2;
+  bool as_is = 0;
+  if(n == 1 && (*s == 'c' || *s == 'm')) return 0;
+  for(u32i i = 0; i < n; i++) as_is |= s[i] == '.' || s[i] == '/';
+  if(as_is) { if(out) copy((byte*)out, s, n); return n; }
+  if(out) copy(copy(copy((byte*)out, "lib", 3), s, n), ".dylib", 6);
+  return n + 9;
+}
+
+// an executable: its imports are bound by dyld through their slots, after
+// bss in __DATA, each to the library of its load (its ordinal, libSystem
+// first), the binds in __LINKEDIT before the signature
 static file* mach_exec(mode* self) {
   const u64i org = 0x100000000, page = 0x4000; // arm64 pages are 16 KB
-  const u64i top = sizeof(mach_head);
+  const u64i step = self->core.gap(self);
+  const meta** need = self->heap(NULL, (self->impn + 1) * sizeof(meta*)); // each library once
+  u32i* ord = self->heap(NULL, (self->impn + 1) * sizeof(u32i));
+  u32i  nneed = 0;
+  u64i  dylibs = 0, binds = 2;
+  for(u32i i = 0; i < self->impn; i++) {
+    const meta* l = self->imps[i]->lib;
+    u32i n = mach_lib(l, NULL), k = 0;
+    binds += 28 + self->imps[i]->name->size;
+    ord[i] = 1;
+    if(!n) continue;
+    while(k < nneed && need[k] != l) k++;
+    if(k == nneed) { need[nneed++] = l; dylibs += (24 + n + 1 + 7) & -8; }
+    ord[i] = 2 + k;
+  }
+  const u64i info = self->impn? sizeof(mach_info): 0;
+  const u64i top  = sizeof(mach_head) + info + dylibs + sizeof(mach_blob);
   const u64i code = self->text->body - self->text->head;
   const u64i text = (top + code + page - 1) & ~(page - 1); // __TEXT, __DATA, the signature
   const u64i size = self->data->body - self->data->head;
-  const u64i vmsz = (((size + 15) & ~15) + self->zero) / page * page + page;
+  const u64i bss  = (size + step - 1) & ~(step - 1), slots = bss + ((self->zero + 7) & -8);
+  const u64i end  = slots + 8 * self->impn;
+  const u64i vmsz = ((end? end: 1) + page - 1) & ~(page - 1);
   const u64i link = text + ((size + page - 1) & ~(page - 1));
-  const u32i sign = mach_sigsz(link);
-  const u64i all = link + sign;
+  const u32i lg = mach_log(step);
   self->core.dock(self, text - top, 0);
+
+  // the binds: each slot to its name in the library of its ordinal
+  byte* bind = self->heap(NULL, binds), *b = bind;
+  if(self->impn) {
+    *b++ = 0x51; // type: pointer
+    for(u32i i = 0; i < self->impn; i++) {
+      const item* s = self->imps[i]->name;
+      if(ord[i] < 16) *b++ = 0x10 | (byte)ord[i]; // dylib: its ordinal
+      else { *b++ = 0x20; b = uleb(b, ord[i]); }
+      *b++ = 0x40; // its name, then __DATA and the slot's offset there
+      *b++ = '_';
+      b = copy(b, s->name, s->size);
+      *b++ = 0;
+      *b++ = 0x72;
+      b = uleb(b, slots + 8 * i);
+      *b++ = 0x90; // bind
+    }
+    *b++ = 0;
+  }
+  const u64i nbind = b - bind, sig = (link + nbind + 15) & -16;
+  const u32i sign = mach_sigsz(sig);
+  const u64i all = sig + sign;
 
   mach_head h = {
     .mh   = {(u32i)mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_exec,
-             11, sizeof(h) - sizeof(h.mh), mh_noundefs | mh_dyldlink | mh_twolevel | mh_pie, 0},
+             11 + (info? 1: 0) + nneed, (u32i)(top - sizeof(h.mh)),
+             (self->impn? 0: mh_noundefs) | mh_dyldlink | mh_twolevel | mh_pie, 0},
     .zero = {lc_segment, sizeof(seg64), "__PAGEZERO", .vmsz = org},
     .text = {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", org, text, 0, text,
              5, 5, 1, 0}, // r-x
     .code = {"__text", "__TEXT", org + top, code, (u32i)top, 2, .flags = (u32i)s_code},
-    .data = {lc_segment, sizeof(seg64), "__DATA", org + text, vmsz, text, size, 3, 3, 0, 0}, // rw-
-    .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text + vmsz, (sign + page - 1) & ~(page - 1),
-             link, sign, 1, 1, 0, 0}, // r--
+    .data = {lc_segment, sizeof(seg64) + 2 * sizeof(sec64), "__DATA", org + text, vmsz, text, size,
+             3, 3, 2, 0}, // rw-
+    .vars = {{"__data", "__DATA", org + text, size, (u32i)text, lg},
+             {"__bss", "__DATA", org + text + bss, end - bss, 0, lg, .flags = s_zerofill}},
+    .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text + vmsz, (all - link + page - 1) & ~(page - 1),
+             link, all - link, 1, 1, 0, 0}, // r--
     .syms = {lc_symtab, sizeof(h.syms), (u32i)link, 0, (u32i)link, 0},
     .dsym = {lc_dysymtab, sizeof(h.dsym), .ilocal = 0},
     .dyld = {lc_dylinker, sizeof(h.dyld), 12, "/usr/lib/dyld"},
     .main = {(u32i)lc_main, sizeof(h.main), top + (self->main - self->text->head), 0},
     .build = {lc_build, sizeof(h.build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
     .libs = {lc_dylib, sizeof(h.libs), 24, 2, 0x10000, 0x10000, "/usr/lib/libSystem.B.dylib"},
-    .sign = {lc_signature, sizeof(h.sign), (u32i)link, sign},
   };
+  mach_info  binfo = {(u32i)lc_dyld_info, sizeof binfo, .bind = (u32i)link, .nbind = (u32i)nbind};
+  mach_blob  seal  = {lc_signature, sizeof seal, (u32i)sig, sign};
 
   file* out = zero(self, sizeof(file) + all);
-  out->body = out->head + all;
-  out->tail = out->head + all;
-  copy(copy(out->head, &h, top), self->text->head, code);
-  copy(out->head + text, self->data->head, size);
-  mach_seal(out->head, link, text, 1);
+  byte* o = out->head;
+  out->body = out->tail = o + all;
+  byte* c = copy(o, &h, sizeof h);
+  if(info) c = copy(c, &binfo, sizeof binfo);
+  for(u32i k = 0; k < nneed; k++) { // the path after the command, NUL padded
+    u32i n = mach_lib(need[k], NULL), cmd = (24 + n + 1 + 7) & -8;
+    copy(c, &(mach_dylib){lc_dylib, cmd, 24, 2, 0x10000, 0x10000, ""}, 24);
+    mach_lib(need[k], (char*)c + 24);
+    c += cmd;
+  }
+  copy(copy(c, &seal, sizeof seal), self->text->head, code);
+  copy(o + text, self->data->head, size);
+  copy(o + link, bind, nbind);
+  mach_seal(o, sig, text, 1);
+  self->heap(bind, 0);
+  self->heap(ord, 0);
+  self->heap(need, 0);
   return out;
 }
 
@@ -235,17 +320,6 @@ static void  mach_put(const mode* self, const mach_syms* t, nl64* sym, byte* str
     sym->desc  = m->weak? n_weak_def: 0;
     sym->value = f? text + (m->addr - self->text->head): (z? bss: data) + (m->slot & ~ZERO);
   }
-}
-
-static byte* uleb(byte* at, u64i v) {
-  do { *at++ = (v & 0x7f) | (v > 0x7f? 0x80: 0); v >>= 7; } while(v);
-  return at;
-}
-
-static u32i  mach_log(u64i step) { // log2 of an alignment
-  u32i k = 0;
-  while(((u64i)1 << k) < step) k++;
-  return k;
 }
 
 // the section of seat s in an object, 1 text, 2 data (then the import slots,

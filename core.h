@@ -297,6 +297,7 @@ struct mode {
   file* text; // binary code
   byte* main; // entry of main in text, NULL in a library
   byte  libs; // what a source without main makes
+  bool  musl; // a Linux image is loaded by musl's loader and names its libraries, not glibc's
   byte* boot; // what the boot stub calls: main, or crt
   byte* hail; // main's entry for C code (emit.hail), main when it has none
   file* data; // non-zero initialized data

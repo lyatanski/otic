@@ -47,6 +47,11 @@
 #else
 #define linux_it xit
 #endif
+#ifndef _WIN32 // libm: msvcrt has the math functions, not all of C99's
+#define unix_it it
+#else
+#define unix_it xit
+#endif
 #if defined(__linux__) && defined(__x86_64__) // objects: x86-64 ELF only so far
 #define elfs_it it
 #else
@@ -179,17 +184,11 @@ static char* tried(const char* src, int run, int want) {
 // only(want, src): exec rejects it, the executable from -e returns want
 #define only(want, src) saw(bad, want, src)
 // here(run, src): a program calling imports. exec returns run, and so does
-// the executable from -e on Linux; other forms reject it (they cannot bind
-// imports yet)
-// lost(src): exec rejects it, as an import is not in its library; on Linux
-// the executable is written, and its loader refuses to start it (127)
-#ifdef __linux__
+// the executable from -e, its imports bound by the system's loader
 #define here(run, src) saw(run, run, src)
-#define lost(src) saw(bad, 127, src)
-#else
-#define here(run, src) saw(run, bad, src)
+// lost(src): an import is not in its library: exec rejects it, and so does
+// -e, which looks the imports of a program for the host up as exec does
 #define lost(src) saw(bad, bad, src)
-#endif
 #define saw(run, want, src) \
   if((error = tried(src, run, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
@@ -943,12 +942,15 @@ spec(TAG) {
     it("binds only the imports it uses")
       here(2, "load \"zzz\";\nint f(int);\nload \"c\";\nlong labs(long n);\n"
               "int main() { long v = -2; return labs(v); }\n");
-    it("runs a link of a shared library as its load") // writing: link names sources and objects
-      saw(6, bad, "link \"c\";\nlong labs(long n);\nint main() { long v = -6; return labs(v); }\n");
-    linux_it("flushes what the native libc prints when main returns")
+    it("takes a link of a shared library as its load")
+      here(6, "link \"c\";\nlong labs(long n);\nint main() { long v = -6; return labs(v); }\n");
+    it("flushes what the native libc prints when main returns")
       prints("42 ok\n", "int printf(char* f, ...);\nint main() { int v = 42; printf(\"%d \", v); "
                         "printf(\"ok\\n\"); return 0; }\n");
-    linux_it("loads every library it imports from")
+    it("gives main its arguments through the native libc")
+      prints("1 1\n", "int printf(char* f, ...);\n"
+                       "int main(int argc, char** argv) { printf(\"%d %d\\n\", argc, argv[1] == 0); return 0; }\n");
+    unix_it("loads every library it imports from")
       prints("m\n", "load \"m\";\nint ilogb(long x);\nload \"c\";\nint puts(char* s);\n"
                      "int main() { long v = 1; ilogb(v); puts(\"m\"); return 0; }\n");
     it("rejects a link of a library the host does not have")
