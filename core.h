@@ -258,7 +258,8 @@ typedef struct {
 } cord;
 
 // what a form may ask of the front end: make fills it in, a spec mocks it.
-// dock lays data out at text + at, bss after it, text at org; gap is the
+// dock lays data out at text + at, bss after it, text at org, the import
+// slots after bss or mode.fore bytes before data; gap is the
 // alignment of data and of bss after it; lay makes room for size bytes in
 // data, or in bss (| ZERO) when zero. An object is taken into the unit being
 // joined: name is a spelling in the table of unit at, find what it means
@@ -302,6 +303,8 @@ struct mode {
   byte* hail; // main's entry for C code (emit.hail), main when it has none
   file* data; // non-zero initialized data
   u64i  zero; // zero initialized data (bss) bytes
+  u32i  fore; // the import slots fore bytes before data, for a form that wants them
+              // in the file (PE's import address table); 0: after bss
   u32i  most; // largest alignment of data or code an object asks for
   meta* rune; // char: what a string literal points to
 

@@ -10,8 +10,10 @@
 #define TRVA 0x1000 // text
 #define DRVA 0x2000 // the imports, then data
 // the import table of kernel32!ExitProcess alone: two directory entries, a
-// lookup table of two, the hint and name, the DLL's name, to 16 bytes
-#define IDAT ((2 * 20 + 2 * 8 + 14 + 13 + 15) & -16)
+// lookup table of two, the hint and name, the DLL's name, to 8 bytes; its
+// slot, then data, to 16 bytes
+#define IAT ((2 * 20 + 2 * 8 + 14 + 13 + 7) & -8)
+#define IDAT ((IAT + 8 + 15) & -16)
 
 // the directory entry i of the image, and the name its lookup entry k points to
 static pe32_desc* desc_(file* out, u32i i) {
@@ -59,27 +61,34 @@ spec("pe32") {
       u32i ldr = 0xf9400210 | (h->opt.dir[12].addr & 0xfff) >> 3 << 10;
       check(!memcmp(out->head + HEAD + 24, &ldr, 4) && bytes(out->head + HEAD + 28, "00 02 3f d6"));
     }
-    it("imports ExitProcess from kernel32.dll, its slot after data") {
+    it("imports ExitProcess from kernel32.dll, its slot after the import table") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
       check((out = packed(pe32)) && (h = (pe32_head*)out->head));
       pe32_desc* d = desc_(out, 0);
       check(h->data.addr == DRVA && h->opt.dir[1].addr == DRVA && h->opt.dir[1].size == 20);
-      check(h->opt.dir[12].addr == DRVA + IDAT && h->opt.dir[12].size == 8);
+      check(h->opt.dir[12].addr == DRVA + IAT && h->opt.dir[12].size == 8);
       check(!strcmp(dll_(out, d), "kernel32.dll") && !strcmp(look_(out, d, 0), "ExitProcess"));
-      check(!look_(out, d, 1) && d->bind == DRVA + IDAT && !d[1].look && !d[1].bind);
+      check(!look_(out, d, 1) && d->bind == DRVA + IAT && !d[1].look && !d[1].bind);
+    }
+    it("holds the lookup entry in each slot, in the file, till the loader binds it") {
+      start(cpu_ia64, CODE, 12, "", 0, 6);
+      ours.zero = 100;
+      check((out = packed(pe32)) && (h = (pe32_head*)out->head));
+      u64i* slot = (u64i*)(out->head + h->data.off + IAT);
+      check(IAT + 8 <= h->data.fsz && *slot && *slot == *(u64i*)(out->head + h->data.off + desc_(out, 0)->look - DRVA));
+      check(ours.fore == IDAT - IAT); // dock's place for the slots, before data
     }
     it("docks once, data after the imports") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
       check(packed(pe32));
       check(docked.calls == 1 && docked.at == DRVA + IDAT - TRVA && docked.org == 0);
     }
-    it("puts data, bss and the slots in .data") {
+    it("puts data and bss in .data after the slots") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
       ours.zero = 100;
       check((out = packed(pe32)) && (h = (pe32_head*)out->head));
       check(bytes(out->head + h->data.off + IDAT, "61 62 63 64"));
-      check(h->opt.dir[12].addr == DRVA + IDAT + 16 + 104); // bss to 8 bytes
-      check(h->data.vmsz == IDAT + 16 + 104 + 8 && h->opt.size == DRVA + 0x1000);
+      check(h->data.vmsz == IDAT + 16 + 100 && h->opt.size == DRVA + 0x1000);
     }
     it("aligns data as an object asks") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
@@ -106,6 +115,9 @@ spec("pe32") {
       check(!strcmp(dll_(out, d + 3), "msvcrt.dll") && d[3].bind == iat + 24);
       check(!strcmp(look_(out, d + 3, 0), "printf") && !strcmp(look_(out, d + 3, 1), "__getmainargs"));
       check(!strcmp(look_(out, d + 3, 2), "exit") && !look_(out, d + 3, 3) && !d[4].look);
+      u64i* slot = (u64i*)(out->head + h->data.off + iat - DRVA);
+      check(slot[1] == *(u64i*)(out->head + h->data.off + d[1].look - DRVA) && slot[5]);
+      check(ours.fore == docked.at + TRVA - iat); // data after the six slots
     }
     it("starts main through msvcrt with imports: argc, argv, then exit") {
       start(cpu_ia64, CODE, 12, "", 0, 6);

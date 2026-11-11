@@ -10,7 +10,8 @@ jobs:
           - { os: ubuntu-latest,    cc: gcc,   cflags: -Wall -Wextra, out: "-o " }
           - { os: ubuntu-24.04-arm, cc: gcc,   cflags: -Wall -Wextra, out: "-o " }
           - { os: macos-latest,     cc: clang, cflags: -Wall -Wextra, out: "-o " }
-          - { os: windows-latest,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, out: -Fe }
+          - { os: windows-latest,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, out: -Fe, vcarch: x64 }
+          - { os: windows-11-arm,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, out: -Fe, vcarch: arm64 }
     runs-on: ${{ matrix.os }}
     env:
       CC: ${{ matrix.cc }}
@@ -27,7 +28,7 @@ jobs:
         shell: pwsh
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" >> $env:GITHUB_ENV
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" ${{ matrix.vcarch }} >nul && set" >> $env:GITHUB_ENV
       - name: Build
         run:  $CC $CFLAGS -Os ${OUT}tic main.c
       - name: Module specs

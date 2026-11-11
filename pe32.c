@@ -6,8 +6,9 @@
 // exit(main()). With them, msvcrt starts it as a C program: __getmainargs
 // gives main its argc and argv, and msvcrt's exit flushes stdio. The image has
 // no absolute addresses and needs no relocations. The writable section holds
-// the import table, then data, bss and the import slots: each slot an entry of
-// the import address table, which the loader fills.
+// the import table, the import slots, then data and bss: the slots are the
+// import address table, in the file, each holding its lookup entry until the
+// loader binds it (Windows skips a table whose first entry is 0).
 
 static const struct { u16i arch, os; } pe32_cpu[] = {
   [cpu_ia64] = {0x8664, 6}, [cpu_arm8] = {0xaa64, 10}, // Vista, Windows 10
@@ -158,7 +159,8 @@ file* pe32_pack(mode* self) {
   }
   const u32i look = (ndesc + 1) * sizeof(pe32_desc), hint = look + (nimp + ndesc) * 8;
   const u32i step = (u32i)self->core.gap(self);
-  const u32i idat = up(hint + hints + dlls, step); // data after the import table
+  const u32i slot = up(hint + hints + dlls, 8);    // the slots after the import table
+  const u32i idat = up(slot + 8 * nimp, step);     // then data
 
   const u32i code = (u32i)(self->text->body - self->text->head);
   const u32i boot = up(code, 16); // the stub after the code
@@ -167,9 +169,10 @@ file* pe32_pack(mode* self) {
   const u32i trva = salign, drva = trva + up(text, salign); // section addresses
   const u32i toff = head, doff = toff + up(text, falign);   // and file offsets
   const u32i size = (u32i)(self->data->body - self->data->head);
-  const u32i iat  = drva + idat + up(size, step) + up(self->zero, 8); // the slots, as dock places them
-  const u32i fsz = up(idat + size, falign), vmsz = iat - drva + 8 * nimp;
+  const u32i iat  = drva + slot;
+  const u32i fsz = up(idat + size, falign), vmsz = idat + up(size, step) + (u32i)self->zero;
   const u32i all = doff + fsz;
+  self->fore = idat - slot; // dock places the slots there
   self->core.dock(self, drva + idat - trva, 0);
 
   pe32_head h = {
@@ -222,7 +225,7 @@ file* pe32_pack(mode* self) {
       copy(o + dll, imp[i].dll, imp[i].dlln);
       dll += imp[i].dlln + 1;
     }
-    *l++ = drva + at; // by name: its hint (0), then the name
+    ((u64i*)(o + slot))[i] = *l++ = drva + at; // by name: its hint (0), then the name
     copy(o + at + 2, imp[i].name, imp[i].size);
     at += (2 + imp[i].size + 1 + 1) & ~1u;
   }

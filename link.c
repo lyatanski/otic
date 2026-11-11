@@ -194,11 +194,11 @@ seat  goal(mode* self, u32i at, item* name, bool code) {
 }
 
 // where s is from the start of text, with data at at, bss at bss and the
-// import slots after it. Ask i is for a global that a member pulled since
-// defines
+// import slots after it, or fore bytes before data. Ask i is for a global that
+// a member pulled since defines
 u64i  pose(mode* self, seat s, u64i at, u64i bss) {
   return s.at? (u64i)(s.at - self->text->head): s.off & ZERO? bss + (s.off & ~ZERO):
-         s.off & SLOT? bss + ((self->zero + 7) & -8) + 8 * (s.off & ~SLOT):
+         s.off & SLOT? (self->fore? at - self->fore: bss + ((self->zero + 7) & -8)) + 8 * (s.off & ~SLOT):
          s.off & WANT? pose(self, goal(self, 0, self->asks[s.off & ~WANT], 0), at, bss): at + s.off;
 }
 
