@@ -53,6 +53,11 @@
 #else
 #define unix_it xit
 #endif
+#if defined(_WIN32) && defined(_M_ARM64) // arm64 msvcrt exports no environ, nor _environ
+#define environ_it xit
+#else
+#define environ_it it
+#endif
 #if defined(__linux__) && defined(__x86_64__) // objects: x86-64 ELF only so far
 #define elfs_it it
 #else
@@ -944,7 +949,7 @@ spec(TAG) {
       here(5, "int printf(char* f, ...);\nint main() { int v = 5; return printf(\"%d\\n\", v) + 3; }\n");
     it("compiles a dead call to an import")
       here(0, "load \"c\";\nint puts(char*);\nint main() { return 0 && puts(\"x\"); }\n");
-    it("reads an extern import")
+    environ_it("reads an extern import")
       here(1, "extern char** environ;\nint main() { return environ != 0; }\n");
     it("binds only the imports it uses")
       here(2, "load \"zzz\";\nint f(int);\nload \"c\";\nlong labs(long n);\n"
