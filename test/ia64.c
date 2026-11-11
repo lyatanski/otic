@@ -32,6 +32,41 @@ spec("ia64") {
     }
   }
 
+  context("registers of locals") {
+    it("moves between a register and acc, tmp or an argument register") {
+      check(emits("89 d8", e.rop(t, '=', ACC, 0, 0)));                 // mov eax, ebx
+      check(emits("4c 89 e1", e.rop(t, '=' | WIDE, TMP, 1, 0)));       // mov rcx, r12
+      check(emits("89 c3", e.rop(t, '=', 0, ACC, 0)));                 // mov ebx, eax
+      check(emits("49 89 c7", e.rop(t, '=' | WIDE, 4, ACC, 0)));       // mov r15, rax
+      check(emits("89 fb", e.rop(t, '=', 0, ARG - 0, 0)));             // mov ebx, edi
+      check(emits("4d 89 c4", e.rop(t, '=' | WIDE, 1, ARG - 4, 0)));   // mov r12, r8
+      check(emits("4c 89 ee", e.rop(t, '=' | WIDE, ARG - 1, 2, 0)));   // mov rsi, r13
+    }
+    it("moves a constant, sign extended on 64 bits when below 0") {
+      check(emits("bb 05 00 00 00", e.rop(t, '=', 0, NUM, 5)));                     // mov ebx, 5
+      check(emits("41 bc 05 00 00 00", e.rop(t, '=' | WIDE, 1, NUM, 5)));           // mov r12d, 5
+      check(emits("48 c7 c3 ff ff ff ff", e.rop(t, '=' | WIDE, 0, NUM, -1)));       // mov rbx, -1
+      check(emits("48 c7 c7 fe ff ff ff", e.rop(t, '=' | WIDE, ARG - 0, NUM, -2))); // mov rdi, -2
+      check(emits("b9 07 00 00 00", e.rop(t, '=', TMP, NUM, 7)));                   // mov ecx, 7
+    }
+    it("computes in a register, by a constant, acc or another register") {
+      check(emits("83 c3 01", e.rop(t, '+', 0, NUM, 1)));                       // add ebx, 1
+      check(emits("49 81 c5 e8 03 00 00", e.rop(t, '+' | WIDE, 2, NUM, 1000))); // add r13, 1000
+      check(emits("41 29 dc", e.rop(t, '-', 1, 0, 0)));                         // sub r12d, ebx
+      check(emits("81 e3 ff 00 00 00", e.rop(t, '&', 0, NUM, 255)));            // and ebx, 255
+      check(emits("49 31 c6", e.rop(t, '^' | WIDE, 3, ACC, 0)));                // xor r14, rax
+    }
+    it("computes in acc by a register") {
+      check(emits("44 01 e0", e.rop(t, '+', ACC, 1, 0)));                       // add eax, r12d
+      check(emits("44 09 f0", e.rop(t, '|', ACC, 3, 0)));                       // or eax, r14d
+    }
+    it("compares a register into the flags") {
+      check(emits("44 39 e3", e.rop(t, '<' | TEST, 0, 1, 0)));                            // cmp ebx, r12d
+      check(emits("48 83 fb 00", e.rop(t, tokd('!', '=') | TEST | WIDE, 0, NUM, 0)));     // cmp rbx, 0
+      check(emits("41 81 ff 00 09 3d 00", e.rop(t, tokd('<', '=') | TEST, 4, NUM, 4000000))); // cmp r15d, 4000000
+    }
+  }
+
   context("stack") {
     it("pushes acc") {
       check(emits("50", e.push(t)));                    // push rax
@@ -143,6 +178,11 @@ spec("ia64") {
       check(emits("57 56 48 89 cf 48 89 d6 4c 89 c2 4c 89 c9 4c 8b 44 24 38 4c 8b 4c 24 40 "
                   "e8 03 00 00 00 5e 5f c3", e.hail(t, os_win)));
       check(emits("", e.hail(t, os_linux)));
+    }
+    it("saves a register of a local in a slot, and brings it back") {
+      check(emits("48 89 5d f8", e.stow(t, 0, -8, 0)));            // mov [rbp-8], rbx
+      check(emits("4c 8b 65 f0", e.stow(t, 1, -16, 1)));           // mov r12, [rbp-16]
+      check(emits("4c 89 7d d8", e.stow(t, 4, -40, 0)));           // mov [rbp-40], r15
     }
     it("starts a C library through the import slot in acc") {
       // mov esi, [rsp+8]; lea rdx, [rsp+16]; lea rdi, [rip-16]; xor ecx, ecx;

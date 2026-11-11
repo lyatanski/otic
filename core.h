@@ -38,6 +38,7 @@ struct item {
   void* data;
   item* next; // the same spelling in the table of a later unit (mode.names)
   u32i  unit; // the unit whose table it is in
+  u32i  pick; // in the function being compiled: the register its locals get, plus 1
 };
 
 u64i  clue(const char* mark, u64i size);
@@ -98,6 +99,9 @@ typedef enum { os_linux, os_mac, os_win } osys;
 #define WIDE (1 << 24) // calc op flag: on 64 bits, for pointers and long
 #define TEST (1 << 25) // calc op flag: a comparison sets the flags only, for flag and cond
 #define HELD 4         // scratch registers: kept left operands past these are on the stack
+// operands of rop that are no register of a local: acc, tmp, the constant n,
+// argument register i (ARG - i)
+enum { ACC = -1, TMP = -2, NUM = -3, ARG = -4 };
 // typed slots: a variadic pointer would pass the arguments on the stack on
 // Apple arm64, where the encoders read them from registers
 typedef struct {
@@ -147,7 +151,13 @@ typedef struct {
   // an entry for C code of os to call the function that follows it: nothing
   // when otic's way of passing arguments is that of os
   void (*hail)(file*, osys os);
+  // to op= by, each a register of a local or an operand above, on 64 bits
+  // when WIDE: op is = (a move, a constant sign extended), + - & | ^, or a
+  // comparison, which sets the flags only
+  void (*rop)(file*, u32i op, s32i to, s32i by, s32i n);
+  void (*stow)(file*, u32i r, s32i slot, bool back); // slot = register r of a local, or back
   chip  cpu;  // target, each form maps it to its own machine id
+  u32i  regs; // registers for locals, kept by the functions called
 } emit;
 
 // core
@@ -189,7 +199,7 @@ struct meta {
   byte* hail; // a function's entry for C code (emit.hail), NULL when it is addr
   meta* lib;  // the library of an import
   u32i  size; // bytes of a type, parameters of a call
-  s32i  slot; // frame offset, data offset, offset of a member
+  s32i  slot; // frame offset (a local: below 0, else its register), data offset, offset of a member
   what  kind;
   bool  own;  // static: the name is hidden outside its source file
   bool  weak; // defined by an object as weak: a strong definition replaces it
@@ -324,6 +334,9 @@ struct mode {
   s32i  slot;      // frame bytes in use
   s32i  deep;      // frame bytes the function needs
   s32i  lits;      // frame bytes the compound literals of the block keep
+  u32i  regn;      // registers the function keeps locals in, saved in its first slots
+  u32i  busy;      // bit r: register r holds a local in scope
+  item* pick[16];  // the names of the locals they go to
   meta* func;      // the function being compiled
   byte* cont;      // continue target, NULL outside loops
   u32i  ends, endc;

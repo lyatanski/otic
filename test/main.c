@@ -543,6 +543,112 @@ spec(TAG) {
                  "  return r * 4 + a;\n}\n");
   }
 
+  context("registers") {
+    it("keeps the variables of nested loops in registers")
+      expect(25, "char f[100];\nint main() {\nint i = 2, n = 0;\nwhile(i < 100) { f[i] = 1; i += 1; }\ni = 2;\n"
+                 "while(i < 100) {\n"
+                 "when(f[i]) { int j = i + i; while(j < 100) { f[j] = 0; j += i; } n += 1; }\ni += 1;\n}\n"
+                 "return n;\n}\n");
+    it("saves the registers a function uses for its caller")
+      expect(35, "int leaf(int a, int b) { int i = 0, s = 0; while(i < a) { s += b; i += 1; } return s; }\n"
+                 "int main() { int i = 0, t = 0; while(i < 5) { t += leaf(i, 3); i += 1; } return t + i; }\n");
+    it("recurses with its parameters in registers")
+      expect(16, "int ack(int m, int n) {\nwhen(m == 0) return n + 1;\nwhen(n == 0) return ack(m - 1, 1);\n"
+                 "return ack(m - 1, ack(m, n - 1));\n}\nint main() { return ack(2, 3) + ack(1, 5); }\n");
+    it("has more locals in use than registers")
+      expect(126, "int main() {\n"
+                  "int a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8, i = 0, j = 9, k = 10, l = 11;\n"
+                  "while(i < 10) { a += b; b += c; c += d; d += e; e += f; f += g; g += h; h += j; j += k; k += l; l += a; i += 1; }\n"
+                  "return (a ^ b ^ c ^ d ^ e ^ f ^ g ^ h ^ j ^ k ^ l) & 127;\n}\n");
+    it("leaves a local whose address is taken in the frame")
+      expect(95, "void bump(int* p) { *p += 1; }\nint main() {\nint x = 0, y = 0, z = 0, i = 0;\nint* q = &y;\n"
+                 "while(i < 10) { bump(&x); *q += 2; bump(&(z)); x += 1; z += i; i += 1; }\nwhen(i) &i;\n"
+                 "return x + y + z + (&x == q);\n}\n");
+    it("shadows a local in a register")
+      expect(54, "int main() {\nint x = 1, s = 0, i = 0;\nwhile(i < 4) {\nint x = i * 2;\n"
+                 "{ int x = 100; x += i; s += x; }\n{ char x = 250; x += 10; s += x; }\ns += x;\ni += 1;\n}\n"
+                 "x += 1; x += 1; x += 1;\nreturn (s + x) & 127;\n}\n");
+    it("gives the locals of one name in sibling scopes a register, whatever their types")
+      expect(41, "struct vec { int x; int y; };\nint main() {\nint s = 0;\n"
+                 "{ int x = 1; x += 2; x += 3; s += x; }\n"
+                 "{ vec x = {4, 5}; x.x += 1; x.y += x.x; s += x.y; vec* p = &x; s += p->x; }\n"
+                 "{ int x[3] = {1, 2, 3}; x[0] += x[1]; x[2] += x[0]; s += x[2]; }\n"
+                 "{ long x = 10; x += s; x += 1; s = x; }\n{ int* x = &s; *x += 1; *x += 1; *x += 1; }\n"
+                 "return s;\n}\n");
+    it("wraps narrow locals as their slots would")
+      expect(84, "int f(char c, bool b, nu16 w) { c += 200; c += 100; w += 65535; w += 3; return c + b + b + w + c; }\n"
+                 "int main() {\nchar c = 0; nu16 w = 65530; int i = 0; byte z = 255;\n"
+                 "while(i < 300) { c += 1; w += 1; z -= 1; i += 1; }\nc = c * 3;\n"
+                 "return (c + w + z + f(250, 1, 7)) & 127;\n}\n");
+    it("mixes int and long locals")
+      expect(46, "long g(long a, int b) { a += b; a -= 1; a += b; return a; }\nint main() {\n"
+                 "long x = 5; int n = -3; long y = -1; int t = 0;\nx += n; x += n; x += n;\n"
+                 "y += x; y = y * 4; y += 0 - 7;\nt = y; t += x; t += y;\nlong z = n; z += t; z += z;\n"
+                 "int big = 2000000000; long w = big; w += big; w += big;\nwhen(w > 5000000000) t += 1;\n"
+                 "when(x < n) t += 100;\nwhen(n < x) t += 50;\nwhen(y < -1) t += 3;\n"
+                 "return (t + g(z, n) + (w >> 32)) & 127;\n}\n");
+    it("walks arrays by pointers in registers")
+      expect(69, "int a[8];\n"
+                 "int sum(int* p, int n) { int s = 0; int* e = p + n; while(p < e) { s += *p; p += 1; } return s + (e - p); }\n"
+                 "int main() {\nint i = 0; int* p = a; long* q; long l[4];\n"
+                 "while(i < 8) { a[i] = i * i; p[i] += 1; i += 1; }\nq = l; i = 0;\n"
+                 "while(i < 4) { *q = 0 - i; q += 1; i += 1; }\nq -= 2;\nchar* s = \"hello\"; int n = 0;\n"
+                 "while(*s) { n += *s; s += 1; }\n"
+                 "return (sum(a, 8) + sum(p + 2, 3) + *q + q[1] + n + (q - l)) & 127;\n}\n");
+    it("computes each compound assignment on int and long")
+      expect(58, "int main() {\nint a = 1000, b = 7, i = 0; long c = 123456789; long d = 1000;\n"
+                 "while(i < 3) {\n"
+                 "a += b; a -= 3; a *= b; a /= 5; a %= 1000; a <<= 2; a >>= 1; a |= 16; a &= 4095; a ^= b;\n"
+                 "c += d; c -= a; c *= 3; c /= d; c %= 777; c <<= 5; c >>= 2; c |= 1; c &= 65535; c ^= d;\n"
+                 "b += 1; i += 1;\n}\nreturn (a + c + a * b - c / b + (a % b) + (c << b) + (a >> 2)) & 127;\n"
+                 "}\n");
+    it("uses the value of an assignment to a register")
+      expect(41, "int main() {\nchar* s = \"a,b;c\"; int c, n = 0, a, b, k;\n"
+                 "while((c = *s) != 0) { when(c == ',' || c == ';') n += 1; s += 1; }\na = b = k = 5;\n"
+                 "a += (b += 2) + (k = b);\nreturn n + a + b + k + (a = 3) + a;\n}\n");
+    it("compares registers, constants and slots of each width")
+      expect(50, "int main() {\n"
+                 "int a = 5, b = -3, r = 0, i = 0; long c = -4; long d = 6; char e = 200; nu16 f = 65535;\n"
+                 "while(i < 2) {\n"
+                 "r += (a < b) + (a > b) * 2 + (a <= 5) * 4 + (b >= -3) * 8 + (a == b) * 16 + (a != b) * 32;\n"
+                 "r += (c < d) + (d < c) * 2 + (c < b) * 4 + (b < c) * 8 + (c == -4) * 16 + (a < d) * 32;\n"
+                 "r += (e > 100) + (f > 1000) * 2 + (e == 200) * 4 + (5 < a) * 8 + (5 == a) * 16 + (-4 < b) * 32;\n"
+                 "r += !a + !i + (a && b) + (i || 0) + -a + ~b;\ni += 1;\n}\nreturn r & 127;\n}\n");
+    it("passes registers and constants as arguments")
+      expect(87, "int f6(int a, long b, int c, long d, int e, int g) { return a + b * 2 + c * 3 + d * 4 + e * 5 + g * 6; }\n"
+                 "int f2(int a, int b) { return a * 10 + b; }\nlong neg(long a) { return a; }\nint main() {\n"
+                 "int x = 3, y = 4, i = 0, s = 0; long l = 5;\nwhile(i < 3) {\n"
+                 "s += f6(x, l, 7, -1, y + 1, f2(i, y));\n"
+                 "s += f2(x + 1, 2) + f2(1, x + 1) + f2(x, y) + f2(f2(1, i), 3) + f2(y = y + 1, y);\n"
+                 "when(neg(-5) < 0) s += 1;\nwhen(neg(x - 10) < 0) s += 1;\ns += later(x, -2, i);\n"
+                 "i += 1; x += 1; l += x;\n}\nreturn s & 127;\n}\n"
+                 "int later(int a, long b, int c) { return a + b + c; }\n");
+    it("stores registers and constants through pointers of each width")
+      expect(58, "char cs[8]; int is[8]; long ls[8];\nstruct pt { int x; long y; char z; };\nint main() {\n"
+                 "int i = 0, v = 300; long w = -2; long big = 4294967301; pt p; pt* q = &p; int t = 7; long u = 9;\n"
+                 "t += 1; u += 1; t -= 1; u -= 1;\n"
+                 "while(i < 8) { cs[i] = v; is[i] = big; ls[i] = -1; i += 1; v += 1; }\n"
+                 "cs[1] = 65; is[1] = w; ls[1] = w; ls[2] = 7; ls[3] = t; is[3] = u; cs[3] = t;\n"
+                 "q->x = v; q->y = w; q->z = v; p.x += 1;\nint r = (cs[2] = v) + (is[4] = 5);\n"
+                 "i = 0; long s = 0;\nwhile(i < 8) { s += cs[i] + is[i] + ls[i]; i += 1; }\n"
+                 "return (s + p.x + p.y + p.z + r) & 127;\n}\n");
+    it("breaks and skips with the loop variables in registers")
+      expect(102, "int main() {\nint i = 0, s = 0, j;\nwhile(i < 20) {\ni += 1;\nwhen(i % 3 == 0) skip;\n"
+                  "when(i > 15) break;\nj = 0;\n"
+                  "while(1) { j += 1; when(j > i) break; when(j & 1) skip; s += j; }\n}\n"
+                  "int n = 5; long m = 3; char* p = \"x\";\nwhile(n) { s += 1; n -= 1; }\n"
+                  "while(m) { s += 2; m -= 1; }\nwhen(p) s += 1;\np = 0;\nwhen(p) s += 100; else s += 2;\n"
+                  "when(!n) s += 4;\nwhen(n || m) s += 100;\nwhen(!n && !m) s += 8;\nreturn s & 127;\n}\n");
+    it("keeps its registers across a call into C")
+      here(35, "load \"c\";\nlong labs(long n);\nint main() {\nint i = 0; long s = 0;\n"
+               "while(i < 10) { s += labs(i - 5); i += 1; }\nreturn s + i;\n}\n");
+    it("keeps the registers of C code that calls back")
+      here(120, "load \"c\";\nvoid qsort(void* b, long n, long s, int (*)(void*, void*));\n"
+                "int cmp(void* a, void* b) { int* x = a; int* y = b; int d = *x; d -= *y; d += 0; return d; }\n"
+                "int main() {\nint a[6] = {4, 1, 6, 3, 2, 5}; int i = 0, s = 0;\nqsort(a, 6, 4, cmp);\n"
+                "while(i < 6) { s = s * 2 + a[i]; i += 1; }\nreturn s;\n}\n");
+  }
+
   context("calls") {
     it("passes parameters")
       expect(7, "int sub(int a, int b) { return a - b; }\n"

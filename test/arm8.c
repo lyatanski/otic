@@ -13,6 +13,45 @@ static file* far = (file*)farb;
 static u32i  at32(const byte* p) { u32i w; memcpy(&w, p, 4); return w; }
 
 spec("arm8") {
+  context("registers of locals") {
+    it("moves between a register and acc, tmp or an argument register") {
+      check(emits("e0 03 13 2a", e.rop(t, '=', ACC, 0, 0)));              // mov w0, w19
+      check(emits("e1 03 14 aa", e.rop(t, '=' | WIDE, TMP, 1, 0)));       // mov x1, x20
+      check(emits("f3 03 00 2a", e.rop(t, '=', 0, ACC, 0)));              // mov w19, w0
+      check(emits("fc 03 03 aa", e.rop(t, '=' | WIDE, 9, ARG - 3, 0)));   // mov x28, x3
+      check(emits("e1 03 15 aa", e.rop(t, '=' | WIDE, ARG - 1, 2, 0)));   // mov x1, x21
+    }
+    it("moves a constant, sign extended on 64 bits when below 0") {
+      check(emits("b3 00 80 52", e.rop(t, '=', 0, NUM, 5)));              // mov w19, #5
+      // mov w20, #0x2345; movk w20, #1, lsl 16
+      check(emits("b4 68 84 52 34 00 a0 72", e.rop(t, '=' | WIDE, 1, NUM, 0x12345)));
+      // mov w19, #0xffff; movk w19, #0xffff, lsl 16; sxtw x19, w19
+      check(emits("f3 ff 9f 52 f3 ff bf 72 73 7e 40 93", e.rop(t, '=' | WIDE, 0, NUM, -1)));
+      // mov w2, #0xfffe; movk w2, #0xffff, lsl 16; sxtw x2, w2
+      check(emits("c2 ff 9f 52 e2 ff bf 72 42 7c 40 93", e.rop(t, '=' | WIDE, ARG - 2, NUM, -2)));
+    }
+    it("adds, subtracts and compares a constant below 4K as it is") {
+      check(emits("73 06 00 11", e.rop(t, '+', 0, NUM, 1)));                               // add w19, w19, #1
+      check(emits("b5 fe 3f d1", e.rop(t, '-' | WIDE, 2, NUM, 4095)));                     // sub x21, x21, #4095
+      check(emits("7f 02 00 f1", e.rop(t, tokd('!', '=') | TEST | WIDE, 0, NUM, 0)));      // cmp x19, #0
+    }
+    it("takes another constant through x16") {
+      check(emits("10 00 82 52 b5 02 10 8b", e.rop(t, '+' | WIDE, 2, NUM, 4096)));        // mov w16, #4096; add x21, x21, x16
+      // mov w16, #0xffff; movk w16, #0xffff, lsl 16; add w22, w22, w16
+      check(emits("f0 ff 9f 52 f0 ff bf 72 d6 02 10 0b", e.rop(t, '+', 3, NUM, -1)));
+      check(emits("f0 1f 80 52 73 02 10 0a", e.rop(t, '&', 0, NUM, 255)));                // mov w16, #255; and w19, w19, w16
+      // mov w16, #0x900; movk w16, #0x3d, lsl 16; cmp w23, w16
+      check(emits("10 20 81 52 b0 07 a0 72 ff 02 10 6b", e.rop(t, tokd('<', '=') | TEST, 4, NUM, 4000000)));
+    }
+    it("computes and compares between registers and acc") {
+      check(emits("94 02 13 4b", e.rop(t, '-', 1, 0, 0)));                    // sub w20, w20, w19
+      check(emits("00 00 16 2a", e.rop(t, '|', ACC, 3, 0)));                  // orr w0, w0, w22
+      check(emits("d6 02 00 ca", e.rop(t, '^' | WIDE, 3, ACC, 0)));           // eor x22, x22, x0
+      check(emits("00 00 14 0b", e.rop(t, '+', ACC, 1, 0)));                  // add w0, w0, w20
+      check(emits("7f 02 14 6b", e.rop(t, '<' | TEST, 0, 1, 0)));             // cmp w19, w20
+    }
+  }
+
   context("values") {
     it("moves an immediate, in halves past 16 bits") {
       check(emits("40 05 80 52", e.move(t, 42)));                  // mov w0, #42
@@ -172,6 +211,11 @@ spec("arm8") {
     }
     it("stores a parameter register in its slot") {
       check(emits("a1 03 1f f8", e.parm(t, 1, -16)));  // stur x1, [x29, #-16]
+    }
+    it("saves a register of a local in a slot, and brings it back") {
+      check(emits("b3 83 1f f8", e.stow(t, 0, -8, 0)));         // stur x19, [x29, #-8]
+      check(emits("b4 03 5f f8", e.stow(t, 1, -16, 1)));        // ldur x20, [x29, #-16]
+      check(emits("bc 03 1b f8", e.stow(t, 9, -80, 0)));        // stur x28, [x29, #-80]
     }
     it("pops an argument into its register") {
       check(emits("e2 07 41 f8", e.args(t, 2)));       // ldr x2, [sp], #16

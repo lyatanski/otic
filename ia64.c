@@ -386,6 +386,40 @@ void ia64_pass(file* text, u32i i) {
   ib(text, rex(.w=1, .b=reg > 7)); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=reg & 7));
 }
 
+// the registers of locals: kept by a function called, in SysV and Win64
+static const byte ia64_kept[] = { 3, 12, 13, 14, 15 }; // rbx r12 r13 r14 r15
+
+// the machine register of an operand of rop
+static byte ia64_reg(s32i x) {
+  return x >= 0? ia64_kept[x]: x == ACC? 0: x == TMP? 1: ia64_regs[ARG - x];
+}
+
+// to op= by: mov, the group add or and sub xor cmp by its /digit, or their
+// forms with a constant. A constant not below 0 is moved on 32 bits, which
+// clears the rest
+void ia64_rop(file* text, u32i op, s32i to, s32i by, s32i n) {
+  u32i o = op & ~(WIDE | TEST);
+  byte d = ia64_reg(to), s = by == NUM? 0: ia64_reg(by);
+  byte k = o == '='? 8: o == '+'? add: o == '|'? or: o == '&'? and: o == '-'? sub: o == '^'? xor: cmp;
+  bool w = op & WIDE && !(by == NUM && k == 8 && n >= 0), i8 = (int8_t)n == n;
+  if(w || d > 7 || s > 7) ib(text, rex(.w=w, .r=s > 7, .b=d > 7));
+  if(by != NUM) {
+    ib(text, k == 8? 0x89: k << 3 | 1);           // op r/m, reg
+    ib(text, modrm(.mod=3, .reg=s & 7, .rm=d & 7));
+  }
+  else if(k == 8 && !w) { ib(text, 0xb8 + (d & 7)); id(text, n); } // mov reg, imm32
+  else {
+    ib(text, k == 8? 0xc7: i8? 0x83: 0x81);       // mov r/m, imm32 or op r/m, imm8 or imm32
+    ib(text, modrm(.mod=3, .reg=k & 7, .rm=d & 7));
+    if(k != 8 && i8) ib(text, n);
+    else             id(text, n);
+  }
+}
+
+void ia64_stow(file* text, u32i r, s32i slot, bool back) {
+  ia64_disp(text, !back, 8, ia64_kept[r], 5, slot);
+}
+
 void ia64_open(file* text) {
   ia64_push(text, rbp);
   ib(text, 0x48); iw(text, 0xe589);           // mov rbp, rsp
@@ -521,6 +555,9 @@ const emit ia64 = {
   .take = ia64_take,
   .pass = ia64_pass,
   .hail = ia64_hail,
+  .rop  = ia64_rop,
+  .stow = ia64_stow,
   .cpu  = cpu_ia64,
+  .regs = sizeof ia64_kept,
 };
 

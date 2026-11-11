@@ -28,7 +28,8 @@ static u64i  laid; // data bytes when shown: make frees data after show
 #define OPS(X) X(move) X(load) X(stor) X(peek) X(addr) X(glob) X(site) X(read) \
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
   X(loop) X(open) X(size) X(parm) X(args) X(dial) X(trap) X(done) X(boot)       \
-  X(link) X(ffi) X(crt) X(flag) X(cond) X(keep) X(lift) X(take) X(pass)
+  X(link) X(ffi) X(crt) X(flag) X(cond) X(keep) X(lift) X(take) X(pass)       \
+  X(rop) X(stow)
 #define TAG(x) op_##x,
 #define NAME(x) #x,
 enum { OPS(TAG) };
@@ -109,13 +110,30 @@ static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, " %u",
 static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
 static void mock_hail(file* t, osys os)                { (void)t; (void)os; }
 
+// an operand of rop: r2 a register of a local, a2 an argument register
+static char* mock_reg(s32i x, s32i n, char* o) {
+  if(x >= 0) sprintf(o, "r%d", x);
+  else if(x == NUM) sprintf(o, "%d", n);
+  else if(x <= ARG) sprintf(o, "a%d", ARG - x);
+  else sprintf(o, x == ACC? "acc": "tmp");
+  return o;
+}
+static void mock_rop(file* t, u32i op, s32i to, s32i by, s32i n) {
+  char o[4], a[16], b[16];
+  char* w = op & WIDE? op & TEST? ".w.t": ".w": op & TEST? ".t": "";
+  note(t, op_rop, "%s %s %s %s", w, mock_reg(to, 0, a), mock_op(op, o), mock_reg(by, n, b));
+}
+static void mock_stow(file* t, u32i r, s32i slot, bool back) { note(t, op_stow, back? " r%u < %d": " r%u > %d", r, slot); }
+
+static u32i regs; // registers for locals the next make_ has, reset after each
+
 static const emit mock = {
   mock_move, mock_load, mock_stor, mock_peek, mock_addr, mock_glob, mock_site,
   mock_read, mock_fill, mock_push, mock_pull, mock_swap, mock_cast, mock_calc,
   mock_when, mock_jump, mock_back, mock_loop, mock_open, mock_size, mock_parm,
   mock_args, mock_dial, mock_trap, mock_done, mock_boot, mock_link, mock_ffi,
   mock_crt, mock_flag, mock_cond, mock_keep, mock_lift, mock_tmpk, mock_pass,
-  mock_hail, cpu_ia64,
+  mock_hail, mock_rop, mock_stow, cpu_ia64, 0,
 };
 
 static file* mock_pack(mode* m)          { packs++; (void)m; return NULL; }
@@ -169,7 +187,9 @@ static int  make_(char* src) {
     .hold = mock_hold, .drop = mock_drop, .heap = mock_heap, .show = mock_show, .scan = mock_scan,
     .arch = mock, .form = {mock_pack, mock_take, os_linux}, .libs = libs,
   };
+  self.arch.regs = regs;
   libs = lb_none;
+  regs = 0;
   source("main.c", src);
   nest(&self, (unit){.kind = un_root});
   if(setjmp(bail)) { filen = 0; return 0; }
@@ -189,6 +209,13 @@ static bool is(const char* all) {
   if(!strcmp(trace, all)) return 1;
   printf("    want %s\n    got  %s\n", all, trace);
   return 0;
+}
+
+// the calls of op whose code is still in text: the trace keeps the dropped ones
+static u32i left(byte op) {
+  u32i n = 0;
+  for(const byte* p = self.text->head; p < self.text->body; p++) n += *p == op;
+  return n;
 }
 
 // src compiles, else why not is shown
@@ -257,12 +284,20 @@ spec("core") {
       check(has("open, parm 0 -8, parm 1 -16, load -8:4, done, move 0, done, size open 16"));
     }
     it("calls one defined before, linking it at once") {
-      check(compiles("int f(int a) { return a; } int main() { return f(3); }"));
-      check(has("move 3, pass 0, dial, link dial open"));
+      check(compiles("int f(int a) { return a; } int main() { int x = 3; return f(x); }"));
+      check(has("load -8:4, pass 0, dial, link dial open"));
     }
     it("passes the last argument from acc, pops the others") {
+      check(compiles("int f(int a, int b) { return a; } int main() { int x = 1; return f(x + 1, x + 2); }"));
+      check(has("calc + 1, push, load -8:4, calc + 2, pass 1, args 0, dial"));
+    }
+    it("moves a constant argument to its register once the others are computed") {
       check(compiles("int f(int a, int b) { return a; } int main() { return f(1, 2); }"));
-      check(has("move 1, push, move 2, pass 1, args 0, dial"));
+      check(has("open, rop.w a1 = 2, rop.w a0 = 1, dial") && calls[op_push] == 0);
+    }
+    it("leaves the argument before constants in acc, its push dropped") {
+      check(compiles("int f(int a, int b) { return a; } int main() { int x = 1; return f(x + 1, 2); }"));
+      check(has("calc + 1, push, pass 0, rop.w a1 = 2, dial") && left(op_push) == 0);
     }
     it("sign extends an int argument only for a long parameter") {
       check(compiles("int f(int a, long b) { return a; } int main() { int n = -1; return f(n, n); }"));
@@ -272,11 +307,11 @@ spec("core") {
       check(compiles("int main() { int n = -1; return f(n); } int f(int a) { return a; }"));
       check(has("load -8:4, cast long, pass 0"));
     }
-    it("leaves a constant not below 0 as its move zero extends it") {
+    it("leaves the sign of a constant argument to its move") {
       check(compiles("int f(long a) { return 0; } int main() { long x = 5; x = x + 1; return f(2); }"));
       check(calls[op_cast] == 0);
       check(compiles("int f(long a) { return 0; } int main() { return f(-2); }"));
-      check(has("move -2, cast long, pass 0"));
+      check(has("rop.w a0 = -2, dial") && calls[op_cast] == 0);
     }
     it("calls one defined later, linking it when the pass ends") {
       check(compiles("int main() { return f(); } int f() { return 1; }"));
@@ -390,6 +425,132 @@ spec("core") {
     }
     it("fails on break outside a loop") {
       check(rejects("int main() { break; }", "break outside a loop"));
+    }
+  }
+
+  context("registers") {
+    it("keeps a local used 3 times in a register, saved in the first slot") {
+      regs = 2;
+      check(compiles("int main() { int a = 1; a += 2; return a; }"));
+      check(is("boot, open, stow r0 > -8, rop r0 = 1, rop r0 + 2, rop acc = r0, stow r0 < -8, done, "
+               "move 0, stow r0 < -8, done, size open 16, link boot open"));
+    }
+    it("leaves a local used less in the frame") {
+      regs = 2;
+      check(compiles("int main() { int a = 1; return a; }"));
+      check(has("move 1, stor -8:4, load -8:4, done") && calls[op_stow] == 0);
+    }
+    it("has none on a target without registers for locals") {
+      check(compiles("int main() { int a = 1; a += 2; a += 3; return a; }"));
+      check(calls[op_stow] == 0 && calls[op_rop] == 0);
+    }
+    it("moves a parameter in from its argument register, on its width") {
+      regs = 2;
+      check(compiles("int f(int a, long b, int c) { when(a < b) return a + b; return a + c; } int main() { return 0; }"));
+      check(has("open, stow r0 > -8, stow r1 > -16, rop r0 = a0, rop.w r1 = a1, parm 2 -24,"));
+    }
+    it("restores the registers before each return") {
+      regs = 2;
+      check(compiles("int f(int a) { when(a < 2) return a; return a + 1; } int main() { return 0; }"));
+      check(calls[op_stow] == 4 && has("rop acc = r0, stow r0 < -8, done, back cond"));
+    }
+    it("keeps a local whose address is taken in the frame") {
+      regs = 2;
+      check(compiles("int main() { int a = 1; int* p = &a; a += 2; a += 3; return a; }"));
+      check(has("addr -8") && calls[op_rop] == 0);
+      regs = 2;
+      check(compiles("int main() { int a = 1; int* p = &(a); a += 2; a += 3; return a; }"));
+      check(has("addr -8") && calls[op_rop] == 0);
+      regs = 2;
+      check(compiles("int main() { int a = 1; a += 2; a += 3; return &a == 0; }"));
+      check(has("addr -8") && calls[op_rop] == 0);
+    }
+    it("tells a & between operands from an address") {
+      regs = 2;
+      check(compiles("int main() { int a = 1, b = 3; a += 2; b += a & b; return (a) & b; }"));
+      check(has("rop acc = r0, rop acc & r1, rop r1 + acc, rop acc = r0, rop acc & r1, stow") && calls[op_addr] == 0);
+    }
+    it("leaves arrays and structs in the frame") {
+      regs = 2;
+      check(compiles("struct v { int x; }; int main() { int a[2]; v b; a[0] = 1; a[1] = a[0]; b.x = a[1]; b.x += 1; return b.x; }"));
+      check(calls[op_stow] == 0);
+    }
+    it("gives the registers to the names used most, a use in a loop counting 8") {
+      regs = 1;
+      check(compiles("int main() { int a = 1, b = 2, i = 0; a += 1; a += 1; a += 1;\n"
+                     "  while(i < 3) { b += 1; i += 1; } return a + b; }"));
+      check(has("rop r0 = 0,") && has("rop.t r0 < 3, cond !<,") && has("rop r0 + 1, loop rop"));
+      check(calls[op_stow] == 3);
+    }
+    it("leaves a local in the frame while one of its name has the register") {
+      regs = 2;
+      check(compiles("int main() { int a = 1; a += 1; { int a = 5; a += 1; a += 1; } return a; }"));
+      check(has("rop r0 + 1, move 5, stor -16:4,") && has("stor -16:4, rop acc = r0"));
+    }
+    it("shares a register between locals of one name in sibling scopes") {
+      regs = 1;
+      check(compiles("int main() { { int a = 1; a += 1; a += 1; } { long a = 5; a += 1; a += 1; } return 0; }"));
+      check(has("rop r0 = 1, rop r0 + 1, rop r0 + 1, rop.w r0 = 5, rop.w r0 + 1, rop.w r0 + 1"));
+    }
+    it("compares and computes between registers where they are") {
+      regs = 2;
+      check(compiles("int main() { int a = 1, b = 2; while(a < b) a += b; return a == 2; }"));
+      check(has("rop.t r0 < r1, cond !<, rop r0 + r1, loop rop, back cond, rop.t r0 == 2, flag =="));
+    }
+    it("tests a register against 0 in a condition") {
+      regs = 2;
+      check(compiles("int main() { int n = 3; while(n) n -= 1; return n; }"));
+      check(has("rop.t r0 != 0, cond !!=, rop r0 - 1, loop rop") && calls[op_when] == 0);
+    }
+    it("goes through acc and tmp for the ops a register does not take") {
+      regs = 2;
+      check(compiles("int main() { int a = 6, b = 2; a = a * b; a = a << b; return a; }"));
+      check(has("rop acc = r0, rop tmp = r1, calc *, rop r0 = acc, rop acc = r0, rop tmp = r1, calc <<, rop r0 = acc"));
+    }
+    it("masks a narrow local as its slot would hold it") {
+      regs = 2;
+      check(compiles("int main() { char c = 1; c += 2; return c; }"));
+      check(has("rop r0 = 1, rop r0 & 255, rop r0 + 2, rop r0 & 255, rop acc = r0"));
+    }
+    it("sign extends an int into a long register, and moves a pointer by elements") {
+      regs = 2;
+      check(compiles("int main() { long a = 1; int b = 2; a += b; a += b; b += a; return b; }"));
+      check(has("rop acc = r0, cast long, rop.w r1 + acc,") && has("rop r0 + r1, rop acc = r0"));
+      regs = 2;
+      check(compiles("int main() { int* q = 0; q += 2; q -= 1; return q == 0; }"));
+      check(has("rop.w r0 = 0, rop.w r0 + 8, rop.w r0 - 4, rop.w.t r0 == 0"));
+    }
+    it("moves an argument from its register to the argument register") {
+      regs = 2;
+      check(compiles("int f(int a, int b) { return a; } int main() { int x = 1; x += 1; x += 1; return f(x, 7); }"));
+      check(has("rop.w a1 = 7, rop a0 = r0, dial") && calls[op_push] == 0 && calls[op_pass] == 0);
+    }
+    it("stores a register or a constant through a pointer without a push") {
+      regs = 2;
+      check(compiles("int main() { int a[4]; int i = 0; while(i < 4) { a[i] = i; i += 1; } return a[2]; }"));
+      check(has("calc.w +, push, rop tmp = r0, fill 4, rop r0 + 1") && left(op_push) == 0);
+      check(compiles("int g; int main() { int* p = &g; *p = 5; return 0; }"));
+      check(has("load -8:8, push, rop tmp = 5, fill 4, move 0") && left(op_push) == 0);
+    }
+    it("takes a & after a condition or a keyword as an address") {
+      regs = 2;
+      check(compiles("int main() { int a = 1; a += 2; a += 3; when(a) &a; return sizeof &a; }"));
+      check(calls[op_rop] == 0);
+      regs = 2;
+      check(compiles("int main() { int a = 1; a += 2; a += 3; when(a) a += 1; else &a; return &a != 0; }"));
+      check(calls[op_rop] == 0);
+    }
+    it("gives up past 64 names, the same code as without registers") {
+      char src[4096] = "int main() { int s = 0;";
+      for(int i = 0; i < 70; i++) sprintf(src + strlen(src), " int v%d = %d; s += v%d;", i, i, i);
+      strcat(src, " s += 1; s += 2; return s; }");
+      regs = 2;
+      check(compiles(src));
+      check(calls[op_stow] == 0 && calls[op_rop] == 0);
+    }
+    it("puts the lexer back for the pass, the lines too") {
+      regs = 2;
+      check(rejects("int main() {\n  int a = 1;\n  a += 2;\n  a += b;\n  return a;\n}", "main.c:4: no variable 'b'"));
     }
   }
 

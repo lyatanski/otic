@@ -369,6 +369,36 @@ void arm8_pass(file* data, u32i i) {
   if(i) arm8_put(data, X | I3510_ORR | r0 << 16 | 31 << 5 | i);    // mov xi, x0: acc is x0
 }
 
+// the machine register of an operand of rop: a local's is x19 + r, kept by a
+// function called; acc x0, tmp x1, argument i xi
+static int arm8_reg(s32i x) {
+  return x >= 0? r19 + x: x == ACC? r0: x == TMP? r1: ARG - x;
+}
+
+// to op= by. A constant below 4K is added, subtracted or compared as it is,
+// another one goes through x16, or straight to its register when moved
+void arm8_rop(file* data, u32i op, s32i to, s32i by, s32i n) {
+  u32i o = op & ~(WIDE | TEST);
+  int  d = arm8_reg(to), s = by != NUM? arm8_reg(by): o == '='? d: r16;
+  bool sub = o == '-', test = o != '=' && o != '+' && !sub && o != '&' && o != '|' && o != '^';
+  uint32_t w = op & WIDE? X: 0;
+  if(by == NUM && (o == '+' || sub || test) && n >= 0 && n < 4096) {
+    arm8_put(data, w | (test? I3401_SUBSI: sub? I3401_SUBI: I3401_ADDI) | n << 10 | d << 5 | (test? 31: d));
+    return;
+  }
+  if(by == NUM) {
+    arm8_imm(data, s, n);
+    if(w && n < 0) arm8_put(data, 0x93407c00 | s << 5 | s);        // sxtw xs, ws
+    if(o == '=') return;
+  }
+  uint32_t i = o == '+'? I3502_ADD: sub? I3502_SUB: o == '&'? I3510_AND: o == '^'? I3510_EOR: test? I3502_SUBS: I3510_ORR;
+  arm8_put(data, w | i | s << 16 | (o == '='? 31: d) << 5 | (test? 31: d)); // mov is orr with the zero register
+}
+
+void arm8_stow(file* data, u32i r, s32i slot, bool back) {
+  arm8_slot(data, back? I3312_LDRW: I3312_STRW, 8, r19 + r, slot);
+}
+
 void arm8_open(file* data) {
   arm8_put(data, 0xa9bf7bfd);                                       // stp x29, x30, [sp, #-16]!
   arm8_put(data, 0x910003fd);                                       // mov x29, sp
@@ -556,6 +586,9 @@ const emit arm8 = {
   .take = arm8_take,
   .pass = arm8_pass,
   .hail = arm8_hail,
+  .rop  = arm8_rop,
+  .stow = arm8_stow,
   .cpu  = cpu_arm8,
+  .regs = 10,
 };
 
