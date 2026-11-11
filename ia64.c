@@ -428,7 +428,8 @@ void ia64_link(const file* text, byte* boot, const byte* main) {
   copy(boot + 1, &rel, sizeof(rel));
 }
 
-// called by boot: [rsp+8] is argc, argv follows it
+// called by boot: [rsp+8] is argc, argv follows it. start NULL: through the
+// import slot whose address is in acc
 void ia64_crt(file* text, const byte* main, const byte* start) {
   id(text, 0x0824748b);                           // mov esi, [rsp+8]
   id(text, 0x24548d48); ib(text, 0x10);           // lea rdx, [rsp+16]
@@ -438,9 +439,8 @@ void ia64_crt(file* text, const byte* main, const byte* start) {
   ib(text, 0x45); iw(text, 0xc031);               // xor r8d, r8d
   ib(text, 0x45); iw(text, 0xc931);               // xor r9d, r9d
   id(text, 0xf0e48348);                           // and rsp, -16
-  byte* at = text->body;
-  ia64_dial(text);
-  ia64_link(text, at, start);
+  if(start) { byte* at = text->body; ia64_dial(text); ia64_link(text, at, start); }
+  else iw(text, 0x10ff);                          // call [rax]
   ib(text, 0xf4);                                 // hlt: start never returns
 }
 

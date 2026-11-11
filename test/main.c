@@ -11,6 +11,7 @@
 #include <fcntl.h>    /* open, O_BINARY */
 #include <limits.h>   /* INT_MIN */
 #include <stdlib.h>   /* getenv */
+#include <string.h>   /* strcmp */
 #include <sys/stat.h> /* chmod, mkdir */
 #ifdef _WIN32
 #include <io.h>       /* read, close, dup2, access, unlink: no unistd.h in MSVC */
@@ -124,8 +125,8 @@ static int  jit(void) {
   return sscanf(last, "%d", &value) == 1? value: odd;
 }
 
-// `tic -e`: the written executable's exit code
-static int  exe(void) {
+// `tic -e`: the written executable's exit code, its stdout on fd
+static int  exe(int fd) {
   int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
   char* args[16];
@@ -133,7 +134,7 @@ static int  exe(void) {
   close(null);
   if(code == 1) return access(exe_at, F_OK)? bad: odd; // and no executable
   if(code || chmod(exe_at, 0755)) return odd;
-  code = spawn(1, (char*[]){exe_at, NULL});
+  code = spawn(fd, (char*[]){exe_at, NULL});
   return code < 0? odd: code;
 }
 
@@ -144,22 +145,28 @@ static char* shown(int value, char* buf) {
   return buf;
 }
 
-// compile src both ways: NULL when exec gives run and -e gives want, else why
-// not
-static char* tried(const char* src, int run, int want) {
+// src at src_at, its executable to be at exe_at: 0 when it cannot be written
+static bool written(const char* src) {
   mkdir("bins", 0755);
   sprintf(src_at, "bins/" TAG "-%03zu.c", test_count);
   sprintf(exe_at, "bins/" TAG "-%03zu" EXE, test_count);
   FILE* fp = fopen(src_at, "wb");
-  if(!fp) return "cannot write the case to bins/";
+  if(!fp) return 0;
   fputs(src, fp);
   fclose(fp);
+  return 1;
+}
+
+// compile src both ways: NULL when exec gives run and -e gives want, else why
+// not
+static char* tried(const char* src, int run, int want) {
+  if(!written(src)) return "cannot write the case to bins/";
 
   static char why[64];
   char w[16], g[16];
   int got = jit();
   char* how = "exec";
-  if(got == run) { got = exe(); how = "exe"; }
+  if(got == run) { got = exe(1); how = "exe"; }
   else want = run;
   if(got == want) return NULL;
   snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s"),
@@ -171,11 +178,38 @@ static char* tried(const char* src, int run, int want) {
 #define expect(want, src) saw(want, want, src)
 // only(want, src): exec rejects it, the executable from -e returns want
 #define only(want, src) saw(bad, want, src)
-// here(run, src): exec returns run, writing an executable rejects it (it
-// cannot bind imports yet)
+// here(run, src): a program calling imports. exec returns run, and so does
+// the executable from -e on Linux; other forms reject it (they cannot bind
+// imports yet)
+// lost(src): exec rejects it, as an import is not in its library; on Linux
+// the executable is written, and its loader refuses to start it (127)
+#ifdef __linux__
+#define here(run, src) saw(run, run, src)
+#define lost(src) saw(bad, 127, src)
+#else
 #define here(run, src) saw(run, bad, src)
+#define lost(src) saw(bad, bad, src)
+#endif
 #define saw(run, want, src) \
   if((error = tried(src, run, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
+
+// src written with -e: NULL when the executable printed want to a pipe and
+// exited with 0, else why not
+static char* printed(const char* src, const char* want) {
+  static char out[64], why[128];
+  int fd[2];
+  if(!written(src) || pipe(fd)) return "cannot write the case to bins/";
+  int code = exe(fd[1]), n;
+  close(fd[1]);
+  n = (int)read(fd[0], out, sizeof out - 1);
+  close(fd[0]);
+  out[n > 0? n: 0] = 0;
+  if(!code && !strcmp(out, want)) return NULL;
+  snprintf(why, sizeof why, "want \"%s\" and 0, got " TEST_COLOR_FAIL("\"%s\" and %d"), want, out, code);
+  return why;
+}
+#define prints(want, src) \
+  if((error = printed(src, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
 // a module at bins/name.c, beside the cases, for link "name"
 static void module(const char* name, const char* src) {
@@ -848,7 +882,7 @@ spec(TAG) {
     }
   }
 
-  context("load") { // exec binds imports; the forms only record them so far
+  context("load") { // exec binds imports, a Linux executable through its loader
     it("declares imports after a load")
       expect(3, "load \"c\";\nint puts(char*);\nlong labs(long n);\n"
                 "int main() { return 3; }\n");
@@ -875,8 +909,14 @@ spec(TAG) {
     it("binds only the imports it uses")
       here(2, "load \"zzz\";\nint f(int);\nload \"c\";\nlong labs(long n);\n"
               "int main() { long v = -2; return labs(v); }\n");
-    it("runs a link of a shared library as its load")
-      here(6, "link \"c\";\nlong labs(long n);\nint main() { long v = -6; return labs(v); }\n");
+    it("runs a link of a shared library as its load") // writing: link names sources and objects
+      saw(6, bad, "link \"c\";\nlong labs(long n);\nint main() { long v = -6; return labs(v); }\n");
+    linux_it("flushes what the native libc prints when main returns")
+      prints("42 ok\n", "int printf(char* f, ...);\nint main() { int v = 42; printf(\"%d \", v); "
+                        "printf(\"ok\\n\"); return 0; }\n");
+    linux_it("loads every library it imports from")
+      prints("m\n", "load \"m\";\nint ilogb(long x);\nload \"c\";\nint puts(char* s);\n"
+                     "int main() { long v = 1; ilogb(v); puts(\"m\"); return 0; }\n");
     it("rejects a link of a library the host does not have")
       expect(bad, "link \"zzz\";\nint main() { return 0; }\n");
   }
@@ -1257,7 +1297,7 @@ spec(TAG) {
     it("rejects a library name that is not a string")
       expect(bad, "load c;\nint main() { return 0; }\n");
     it("rejects a use of an extern global")
-      expect(bad, "extern int g;\nint main() { return g; }\n");
+      lost("extern int g;\nint main() { return g; }\n");
     it("rejects an extern global from two libraries")
       expect(bad, "load \"c\";\nextern int g;\nload \"m\";\nextern int g;\nint main() { return 0; }\n");
     it("rejects an initialized extern global")
@@ -1265,9 +1305,9 @@ spec(TAG) {
     it("rejects a variadic function with a body")
       expect(bad, "int f(int n, ...) { return n; }\nint main() { return f(1); }\n");
     it("rejects a call to an import that is not in its library")
-      expect(bad, "load \"c\";\nint nosuch(int);\nint main() { return nosuch(1); }\n");
+      lost("load \"c\";\nint nosuch(int);\nint main() { return nosuch(1); }\n");
     it("rejects a call to an import from a missing library")
-      expect(bad, "load \"zzz\";\nint f(int);\nint main() { return f(1); }\n");
+      lost("load \"zzz\";\nint f(int);\nint main() { return f(1); }\n");
     it("rejects a forward call to an import")
       expect(bad, "int main() { return puts(\"x\"); }\nload \"c\";\nint puts(char*);\n");
     it("rejects an import from two libraries")
@@ -1283,6 +1323,6 @@ spec(TAG) {
     it("rejects a parameter without a name in a definition")
       expect(bad, "int f(int) { return 1; }\nint main() { return 0; }\n");
     it("rejects a call to a function without a body")
-      expect(bad, "int f(int a);\nint main() { return f(1); }\n");
+      lost("int f(int a);\nint main() { return f(1); }\n");
   }
 }

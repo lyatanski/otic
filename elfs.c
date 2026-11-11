@@ -256,7 +256,7 @@ enum {
   R_AARCH64_ABS64 = 257, R_AARCH64_MOVW_PREL_G0_NC = 288, R_AARCH64_MOVW_PREL_G1_NC = 290,
   R_AARCH64_GLOB_DAT = 1025, R_AARCH64_RELATIVE = 1027,
 };
-enum { DT_NULL, DT_HASH = 4, DT_STRTAB, DT_SYMTAB, DT_RELA, DT_RELASZ, DT_RELAENT, DT_STRSZ,
+enum { DT_NULL, DT_NEEDED, DT_HASH = 4, DT_STRTAB, DT_SYMTAB, DT_RELA, DT_RELASZ, DT_RELAENT, DT_STRSZ,
        DT_SYMENT, DT_SONAME = 14 };
 enum { PT_LOAD = 1, PT_DYNAMIC, PT_INTERP, PT_NOTE, PT_SHLIB, PT_PHDR, PT_GNU_STACK = 0x6474e551 };
 
@@ -467,6 +467,22 @@ static file* elfs_relo(mode* self) {
   return out;
 }
 
+// the file the loader opens for library l of a load, into out when given: its
+// length. As written when it has a dot ("libz.so.1"), glibc's soname for c
+// and m, else lib<name>.so
+static u32i  elfs_file(const meta* l, char* out) {
+  static const char* const glibc[][2] = {{"c", "libc.so.6"}, {"m", "libm.so.6"}};
+  const char* s = l->name->name + 1; // without the quotes
+  u32i n = l->name->size - 2;
+  bool as_is = 0;
+  for(u32i i = 0; i < n; i++) as_is |= s[i] == '.';
+  for(u32i i = 0; !as_is && i < sizeof glibc / sizeof *glibc; i++)
+    if(slen(glibc[i][0]) == n && alike(glibc[i][0], s, n)) s = glibc[i][1], n = slen(s), as_is = 1;
+  if(as_is) { if(out) copy((byte*)out, s, n); return n; }
+  if(out) copy(copy(copy((byte*)out, "lib", 3), s, n), ".so", 3);
+  return n + 6;
+}
+
 // an image, position independent: its dynamic tables, then text, in the first
 // segment, the dynamic section, data, bss and the import slots in a second,
 // writable one, 64 KB further in memory. A shared library (without main)
@@ -474,7 +490,8 @@ static file* elfs_relo(mode* self) {
 // their slots, and its addresses in data relocated by the load address. A
 // program is the same image entered at the start of text, with no soname and
 // no exports, and names its loader (PT_INTERP), after the table describing itself
-// (PT_PHDR). Neither can have an address in code
+// (PT_PHDR). Both name the libraries of their imports (DT_NEEDED). Neither can
+// have an address in code
 static file* elfs_dyno(mode* self) {
   static char names[] = "\0.hash\0.dynsym\0.dynstr\0.rela.dyn\0.text\0.dynamic\0.data\0.bss\0.shstrtab";
   enum { s_hash = 1, s_sym, s_str, s_rel, s_text, s_dyn, s_data, s_bss, s_names, s_all };
@@ -498,7 +515,15 @@ static file* elfs_dyno(mode* self) {
   const char* soname = self->outp && !prog? self->outp: "";
   for(const char* c = soname; *c; c++) if(*c == '/') soname = c + 1;
   const u64i nsym = 1 + t.ndef + t.nund, sonamen = slen(soname);
-  const u64i strs = t.strs + (prog? 0: sonamen + 1), ndyn = prog? 9: 10; // the entries of dyn
+  const meta** need = self->heap(NULL, (self->impn + 1) * sizeof(meta*)); // each library once
+  u32i  nneed = 0;
+  u64i  needs = 0;
+  for(u32i i = 0; i < self->impn; i++) {
+    u32i k = 0;
+    while(k < nneed && need[k] != self->imps[i]->lib) k++;
+    if(k == nneed) needs += elfs_file(need[nneed++] = self->imps[i]->lib, NULL) + 1;
+  }
+  const u64i strs = t.strs + (prog? 0: sonamen + 1) + needs, ndyn = (prog? 9: 10) + nneed;
 
   // the first segment, then the second at rw in the file, data at dat
   const u64i tabs = sizeof(elfs_id) + sizeof(eh64);
@@ -542,10 +567,10 @@ static file* elfs_dyno(mode* self) {
      .filesz = ndyn * sizeof(dyn64), .memsz = ndyn * sizeof(dyn64), .align = 8},
     {.type = PT_GNU_STACK, .flags = 6, .align = 16},
   };
-  dyn64 dyn[] = {
-    {DT_SONAME, t.strs}, {DT_HASH, hash}, {DT_STRTAB, dstr}, {DT_SYMTAB, dsym},
-    {DT_STRSZ, strs}, {DT_SYMENT, sizeof(sym64)}, {DT_RELA, drel},
-    {DT_RELASZ, nrel * sizeof(rela64)}, {DT_RELAENT, sizeof(rela64)}, {DT_NULL, 0},
+  const dyn64 rest[] = {
+    {DT_HASH, hash}, {DT_STRTAB, dstr}, {DT_SYMTAB, dsym}, {DT_STRSZ, strs},
+    {DT_SYMENT, sizeof(sym64)}, {DT_RELA, drel}, {DT_RELASZ, nrel * sizeof(rela64)},
+    {DT_RELAENT, sizeof(rela64)}, {DT_NULL, 0},
   };
   sh64 sh[s_all] = {{0},
     {.type = SHT_HASH, .flags = SHF_ALLOC, .addr = hash, .offset = hash, .size = 4 * (2 + nsym + 1),
@@ -580,6 +605,13 @@ static file* elfs_dyno(mode* self) {
   elfs_syms_put(self, &t, (sym64*)(o + dsym) + 1, o + dstr, 1, top, dat + skew, dat + skew + bss,
                 s_text, s_data, s_bss);
   copy(o + dstr + t.strs, soname, sonamen);
+  dyn64* d = (dyn64*)(o + rw); // a program has no soname
+  if(!prog) *d++ = (dyn64){DT_SONAME, t.strs};
+  for(u64i k = 0, at = t.strs + (prog? 0: sonamen + 1); k < nneed; k++) {
+    *d++ = (dyn64){DT_NEEDED, at};
+    at += elfs_file(need[k], (char*)o + dstr + at) + 1;
+  }
+  copy((byte*)d, rest, sizeof rest);
   rela64* r = (rela64*)(o + drel);
   for(const cord* c = cords; c < cords + ncord; c++) { // dock put the address at base 0 there
     if(c->kind != cd_wide || c->name) continue;
@@ -591,11 +623,11 @@ static file* elfs_dyno(mode* self) {
     *r++ = (rela64){dat + skew + slots + 8 * i, arm? R_AARCH64_GLOB_DAT: R_X86_64_GLOB_DAT,
                     1 + t.ndef + elfs_need(self, &t, self->imps[i]->name, 0, 0), 0};
   copy(o + top, self->text->head, code);
-  copy(o + rw, dyn + (sizeof dyn / sizeof *dyn - ndyn), ndyn * sizeof(dyn64)); // a program: no soname
   copy(o + dat, self->data->head, size);
   copy(o + dat + size, names, sizeof names);
   copy(o + shoff, sh, sizeof sh);
   self->heap(cords, 0);
+  self->heap(need, 0);
   self->heap(t.defs, 0);
   self->heap(t.unds, 0);
   self->heap(t.undx.slot, 0);

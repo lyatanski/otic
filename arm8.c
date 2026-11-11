@@ -484,17 +484,18 @@ void arm8_link(const file* data, byte* boot, const byte* main) {
   *(uint32_t*)boot = I3206_BL | arm8_span(boot, main, 26);
 }
 
-// called by boot, which leaves sp as it was: [sp] is argc, argv follows it
+// called by boot, which leaves sp as it was: [sp] is argc, argv follows it.
+// start NULL: through the import slot whose address is in acc
 void arm8_crt(file* data, const byte* main, const byte* start) {
+  if(!start) arm8_put(data, 0xf9400011);                            // ldr x17, [x0]: glob uses x16
   arm8_put(data, 0xf94003e1);                                       // ldr x1, [sp]
   arm8_put(data, 0x910023e2);                                       // add x2, sp, #8
   s64i d = main - data->body;
   if(d >= -(1 << 20)) arm8_put(data, I3406_ADR | (d & 3) << 29 | ((d >> 2) & 0x7ffff) << 5 | r0); // adr x0, main
   else { byte* at = data->body; arm8_glob(data); arm8_site(data, at, d); } // past 1M: x0 = pc - distance
   for(u32i r = 3; r < 6; r++) arm8_put(data, X | dati_movz | r);    // mov xr, #0
-  byte* at = data->body;
-  arm8_dial(data);
-  arm8_link(data, at, start);
+  if(start) { byte* at = data->body; arm8_dial(data); arm8_link(data, at, start); }
+  else arm8_put(data, 0xd63f0220);                                  // blr x17
   arm8_put(data, 0xd4200000);                                       // brk #0: start never returns
 }
 

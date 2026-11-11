@@ -1448,8 +1448,21 @@ void  make(mode* self) {
     self->main = self->boot = func->addr;
     self->hail = func->hail? func->hail: func->addr;
     if(libc && libc->kind == call && libc->ext && libc->addr) {
+      if(self->impn && self->libs) fail("cannot call a library from a program with a C library linked in\n");
       self->boot = self->text->body;
       emit(self, crt, self->main, libc->addr);
+    }
+    // a Linux program written with imports starts through the shared libc
+    // the same way, its __libc_start_main an import too (libs is set only
+    // when writing: running binds the imports itself)
+    else if(self->impn && self->libs && self->form.os == os_linux) {
+      if(!libc || libc->kind != call || !libc->lib)
+        libc = mint(self, (meta){.name = sget(self, "__libc_start_main"), .kind = call, .ext = 1,
+                                 .type = find(self, 0, sget(self, "int")),
+                                 .lib = rack(self, sget(self, "\"c\""))});
+      self->boot = self->text->body;
+      spot(self, port(self, libc));
+      emit(self, crt, self->main, NULL);
     }
     emit(self, link, self->text->head, self->boot);
   }

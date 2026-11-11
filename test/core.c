@@ -234,6 +234,18 @@ spec("core") {
       check(compiles("int main() { return 2; }"));
       check(self.main && calls[op_link] == 1);
     }
+    it("starts a written program with imports through libc, its start an import too") {
+      libs = lb_dyno;
+      check(compiles("int puts(char* s);\nint main() { return puts(\"\"); }"));
+      check(has("size open 0, glob, crt open nowhere, link boot glob"));
+      check(self.aims[self.seats - 1].off == (SLOT | 1)); // the glob: its slot
+      check(self.impn == 2 && self.imps[1]->kind == call && self.imps[1]->lib == self.imps[0]->lib);
+      check(self.imps[1]->name->size == 17 && !memcmp(self.imps[1]->name->name, "__libc_start_main", 17));
+    }
+    it("runs a program with imports from main") {
+      check(compiles("int puts(char* s);\nint main() { return puts(\"\"); }"));
+      check(has("link boot open") && calls[op_crt] == 0 && self.impn == 1);
+    }
     it("names the line of an error") {
       check(rejects("int main() {\n  return 1;\n  @\n}", "main.c:3:"));
     }

@@ -133,7 +133,8 @@ typedef struct {
   // The call to func, which link may point elsewhere, NULL through [acc]
   byte* (*ffi)(file*, const byte* func, u32i argc, u32i fixed, osys os);
   // entry of a C library, called by boot: start(main, argc, argv, 0, 0, 0)
-  // with argc and argv from the initial stack
+  // with argc and argv from the initial stack. start NULL: through the import
+  // slot whose address is in acc
   void (*crt)(file*, const byte* main, const byte* start);
   void (*flag)(file*, u32i op);                    // acc = 1 when the comparison op of a TEST calc held, else 0
   void (*cond)(file*, u32i op, bool hold);         // branch when it held (hold) or failed, patched by back

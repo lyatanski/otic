@@ -181,11 +181,34 @@ spec("elfs") {
       check(ph[4].type == PT_DYNAMIC && ph[4].filesz == 9 * sizeof(dyn64));
       check(d[0].tag == DT_HASH && d[8].tag == DT_NULL);
     }
+    it("names the library of each import once, by its soname or file") {
+      start(cpu_ia64, CODE, 6, "", 0, 0);
+      meta c = {.name = named("\"c\"")}, m = {.name = named("\"m\"")}, z = {.name = named("\"z\"")},
+           q = {.name = named("\"libq.so.2\"")};
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &c};
+      ours.imps[1] = &(meta){.name = named("cos"), .kind = call, .lib = &m};
+      ours.imps[2] = &(meta){.name = named("printf"), .kind = call, .lib = &c};
+      ours.imps[3] = &(meta){.name = named("crc32"), .kind = call, .lib = &z};
+      ours.impn = 4;
+      check((out = packed(elfs)));
+      dyn64* d = (dyn64*)(out->head + SECT(out)[6].offset);
+      char*  str = (char*)out->head + SECT(out)[3].offset;
+      check(SECT(out)[6].size == (9 + 3) * sizeof(dyn64) && d[3].tag == DT_HASH && d[11].tag == DT_NULL);
+      check(d[0].tag == DT_NEEDED && !strcmp(str + d[0].val, "libc.so.6"));
+      check(d[1].tag == DT_NEEDED && !strcmp(str + d[1].val, "libm.so.6"));
+      check(d[2].tag == DT_NEEDED && !strcmp(str + d[2].val, "libz.so"));
+      ours.imps[1]->lib = &q;
+      ours.impn = 2;
+      check((out = packed(elfs)));
+      d = (dyn64*)(out->head + SECT(out)[6].offset);
+      str = (char*)out->head + SECT(out)[3].offset;
+      check(d[1].tag == DT_NEEDED && !strcmp(str + d[1].val, "libq.so.2"));
+    }
     it("exports nothing, its imports its only symbols") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
       signs[0] = &(meta){.name = named("main"), .kind = call, .addr = ours.text->head};
       signn = 1;
-      ours.imps[0] = &(meta){.name = named("puts"), .kind = call};
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &(meta){.name = named("\"c\"")}};
       ours.impn = 1;
       check((out = packed(elfs)) && SECT(out)[2].size == 2 * sizeof(sym64));
       sym64* s = sym_(out, 2, 1);
@@ -413,6 +436,17 @@ spec("elfs") {
       dyn64* d = (dyn64*)(out->head + SECT(out)[6].offset);
       check(d[0].tag == DT_SONAME && !strcmp((char*)out->head + SECT(out)[3].offset + d[0].val, "libq.so"));
     }
+    it("names the libraries of its imports after itself") {
+      library(cpu_ia64, lb_dyno);
+      ours.outp = "bins/libq.so";
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &(meta){.name = named("\"c\"")}};
+      ours.impn = 1;
+      check((out = packed(elfs)));
+      dyn64* d = (dyn64*)(out->head + SECT(out)[6].offset);
+      char*  str = (char*)out->head + SECT(out)[3].offset;
+      check(d[0].tag == DT_SONAME && !strcmp(str + d[0].val, "libq.so"));
+      check(d[1].tag == DT_NEEDED && !strcmp(str + d[1].val, "libc.so.6") && d[2].tag == DT_HASH);
+    }
     it("relocates the addresses in data by the load address") {
       library(cpu_ia64, lb_dyno);
       cord_((cord){.site = {NULL, 8}, .aim = {ours.text->head, 0}, .kind = cd_wide});
@@ -422,7 +456,7 @@ spec("elfs") {
     }
     it("binds the imports through their slots, after bss") {
       library(cpu_arm8, lb_dyno);
-      ours.imps[0] = &(meta){.name = named("puts"), .kind = call};
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &(meta){.name = named("\"c\"")}};
       ours.impn = 1;
       check((out = packed(elfs)) && SECT(out)[8].size == 32 + 8);
       check(rela_(rel_(out, 4, 0), SECT(out)[8].addr + 32, R_AARCH64_GLOB_DAT, 4, 0));

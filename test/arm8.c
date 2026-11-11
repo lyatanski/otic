@@ -143,6 +143,14 @@ spec("arm8") {
       check(d == (1 << 20) + 8);                     // mov x16, #lo; movk x16, #hi, lsl #16
       check(at32(p + 12) == 0xcb100000);             // sub x0, x0, x16
     }
+    it("starts a C library through the import slot in acc, kept in x17") {
+      far->tail = farb + sizeof farb;
+      far->body = far->head;
+      e.crt(far, far->head, NULL);
+      check(at32(far->head) == 0xf9400011);          // ldr x17, [x0]
+      check(at32(far->body - 8) == 0xd63f0220);      // blr x17
+      check(at32(far->body - 4) == 0xd4200000);      // brk #0
+    }
   }
 
   context("functions") {
