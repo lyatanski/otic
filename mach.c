@@ -15,7 +15,7 @@ enum {
   lc_segment = 0x19, lc_signature = 0x1d, lc_build = 0x32, lc_dyld_info = 0x80000022,
   lc_main = 0x80000028,
 };
-enum { s_zerofill = 0x1, s_code = 0x80000400 }; // section flags: bss, instructions
+enum { s_regular, s_zerofill = 0x1, s_code = 0x80000400 }; // section flags: data, bss, instructions
 // symbol types and flags: external, defined in a section, a weak reference or
 // definition, and a name dyld looks up in every image (flat)
 enum { n_ext = 0x1, n_sect = 0xe, n_weak_ref = 0x40, n_weak_def = 0x80, n_flat = 0xfe00 };
@@ -218,7 +218,7 @@ static file* mach_exec(mode* self) {
     .code = {"__text", "__TEXT", org + top, code, (u32i)top, 2, .flags = (u32i)s_code},
     .data = {lc_segment, sizeof(seg64) + 2 * sizeof(sec64), "__DATA", org + text, vmsz, text, size,
              3, 3, 2, 0}, // rw-
-    .vars = {{"__data", "__DATA", org + text, size, (u32i)text, lg},
+    .vars = {{"__data", "__DATA", org + text, size, (u32i)text, lg, .flags = s_regular},
              {"__bss", "__DATA", org + text + bss, end - bss, 0, lg, .flags = s_zerofill}},
     .link = {lc_segment, sizeof(seg64), "__LINKEDIT", org + text + vmsz, (all - link + page - 1) & ~(page - 1),
              link, all - link, 1, 1, 0, 0}, // r--

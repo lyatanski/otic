@@ -342,8 +342,8 @@ static const char* bulk(const char* fmt, unsigned n) {
   static char body[(1 << 20) - 64];
   unsigned k = 0;
   while(n-- && k + 8 < sizeof body) k += (unsigned)snprintf(body + k, sizeof body - k, "s += 1; ");
-  snprintf(src, sizeof src, fmt, body, body, body);
-  return src;
+  int all = snprintf(src, sizeof src, fmt, body, body, body);
+  return all < (int)sizeof src? src: "too long for bulk"; // a case that fails to compile
 }
 
 spec(TAG) {

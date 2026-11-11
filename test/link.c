@@ -121,6 +121,12 @@ static u32i  hauls(char* name) {
   return self.unitn > n? self.unitn - 1: self.unit;
 }
 
+// where pose puts the seat {at, off}, text at 100 and bss at 200: outside the
+// spec, whose setjmp would have gcc warn its seat might be clobbered
+static u64i  posed(byte* at, u32i off) {
+  return pose(&self, (seat){at, off}, 100, 200);
+}
+
 // name in the table of unit at meaning x, else nothing
 static item* say(u32i at, char* name, meta* x) {
   item* s = hget(&self, at, name, strlen(name));
@@ -448,8 +454,8 @@ spec("link") {
   context("dock") {
     meta  g = {.kind = glob, .slot = 8}, f = DEF, imp = {.kind = call};
     meta  lib = {.kind = dlib};
-    byte  datas[64];
-    file* data = (file*)datas;
+    static byte  datas[64]; // static: the spec's setjmp cannot clobber them
+    static file* data = (file*)datas;
     #define LAID(n) (data->body = data->head + (n), data->tail = datas + sizeof datas, self.data = data)
     it("finds a global by name, else fails") {
       start("main.c");
@@ -470,11 +476,11 @@ spec("link") {
       say(1, "g", &g);
       self.zero = 13;
       ask(&self, &g);
-      check(pose(&self, (seat){text->head + 5, 0}, 100, 200) == 5);
-      check(pose(&self, (seat){NULL, 12}, 100, 200) == 112);
-      check(pose(&self, (seat){NULL, ZERO | 12}, 100, 200) == 212);
-      check(pose(&self, (seat){NULL, SLOT | 2}, 100, 200) == 200 + 16 + 16);
-      check(pose(&self, (seat){NULL, WANT | 0}, 100, 200) == 108);
+      check(posed(text->head + 5, 0) == 5);
+      check(posed(NULL, 12) == 112);
+      check(posed(NULL, ZERO | 12) == 212);
+      check(posed(NULL, SLOT | 2) == 200 + 16 + 16);
+      check(posed(NULL, WANT | 0) == 108);
     }
     it("aligns data, then bss, on the largest alignment asked") {
       start("main.c");
