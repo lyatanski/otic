@@ -8,6 +8,7 @@
 #include "test.h"
 #include <stdbool.h> /* bool before C23 */
 
+#include <errno.h>    /* errno */
 #include <fcntl.h>    /* open, O_BINARY */
 #include <limits.h>   /* INT_MIN */
 #include <stdlib.h>   /* getenv */
@@ -73,7 +74,7 @@ static char** with(char** args, char** head) {
 }
 
 // run args[0] with stdout on fd for at most 5s: its exit status, or -1 when
-// it was killed
+// it was killed (on Windows, its NTSTATUS is shown)
 #ifdef _WIN32
 static int  spawn(int fd, char** args) {
   fflush(NULL);
@@ -82,13 +83,14 @@ static int  spawn(int fd, char** args) {
   HANDLE child = (HANDLE)_spawnv(_P_NOWAIT, args[0], (const char* const*)args);
   dup2(out, 1);
   close(out);
-  if(child == INVALID_HANDLE_VALUE) return -1;
+  if(child == INVALID_HANDLE_VALUE) { printf("    %s: cannot start, errno %d\n", args[0], errno); return -1; }
   if(WaitForSingleObject(child, 5000) != WAIT_OBJECT_0) TerminateProcess(child, ~0u);
   WaitForSingleObject(child, INFINITE);
   DWORD code = ~0u;
   GetExitCodeProcess(child, &code);
   CloseHandle(child);
-  return code > 255? -1: (int)code; // a crash exits with its NTSTATUS
+  if(code > 255) printf("    %s: status %#lx\n", args[0], (unsigned long)code); // a crash's NTSTATUS
+  return code > 255? -1: (int)code;
 }
 #else
 static int  spawn(int fd, char** args) {
@@ -203,6 +205,8 @@ static char* printed(const char* src, const char* want) {
   n = (int)read(fd[0], out, sizeof out - 1);
   close(fd[0]);
   out[n > 0? n: 0] = 0;
+  for(char *r = out, *w = out; ; r++) // msvcrt's stdout is text: each \n ends in \r\n
+    if(*r != '\r' || r[1] != '\n') { if(!(*w++ = *r)) break; }
   if(!code && !strcmp(out, want)) return NULL;
   snprintf(why, sizeof why, "want \"%s\" and 0, got " TEST_COLOR_FAIL("\"%s\" and %d"), want, out, code);
   return why;
