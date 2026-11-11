@@ -188,7 +188,13 @@ spec("ia64") {
       // mov esi, [rsp+8]; lea rdx, [rsp+16]; lea rdi, [rip-16]; xor ecx, ecx;
       // xor r8d, r8d; xor r9d, r9d; and rsp, -16; call [rax]; hlt
       check(emits("8b 74 24 08 48 8d 54 24 10 48 8d 3d f0 ff ff ff 31 c9 45 31 c0 45 31 c9 "
-                  "48 83 e4 f0 ff 10 f4", e.crt(t, t->head, NULL)));
+                  "48 83 e4 f0 ff 10 f4", e.crt(t, t->head, NULL, cl_glibc)));
+    }
+    it("starts bionic with the initial stack, main in rdx and 48 0 bytes of structors in rcx") {
+      // lea rdi, [rsp+8]; xor esi, esi; lea rdx, [rip-14]; and rsp, -16; xor ecx, ecx;
+      // push rcx (6 times); mov rcx, rsp; call [rax]; hlt
+      check(emits("48 8d 7c 24 08 31 f6 48 8d 15 f2 ff ff ff 48 83 e4 f0 31 c9 "
+                  "51 51 51 51 51 51 48 89 e1 ff 10 f4", e.crt(t, t->head, NULL, cl_bionic)));
     }
   }
 }

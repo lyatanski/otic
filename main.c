@@ -34,11 +34,13 @@ void  ario_pull(mode*, meta*);
 #else // __x86_64__
 #define base ia64
 #endif
-// a Linux host's C library: glibc unless it is musl (bionic is not supported)
-#if defined(__linux__) && !defined(__GLIBC__) && !defined(__ANDROID__)
-#define MUSL 1
+// a Linux host's C library: glibc, bionic on Android, else musl
+#if defined(__ANDROID__)
+#define CLIB cl_bionic
+#elif defined(__linux__) && !defined(__GLIBC__)
+#define CLIB cl_musl
 #else
-#define MUSL 0
+#define CLIB cl_glibc
 #endif
 #ifdef __APPLE__
 #define host mach
@@ -214,7 +216,7 @@ void  exec(mode* self) {
 // when the program loads
 void  save(mode* self) {
   if(self->impn && self->main && self->form.os == host.os && self->arch.cpu == base.cpu
-     && (self->form.os != os_linux || self->musl == MUSL)) {
+     && (self->form.os != os_linux || self->clib == CLIB)) {
     u64i* slot = self->heap(NULL, 8 * self->impn);
     plug(self, slot, 1);
     self->heap(slot, 0);
@@ -281,8 +283,9 @@ static void dest(mode* self, const opts* opt, const char* para) {
 
 static void libc(mode* self, const opts* opt, const char* para) {
   (void)opt;
-  if(is(para, "glibc")) self->musl = 0;
-  else if(is(para, "musl")) self->musl = 1;
+  if(is(para, "glibc")) self->clib = cl_glibc;
+  else if(is(para, "musl")) self->clib = cl_musl;
+  else if(is(para, "bionic")) self->clib = cl_bionic;
   else fail("C library '%s' not supported\n", para);
 }
 
@@ -331,7 +334,7 @@ int   main(int argc, char** argv) {
     .form = host,
     .ario = {ario_load, ario_pull},
     .have = have,
-    .musl = MUSL,
+    .clib = CLIB,
   };
   nest(&self, (unit){.kind = un_root}); // unit 0, the builtins
 
@@ -341,7 +344,7 @@ int   main(int argc, char** argv) {
     {"-e", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
     {"-s", "--static", .desc = "without main, write an object instead of a shared library", .call = flat},
     {"-p", "--path", .args = 1, .desc = "directory to look for modules and libraries", .call = seek},
-    {"-l", "--libc", .args = 1, .desc = "C library of a Linux program: glibc, musl", .call = libc},
+    {"-l", "--libc", .args = 1, .desc = "C library of a Linux program: glibc, musl, bionic", .call = libc},
     {"-h", "--help", .desc = "display help", .call = help}, {0},
   };
   parse(&self, args, argc, argv, apos);

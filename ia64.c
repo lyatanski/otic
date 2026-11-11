@@ -464,15 +464,27 @@ void ia64_link(const file* text, byte* boot, const byte* main) {
 
 // called by boot: [rsp+8] is argc, argv follows it. start NULL: through the
 // import slot whose address is in acc
-void ia64_crt(file* text, const byte* main, const byte* start) {
-  id(text, 0x0824748b);                           // mov esi, [rsp+8]
-  id(text, 0x24548d48); ib(text, 0x10);           // lea rdx, [rsp+16]
-  ib(text, 0x48); iw(text, 0x3d8d);               // lea rdi, [rip+main]
-  id(text, main - (text->body + 4));
-  iw(text, 0xc931);                               // xor ecx, ecx
-  ib(text, 0x45); iw(text, 0xc031);               // xor r8d, r8d
-  ib(text, 0x45); iw(text, 0xc931);               // xor r9d, r9d
-  id(text, 0xf0e48348);                           // and rsp, -16
+void ia64_crt(file* text, const byte* main, const byte* start, clib c) {
+  if(c == cl_bionic) { // __libc_init(rsp+8, 0, main, structors), the structors 48 0 bytes on the stack
+    id(text, 0x247c8d48); ib(text, 0x08);         // lea rdi, [rsp+8]
+    iw(text, 0xf631);                             // xor esi, esi
+    ib(text, 0x48); iw(text, 0x158d);             // lea rdx, [rip+main]
+    id(text, main - (text->body + 4));
+    id(text, 0xf0e48348);                         // and rsp, -16
+    iw(text, 0xc931);                             // xor ecx, ecx
+    for(u32i k = 0; k < 6; k++) ib(text, 0x51);   // push rcx
+    ib(text, 0x48); iw(text, 0xe189);             // mov rcx, rsp
+  }
+  else {
+    id(text, 0x0824748b);                         // mov esi, [rsp+8]
+    id(text, 0x24548d48); ib(text, 0x10);         // lea rdx, [rsp+16]
+    ib(text, 0x48); iw(text, 0x3d8d);             // lea rdi, [rip+main]
+    id(text, main - (text->body + 4));
+    iw(text, 0xc931);                             // xor ecx, ecx
+    ib(text, 0x45); iw(text, 0xc031);             // xor r8d, r8d
+    ib(text, 0x45); iw(text, 0xc931);             // xor r9d, r9d
+    id(text, 0xf0e48348);                         // and rsp, -16
+  }
   if(start) { byte* at = text->body; ia64_dial(text); ia64_link(text, at, start); }
   else iw(text, 0x10ff);                          // call [rax]
   ib(text, 0xf4);                                 // hlt: start never returns

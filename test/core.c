@@ -99,8 +99,8 @@ static byte* mock_ffi(file* t, const byte* func, u32i argc, u32i fixed, osys os)
   note(t, op_ffi, " %u/%u%s", fixed, argc, func? "": " slot");
   return func? site: NULL;
 }
-static void mock_crt(file* t, const byte* main, const byte* start) {
-  note(t, op_crt, " %s %s", at(t, main), at(t, start));
+static void mock_crt(file* t, const byte* main, const byte* start, clib c) {
+  note(t, op_crt, " %s %s%s", at(t, main), at(t, start), c == cl_bionic? " bionic": "");
 }
 static void mock_flag(file* t, u32i op)                { char o[4]; note(t, op_flag, " %s", mock_op(op, o)); }
 static void mock_cond(file* t, u32i op, bool hold)     { char o[4]; note(t, op_cond, " %s%s", hold? "": "!", mock_op(op, o)); }
@@ -174,6 +174,7 @@ static void source(char* path, char* src) {
 }
 
 static byte libs; // what make_ asks for without main, reset after each
+static clib clibs; // the C library of a Linux image, reset after each
 
 // compile main.c, src: 1 when make got to show, else 0 and said tells why
 static int  make_(char* src) {
@@ -186,9 +187,11 @@ static int  make_(char* src) {
     .name = "main.c",
     .hold = mock_hold, .drop = mock_drop, .heap = mock_heap, .show = mock_show, .scan = mock_scan,
     .arch = mock, .form = {mock_pack, mock_take, os_linux}, .libs = libs,
+    .clib = clibs,
   };
   self.arch.regs = regs;
   libs = lb_none;
+  clibs = cl_glibc;
   regs = 0;
   source("main.c", src);
   nest(&self, (unit){.kind = un_root});
@@ -268,6 +271,14 @@ spec("core") {
       check(self.aims[self.seats - 1].off == (SLOT | 1)); // the glob: its slot
       check(self.impn == 2 && self.imps[1]->kind == call && self.imps[1]->lib == self.imps[0]->lib);
       check(self.imps[1]->name->size == 17 && !memcmp(self.imps[1]->name->name, "__libc_start_main", 17));
+    }
+    it("starts a written program with imports through bionic's __libc_init") {
+      libs = lb_dyno;
+      clibs = cl_bionic;
+      check(compiles("int puts(char* s);\nint main() { return puts(\"\"); }"));
+      check(has("crt open nowhere bionic, link boot glob"));
+      check(self.impn == 2 && self.imps[1]->lib == self.imps[0]->lib);
+      check(self.imps[1]->name->size == 11 && !memcmp(self.imps[1]->name->name, "__libc_init", 11));
     }
     it("runs a program with imports from main") {
       check(compiles("int puts(char* s);\nint main() { return puts(\"\"); }"));

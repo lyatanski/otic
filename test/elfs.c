@@ -206,7 +206,7 @@ spec("elfs") {
     }
     it("names musl's loader and its libraries with musl") {
       start(cpu_ia64, CODE, 6, "", 0, 0);
-      ours.musl = 1;
+      ours.clib = cl_musl;
       meta c = {.name = named("\"c\"")}, m = {.name = named("\"m\"")};
       ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &c};
       ours.imps[1] = &(meta){.name = named("cos"), .kind = call, .lib = &m};
@@ -219,10 +219,27 @@ spec("elfs") {
       check(d[0].tag == DT_NEEDED && !strcmp(str + d[0].val, "libc.so"));
       check(d[1].tag == DT_NEEDED && !strcmp(str + d[1].val, "libm.so"));
       start(cpu_arm8, CODE, 6, "", 0, 0);
-      ours.musl = 1;
+      ours.clib = cl_musl;
       check((out = packed(elfs)));
       ph = (ph64*)(HEAD(out) + 1);
       check(!strcmp((char*)out->head + ph[1].offset, "/lib/ld-musl-aarch64.so.1"));
+    }
+    it("names bionic's linker and its libraries with bionic") {
+      for(chip cpu = cpu_ia64; cpu <= cpu_arm8; cpu++) {
+        start(cpu, CODE, 6, "", 0, 0);
+        ours.clib = cl_bionic;
+        meta c = {.name = named("\"c\"")}, m = {.name = named("\"m\"")};
+        ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &c};
+        ours.imps[1] = &(meta){.name = named("cos"), .kind = call, .lib = &m};
+        ours.impn = 2;
+        check((out = packed(elfs)));
+        ph = (ph64*)(HEAD(out) + 1);
+        check(!strcmp((char*)out->head + ph[1].offset, "/system/bin/linker64"));
+        dyn64* d = (dyn64*)(out->head + SECT(out)[6].offset);
+        char*  str = (char*)out->head + SECT(out)[3].offset;
+        check(d[0].tag == DT_NEEDED && !strcmp(str + d[0].val, "libc.so"));
+        check(d[1].tag == DT_NEEDED && !strcmp(str + d[1].val, "libm.so"));
+      }
     }
     it("exports nothing, its imports its only symbols") {
       start(cpu_ia64, CODE, 6, "", 0, 0);

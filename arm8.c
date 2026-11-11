@@ -516,14 +516,24 @@ void arm8_link(const file* data, byte* boot, const byte* main) {
 
 // called by boot, which leaves sp as it was: [sp] is argc, argv follows it.
 // start NULL: through the import slot whose address is in acc
-void arm8_crt(file* data, const byte* main, const byte* start) {
+void arm8_crt(file* data, const byte* main, const byte* start, clib c) {
   if(!start) arm8_put(data, 0xf9400011);                            // ldr x17, [x0]: glob uses x16
-  arm8_put(data, 0xf94003e1);                                       // ldr x1, [sp]
-  arm8_put(data, 0x910023e2);                                       // add x2, sp, #8
+  if(c != cl_bionic) {
+    arm8_put(data, 0xf94003e1);                                     // ldr x1, [sp]
+    arm8_put(data, 0x910023e2);                                     // add x2, sp, #8
+  }
   s64i d = main - data->body;
   if(d >= -(1 << 20)) arm8_put(data, I3406_ADR | (d & 3) << 29 | ((d >> 2) & 0x7ffff) << 5 | r0); // adr x0, main
   else { byte* at = data->body; arm8_glob(data); arm8_site(data, at, d); } // past 1M: x0 = pc - distance
-  for(u32i r = 3; r < 6; r++) arm8_put(data, X | dati_movz | r);    // mov xr, #0
+  if(c == cl_bionic) { // __libc_init(sp, 0, main, structors), the structors 48 0 bytes on the stack
+    arm8_put(data, 0xaa0003e2);                                     // mov x2, x0
+    arm8_put(data, 0x910003e0);                                     // mov x0, sp
+    arm8_put(data, 0xd100c3ff);                                     // sub sp, sp, #48
+    for(u32i k = 0; k < 3; k++) arm8_put(data, 0xa9007fff | k << 16); // stp xzr, xzr, [sp, #16k]
+    arm8_put(data, 0x910003e3);                                     // mov x3, sp
+    arm8_put(data, X | dati_movz | 1);                              // mov x1, #0
+  }
+  else for(u32i r = 3; r < 6; r++) arm8_put(data, X | dati_movz | r); // mov xr, #0
   if(start) { byte* at = data->body; arm8_dial(data); arm8_link(data, at, start); }
   else arm8_put(data, 0xd63f0220);                                  // blr x17
   arm8_put(data, 0xd4200000);                                       // brk #0: start never returns

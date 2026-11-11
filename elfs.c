@@ -7,11 +7,11 @@ enum { ev_none, ev_curr };
 enum { et_none, et_relo, et_exec, et_dyno, et_core };
 enum { em_ia64 = 62, em_arm8 = 183 };
 static const u16i elfs_mach[] = { [cpu_ia64] = em_ia64, [cpu_arm8] = em_arm8 };
-// the loader of a program, glibc's or musl's: it relocates the image and
-// binds its imports
-static char* const elfs_loader[][2] = {
-  [cpu_ia64] = {"/lib64/ld-linux-x86-64.so.2", "/lib/ld-musl-x86_64.so.1"},
-  [cpu_arm8] = {"/lib/ld-linux-aarch64.so.1", "/lib/ld-musl-aarch64.so.1"},
+// the loader of a program, glibc's, musl's or bionic's: it relocates the image
+// and binds its imports
+static char* const elfs_loader[][3] = {
+  [cpu_ia64] = {"/lib64/ld-linux-x86-64.so.2", "/lib/ld-musl-x86_64.so.1", "/system/bin/linker64"},
+  [cpu_arm8] = {"/lib/ld-linux-aarch64.so.1", "/lib/ld-musl-aarch64.so.1", "/system/bin/linker64"},
 };
 
 typedef union {
@@ -471,14 +471,15 @@ static file* elfs_relo(mode* self) {
 
 // the file the loader opens for library l of a load, into out when given: its
 // length. As written when it has a dot ("libz.so.1"), glibc's soname for c
-// and m, else lib<name>.so: musl's loader takes libc.so and libm.so as itself
-static u32i  elfs_file(const meta* l, bool musl, char* out) {
+// and m, else lib<name>.so: musl's loader takes libc.so and libm.so as itself,
+// and bionic's libraries are named so
+static u32i  elfs_file(const meta* l, clib c, char* out) {
   static const char* const glibc[][2] = {{"c", "libc.so.6"}, {"m", "libm.so.6"}};
   const char* s = l->name->name + 1; // without the quotes
   u32i n = l->name->size - 2;
   bool as_is = 0;
   for(u32i i = 0; i < n; i++) as_is |= s[i] == '.';
-  for(u32i i = 0; !as_is && !musl && i < sizeof glibc / sizeof *glibc; i++)
+  for(u32i i = 0; !as_is && c == cl_glibc && i < sizeof glibc / sizeof *glibc; i++)
     if(slen(glibc[i][0]) == n && alike(glibc[i][0], s, n)) s = glibc[i][1], n = slen(s), as_is = 1;
   if(as_is) { if(out) copy((byte*)out, s, n); return n; }
   if(out) copy(copy(copy((byte*)out, "lib", 3), s, n), ".so", 3);
@@ -503,7 +504,7 @@ static file* elfs_dyno(mode* self) {
   const u64i size = self->data->body - self->data->head;
   const bool prog = self->main != NULL;
   const u64i nph  = prog? 6: 4;
-  char*      ldso = elfs_loader[self->arch.cpu][self->musl];
+  char*      ldso = elfs_loader[self->arch.cpu][self->clib];
   const u64i ldsn = prog? slen(ldso) + 1: 0;
   elfs_syms t;
   elfs_sign(self, &t);
@@ -523,7 +524,7 @@ static file* elfs_dyno(mode* self) {
   for(u32i i = 0; i < self->impn; i++) {
     u32i k = 0;
     while(k < nneed && need[k] != self->imps[i]->lib) k++;
-    if(k == nneed) needs += elfs_file(need[nneed++] = self->imps[i]->lib, self->musl, NULL) + 1;
+    if(k == nneed) needs += elfs_file(need[nneed++] = self->imps[i]->lib, self->clib, NULL) + 1;
   }
   const u64i strs = t.strs + (prog? 0: sonamen + 1) + needs, ndyn = (prog? 9: 10) + nneed;
 
@@ -611,7 +612,7 @@ static file* elfs_dyno(mode* self) {
   if(!prog) *d++ = (dyn64){DT_SONAME, t.strs};
   for(u64i k = 0, at = t.strs + (prog? 0: sonamen + 1); k < nneed; k++) {
     *d++ = (dyn64){DT_NEEDED, at};
-    at += elfs_file(need[k], self->musl, (char*)o + dstr + at) + 1;
+    at += elfs_file(need[k], self->clib, (char*)o + dstr + at) + 1;
   }
   copy((byte*)d, rest, sizeof rest);
   rela64* r = (rela64*)(o + drel);

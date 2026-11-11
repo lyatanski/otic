@@ -175,7 +175,7 @@ spec("arm8") {
     it("reaches main past 1M from the C start through x16") {
       far->tail = farb + sizeof farb;
       far->body = far->head + (1 << 20);
-      e.crt(far, far->head, far->head);
+      e.crt(far, far->head, far->head, cl_glibc);
       byte* p = far->head + (1 << 20) + 8;          // ldr x1, [sp]; add x2, sp, #8; then
       u32i  d = (at32(p + 4) >> 5 & 0xffff) | (at32(p + 8) >> 5 & 0xffff) << 16;
       check(at32(p) == 0x10000000);                  // adr x0, .
@@ -185,10 +185,21 @@ spec("arm8") {
     it("starts a C library through the import slot in acc, kept in x17") {
       far->tail = farb + sizeof farb;
       far->body = far->head;
-      e.crt(far, far->head, NULL);
+      e.crt(far, far->head, NULL, cl_glibc);
       check(at32(far->head) == 0xf9400011);          // ldr x17, [x0]
       check(at32(far->body - 8) == 0xd63f0220);      // blr x17
       check(at32(far->body - 4) == 0xd4200000);      // brk #0
+    }
+    it("starts bionic with the initial sp, main in x2 and 48 0 bytes of structors in x3") {
+      far->tail = farb + sizeof farb;
+      far->body = far->head;
+      e.crt(far, far->head + 8, NULL, cl_bionic);
+      static const u32i want[] = {
+        0xf9400011, 0x10000020, 0xaa0003e2, 0x910003e0, // ldr x17, [x0]; adr x0, .+4; mov x2, x0; mov x0, sp
+        0xd100c3ff, 0xa9007fff, 0xa9017fff, 0xa9027fff, // sub sp, sp, #48; stp xzr, xzr, [sp, #0, #16, #32]
+        0x910003e3, 0xd2800001, 0xd63f0220, 0xd4200000, // mov x3, sp; mov x1, #0; blr x17; brk #0
+      };
+      check(far->body - far->head == sizeof want && !memcmp(far->head, want, sizeof want));
     }
   }
 

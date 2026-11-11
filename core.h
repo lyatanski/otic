@@ -96,6 +96,8 @@ struct unit {
 // arch
 typedef enum { cpu_ia64, cpu_arm8 } chip;
 typedef enum { os_linux, os_mac, os_win } osys;
+// a Linux program's C library: its loader, the names of its libraries and its start
+typedef enum { cl_glibc, cl_musl, cl_bionic } clib;
 #define WIDE (1 << 24) // calc op flag: on 64 bits, for pointers and long
 #define TEST (1 << 25) // calc op flag: a comparison sets the flags only, for flag and cond
 #define HELD 4         // scratch registers: kept left operands past these are on the stack
@@ -137,9 +139,10 @@ typedef struct {
   // The call to func, which link may point elsewhere, NULL through [acc]
   byte* (*ffi)(file*, const byte* func, u32i argc, u32i fixed, osys os);
   // entry of a C library, called by boot: start(main, argc, argv, 0, 0, 0)
-  // with argc and argv from the initial stack. start NULL: through the import
+  // with argc and argv from the initial stack, or for bionic start(stack, 0,
+  // main, structors), the structors all 0. start NULL: through the import
   // slot whose address is in acc
-  void (*crt)(file*, const byte* main, const byte* start);
+  void (*crt)(file*, const byte* main, const byte* start, clib c);
   void (*flag)(file*, u32i op);                    // acc = 1 when the comparison op of a TEST calc held, else 0
   void (*cond)(file*, u32i op, bool hold);         // branch when it held (hold) or failed, patched by back
   // a left operand in acc kept while the right one is computed: pushed, with
@@ -308,7 +311,7 @@ struct mode {
   file* text; // binary code
   byte* main; // entry of main in text, NULL in a library
   byte  libs; // what a source without main makes
-  bool  musl; // a Linux image is loaded by musl's loader and names its libraries, not glibc's
+  clib  clib; // the C library of a Linux image: its loader, its libraries' names, its start
   byte* boot; // what the boot stub calls: main, or crt
   byte* hail; // main's entry for C code (emit.hail), main when it has none
   file* data; // non-zero initialized data

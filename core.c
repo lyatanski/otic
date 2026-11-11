@@ -1686,19 +1686,21 @@ void  make(mode* self) {
     if(libc && libc->kind == call && libc->ext && libc->addr) {
       if(self->impn && self->libs) fail("cannot call a library from a program with a C library linked in\n");
       self->boot = self->text->body;
-      emit(self, crt, self->main, libc->addr);
+      emit(self, crt, self->main, libc->addr, cl_glibc);
     }
     // a Linux program written with imports starts through the shared libc
-    // the same way, its __libc_start_main an import too (libs is set only
-    // when writing: running binds the imports itself)
+    // the same way, its __libc_start_main (bionic's __libc_init) an import
+    // too (libs is set only when writing: running binds the imports itself)
     else if(self->impn && self->libs && self->form.os == os_linux) {
+      item* start = self->clib == cl_bionic? sget(self, "__libc_init"): sget(self, "__libc_start_main");
+      if(self->clib == cl_bionic) libc = find(self, 0, start);
       if(!libc || libc->kind != call || !libc->lib)
-        libc = mint(self, (meta){.name = sget(self, "__libc_start_main"), .kind = call, .ext = 1,
+        libc = mint(self, (meta){.name = start, .kind = call, .ext = 1,
                                  .type = find(self, 0, sget(self, "int")),
                                  .lib = rack(self, sget(self, "\"c\""))});
       self->boot = self->text->body;
       spot(self, port(self, libc));
-      emit(self, crt, self->main, NULL);
+      emit(self, crt, self->main, NULL, self->clib);
     }
     emit(self, link, self->text->head, self->boot);
   }
