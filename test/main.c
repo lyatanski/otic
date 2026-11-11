@@ -113,6 +113,8 @@ static char* tic(void) {
   return path? path: "bins/one";
 }
 
+static char said[96]; // what tic said when it failed
+
 // `tic` alone: the value main returned, as printed on the last line
 static int  jit(void) {
   int fd[2];
@@ -123,9 +125,9 @@ static int  jit(void) {
   char out[256], *last = out;
   int n = read(fd[0], out, sizeof out - 1);
   close(fd[0]);
-  if(code == 1) return bad;
+  out[n > 0? n: 0] = 0;
+  if(code == 1) { snprintf(said, sizeof said, "%.*s", (int)sizeof said - 1, out); return bad; }
   if(code || n <= 0) return odd;
-  out[n] = 0;
   for(char* c = out; *c; c++)
     if(*c == '\n' && c[1]) last = c + 1;
   int value;
@@ -169,15 +171,16 @@ static bool written(const char* src) {
 static char* tried(const char* src, int run, int want) {
   if(!written(src)) return "cannot write the case to bins/";
 
-  static char why[64];
+  static char why[192];
   char w[16], g[16];
   int got = jit();
   char* how = "exec";
   if(got == run) { got = exe(1); how = "exe"; }
   else want = run;
   if(got == want) return NULL;
-  snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s"),
-           how, shown(want, w), shown(got, g));
+  bool told = got == bad && how[3] == 'c'; // exec failed: with what tic said
+  snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s") "%s%.*s",
+           how, shown(want, w), shown(got, g), told? ": ": "", told? (int)strcspn(said, "\n"): 0, said);
   return why;
 }
 

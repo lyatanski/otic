@@ -40,7 +40,8 @@ spec("pe32") {
       check(h->coff.arch == 0x8664 && h->coff.nsec == 2 && h->opt.magic == 0x20b);
       check(h->opt.system == 3 && h->opt.org == 0x140000000);
       start(cpu_arm8, CODE, 12, "", 0, 6);
-      check((out = packed(pe32)) && ((pe32_head*)out->head)->coff.arch == 0xaa64);
+      check((out = packed(pe32)) && (h = (pe32_head*)out->head) && h->coff.arch == 0xaa64);
+      check(h->opt.os[0] == 6 && h->opt.os[1] == 2 && h->opt.sub[0] == 6 && h->opt.sub[1] == 2);
     }
     it("enters at a stub after the code: exit(main())") {
       start(cpu_ia64, CODE, 12, "", 0, 6);

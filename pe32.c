@@ -10,8 +10,10 @@
 // import address table, in the file, each holding its lookup entry until the
 // loader binds it (Windows skips a table whose first entry is 0).
 
-static const struct { u16i arch, os; } pe32_cpu[] = {
-  [cpu_ia64] = {0x8664, 6}, [cpu_arm8] = {0xaa64, 10}, // Vista, Windows 10
+// the machine, and the Windows version the image asks for, as MSVC writes it:
+// arm64 Windows did not load one that asked for 10.0 (invalid image format)
+static const struct { u16i arch, os[2]; } pe32_cpu[] = {
+  [cpu_ia64] = {0x8664, {6, 0}}, [cpu_arm8] = {0xaa64, {6, 2}}, // Vista, Windows 8
 };
 
 // byte offset of a member: its address in a struct placed at 0
@@ -189,8 +191,8 @@ file* pe32_pack(mode* self) {
       .org    = org,
       .salign = salign,
       .falign = falign,
-      .os     = {pe32_cpu[cpu].os},
-      .sub    = {pe32_cpu[cpu].os},
+      .os     = {pe32_cpu[cpu].os[0], pe32_cpu[cpu].os[1]},
+      .sub    = {pe32_cpu[cpu].os[0], pe32_cpu[cpu].os[1]},
       .size   = drva + up(vmsz, salign),
       .head   = head,
       .system = 3,      // console
