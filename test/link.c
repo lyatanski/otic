@@ -134,8 +134,9 @@ static item* say(u32i at, char* name, meta* x) {
   return s;
 }
 
-// the kinds of meaning, a function at its offset in text
-#define DEF  {.kind = call, .addr = text->head + 1}
+// the kinds of meaning, a function at its offset in text, returning an int
+static meta whole = {.kind = base, .size = 4};
+#define DEF  {.kind = call, .type = &whole, .addr = text->head + 1}
 #define WEAK {.kind = call, .addr = text->head + 2, .weak = 1}
 #define PEND {.kind = pend, .ext = 1, .size = VARY}
 #define DECL {.kind = call}
@@ -381,7 +382,7 @@ spec("link") {
   }
 
   context("tie") {
-    meta  f = DEF, g = {.kind = call, .addr = text->head + 3, .size = 2}, ext = {.kind = call, .addr = text->head + 4, .ext = 1, .size = VARY};
+    meta  f = DEF, g = {.kind = call, .type = &whole, .addr = text->head + 3, .size = 2}, ext = {.kind = call, .addr = text->head + 4, .ext = 1, .size = VARY};
     meta  lng = {.kind = base, .size = 8};
     // a call at in text to name, from unit at its line
     #define FIX(off, s, u, l, ...) \
@@ -409,7 +410,7 @@ spec("link") {
     it("binds a call the way its unit sees the name, C code's as all do") {
       start("main.c");
       nest(&self, (unit){.path = "b.c"});
-      meta own = {.kind = call, .addr = text->head + 5};
+      meta own = {.kind = call, .type = &whole, .addr = text->head + 5};
       say(1, "f", &f);
       say(2, "f", &own);
       say(2, "e", &ext);

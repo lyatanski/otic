@@ -330,8 +330,6 @@ struct mode {
   u32i  fore; // the import slots fore bytes before data, for a form that wants them
               // in the file (PE's import address table); 0: after bss
   u32i  most; // largest alignment of data or code an object asks for
-  meta* rune; // char: what a string literal points to
-  meta* real; // real: a 64-bit floating point number
 
   poke  hold;
   poke  drop;

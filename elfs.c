@@ -165,8 +165,8 @@ void elfs_take(mode* self, file* f) {
     if(!name) continue;
     const meta*  prev = self->core.find(self, 0, name);
     u32i   held = prev? self->core.heft(prev): 0;
-    meta   x = {.name = name, .kind = glob, .unit = self->unit,
-                .weak = s->bind == STB_WEAK || s->shidx == SHN_COMMON};
+    meta   x = {.name = name, .kind = glob, .type = self->core.find(self, 0, self->core.name(self, 0, "int", 3)),
+                .unit = self->unit, .weak = s->bind == STB_WEAK || s->shidx == SHN_COMMON};
     if(held > 2 && x.weak) continue;
     if(held == 4) flop("'%.*s' is defined twice\n", nick(name));
     if(prev && prev->lib) flop("'%.*s' is declared before the object\n", nick(name));

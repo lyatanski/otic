@@ -78,7 +78,7 @@ static void ario_name(mode* self, meta* x, char* name, u64i len, u64i off) {
     fail("bad archive index: %s\n", home(self)->path);
   item* s = hget(self, self->unit, name, len);
   if(s->data) return;
-  *x = (meta){.name = s, .kind = pend, .ext = 1, .size = VARY, .slot = (s32i)off, .unit = self->unit};
+  *x = (meta){.name = s, .kind = pend, .type = find(self, 0, hget(self, 0, "int", 3)), .ext = 1, .size = VARY, .slot = (s32i)off, .unit = self->unit};
   s->data = x;
 }
 
