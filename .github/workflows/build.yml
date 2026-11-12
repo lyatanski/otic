@@ -30,7 +30,7 @@ jobs:
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" ${{ matrix.vcarch }} >nul && set" >> $env:GITHUB_ENV
       - name: Build
-        run:  $CC $CFLAGS -Os ${OUT}tic main.c
+        run:  $CC $CFLAGS -O3 ${OUT}tic main.c
       - name: Module specs
         run:  for m in core link ario ia64 arm8 elfs mach pe32; do $CC $CFLAGS ${OUT}spec-$m test/$m.c && ./spec-$m || exit 1; done
       - name: Test

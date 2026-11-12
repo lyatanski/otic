@@ -12,13 +12,13 @@ executable, shared library or object file.
 ## Build
 
 ```sh
-gcc -Os -o tic main.c
+gcc -O3 -o tic main.c
 ```
 
 With MSVC, from a Developer Command Prompt:
 
 ```bat
-cl /std:clatest /Os /Fetic main.c
+cl /std:clatest /O3 /Fetic main.c
 ```
 
 ## Usage
