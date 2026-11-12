@@ -1,7 +1,7 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-enum { tend, ttag, tnum };
+enum { tend, ttag, tnum, treal };
 // text is held at its most, the pages touched as it fills: code points into
 // it. Data starts at DATA and doubles as needed, up to below WANT: what points
 // into it is an offset
@@ -18,7 +18,7 @@ char  esc(char v) { return v == 'n'? '\n': v == 't'? '\t': v == 'r'? '\r': v == 
 
 void chop(mode* self) {
   s64i  ival = 0;
-  s64i  fval = 0;
+  u64i  fval = 0;
   u32i  kind = tend;
   byte* c = home(self)->code->body;
 
@@ -88,9 +88,16 @@ void chop(mode* self) {
     case '0': case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':
       while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
-      if(*c == '.')
-        while(*c++ && (*c >= '0' && *c <= '9')) fval = fval * 10 + *c - '0';
-      else if(*c == 'B' || *c == 'b')
+      // a real: digits with a . or an exponent, its value rounded by the host
+      if(*c == '.' || ((*c == 'e' || *c == 'E') && ((c[1] >= '0' && c[1] <= '9')
+         || ((c[1] == '+' || c[1] == '-') && c[2] >= '0' && c[2] <= '9')))) {
+        char*  end;
+        double v = strtod((char*)home(self)->code->body, &end); // from the token's start
+        copy((byte*)&fval, &v, sizeof v);
+        c = (byte*)end;
+        kind = treal; break;
+      }
+      if(*c == 'B' || *c == 'b')
         while(*c++ && (*c == '0' || *c == '1')) ival = ival *  2 + *c - '0';
       else if(*c == 'O' || *c == 'o')
         while(*c++ && (*c >= '0' && *c <= '7')) ival = ival *  8 + *c - '0';
@@ -115,7 +122,7 @@ void chop(mode* self) {
     home(self)->talk.hash = hget(self, self->unit, (char*)home(self)->code->body, c - home(self)->code->body);
   }
   else
-    home(self)->talk.ival = kind == tnum? ival: 0;
+    home(self)->talk.ival = kind == tnum? (u64i)ival: kind == treal? fval: 0;
   home(self)->talk.kind = kind;
   home(self)->code->body = c;
 }
@@ -161,7 +168,7 @@ meta* mint(mode* self, meta x) {
 // size, and slot, longs and more (a function's parameters, a bit-field's bits)
 static u64i  sire(const meta* x) {
   u64i h = (u64i)(uintptr_t)x->type ^ (u64i)x->kind << 56 ^ (u64i)x->size << 24;
-  h = (h ^ (u64i)(u32i)x->slot << 32 ^ (u64i)x->longs << 8 ^ x->more) * 0x9e3779b97f4a7c15ull;
+  h = (h ^ (u64i)(u32i)x->slot << 32 ^ (u64i)x->longs << 8 ^ (u64i)x->reals << 16 ^ x->more) * 0x9e3779b97f4a7c15ull;
   return h ^ h >> 31;
 }
 
@@ -171,7 +178,7 @@ static meta** lode(const mode* self, const meta* x) {
   for(u64i i = sire(x) & mask;; i = (i + 1) & mask) {
     meta* y = self->made[i];
     if(!y || (y->kind == x->kind && y->type == x->type && y->size == x->size && y->slot == x->slot
-              && y->longs == x->longs && y->more == x->more)) return self->made + i;
+              && y->longs == x->longs && y->reals == x->reals && y->more == x->more)) return self->made + i;
   }
 }
 
@@ -200,9 +207,9 @@ meta* knot(mode* self, what kind, meta* type, u32i size) {
 meta* href(mode* self, meta* type) { return knot(self, refs, type, 8); }
 
 // the type of a function returning type, of argc parameters (-1: unknown),
-// the 64-bit ones in longs, variadic when more, made once
-meta* mold(mode* self, meta* type, s32i argc, byte longs, bool more) {
-  return sole(self, (meta){.kind = proc, .type = type, .slot = argc, .longs = longs, .more = more});
+// the 64-bit ones in longs, the reals in reals, variadic when more, made once
+meta* mold(mode* self, meta* type, s32i argc, byte longs, byte reals, bool more) {
+  return sole(self, (meta){.kind = proc, .type = type, .slot = argc, .longs = longs, .reals = reals, .more = more});
 }
 
 // a pointer to a function type, NULL for the rest
@@ -212,16 +219,18 @@ meta* aimp(meta* t) { return t && t->kind == refs && t->type->kind == proc? t->t
 meta* elem(const meta* t) { return t && (t->kind == refs || t->kind == many)? t->type: NULL; }
 u32i  wide(const meta* t) { return elem(t) || (t && (t->kind == base || t->kind == bitf) && t->size == 8)? WIDE: 0; }
 u32i  span(const meta* t) { return t? t->size: 4; }
+// the type real
+#define flot(self, t) ((t) && (t) == (self)->real)
 u32i  lean(meta* t) { return t->kind == many? lean(t->type): t->kind == list? (u32i)t->slot: t->size; }
 
 // deferred operand: code is emitted only when the value must be in acc
-typedef enum { vacc, vnum, vloc, vglo, vmem, vcmp, vreg } vkind;
+typedef enum { vacc, vnum, vloc, vglo, vmem, vcmp, vreg, vflo } vkind;
 // ival: value, frame slot, data offset or register of a local; vmem: its
 // address is in acc; vcmp: the op of a comparison whose result is in the
-// flags, for a branch on it
-typedef struct { vkind kind; s32i ival; meta* type; } oper;
-#define cnst(n) ((oper){vnum, (n), NULL})
-#define acc(t)  ((oper){vacc, 0, (t)})
+// flags, for a branch on it; vflo: a real constant, its bits in fval
+typedef struct { vkind kind; s32i ival; meta* type; u64i fval; } oper;
+#define cnst(n) ((oper){vnum, (n), NULL, 0})
+#define acc(t)  ((oper){vacc, 0, (t), 0})
 
 // size bytes of data, or of bss when zero: their offset. Data may move: keep
 // the offset, not an address into it
@@ -327,9 +336,29 @@ oper  sow(mode* self, oper x, meta* f) {
   return bite(self, f);
 }
 
+// the value of a constant, an int or a real
+double  sum(oper x) {
+  double v = x.ival;
+  if(x.kind == vflo) copy((byte*)&v, &x.fval, sizeof v);
+  return v;
+}
+
+// a real constant of value v
+oper  flo(mode* self, double v) {
+  oper x = {vflo, 0, self->real, 0};
+  copy((byte*)&x.fval, &v, sizeof v);
+  return x;
+}
+
 oper  load(mode* self, oper x) {
   meta* t = x.type;
   if(x.kind == vcmp) { emit(self, flag, x.ival); return acc(NULL); }
+  if(x.kind == vflo) { // 0.0 is a move, another one is read from data
+    if(!x.fval) { emit(self, move, 0); return acc(t); }
+    u32i off = lay(self, 8, 0, 8);
+    copy(self->data->head + off, &x.fval, 8);
+    x = (oper){vglo, (s32i)off, t, 0};
+  }
   if(x.kind == vreg) { emit(self, rop, '=' | wide(t), ACC, x.ival, 0); return acc(t); }
   if(t && t->kind == many) { // an array is the address of its first element
     if(x.kind == vloc) emit(self, addr, x.ival);
@@ -352,7 +381,7 @@ oper  refr(mode* self, oper x) {
   if(x.type && x.type->kind == bitf) flaw(self, "cannot take the address of a bit-field\n");
   if(x.kind == vloc) emit(self, addr, x.ival);
   if(x.kind == vglo) spot(self, x.ival);
-  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp) flaw(self, "cannot take the address\n");
+  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || x.kind == vflo) flaw(self, "cannot take the address\n");
   if(x.kind == vreg) flaw(self, "cannot take the address of a local in a register\n"); // sift keeps such a local in the frame
   return acc(href(self, x.type));
 }
@@ -362,7 +391,7 @@ oper  star(mode* self, oper x) {
   meta* t = elem(x.type);
   if(!t) flaw(self, "not a pointer\n");
   load(self, x);
-  return (oper){vmem, 0, t};
+  return (oper){vmem, 0, t, 0};
 }
 
 // the member of the struct type that the name at hand names
@@ -418,8 +447,8 @@ oper  expr(mode* self, int least);
 
 // the ops a register takes (emit.rop): not a shift, nor * / %
 #define plain(op) (rank(op) != 8 && rank(op) != 10)
-// what a register may hold: a number or a pointer
-#define fits(t) ((t)->kind == refs || ((t)->kind == base && (t)->size))
+// what a register may hold: an integer or a pointer
+#define fits(self, t) ((t)->kind == refs || ((t)->kind == base && (t)->size && !flot(self, t)))
 
 // add a forward call: name, called at at with argc arguments, the C way when ext
 void  post(mode* self, item* name, byte* at, u32i argc, bool ext) {
@@ -444,8 +473,8 @@ void  bind(const mode* self, byte* at, const item* name, const meta* func, u32i 
 // or straight to a function of an object. One in an archive member not pulled
 // yet is asked for, and the call bound when the member is in. C leaves the
 // bytes of a result past its size undefined: an int is cut to 32 bits, a char
-// or short masked
-oper  cabi(mode* self, item* name, meta* func, u32i argc) {
+// or short masked. The arguments that are reals are in real (ffi)
+oper  cabi(mode* self, item* name, meta* func, u32i argc, u32i real) {
   if(func->size != VARY && (argc < func->size || (argc > func->size && !func->more)))
     flaw(self, "'%.*s' takes %d arguments, got %d\n", nick(name), func->size, argc);
   meta* body = func->lib || func->addr? func: find(self, 0, name); // past a prototype
@@ -453,7 +482,7 @@ oper  cabi(mode* self, item* name, meta* func, u32i argc) {
   bool  wait = !func->lib && (!body || !body->addr);
   if(func->lib) spot(self, port(self, func));
   byte* at = emit(self, ffi, func->lib? NULL: wait? self->text->head: body->addr,
-                  argc, func->more? func->size: argc, self->form.os);
+                  argc, func->more? func->size: argc, real | flot(self, func->type) << RETS, self->form.os);
   if(wait) post(self, name, at, argc, 1);
   u32i n = span(func->type);
   if(n && n < 4) emit(self, calc, '&', 1, (1 << n * 8) - 1);
@@ -467,6 +496,49 @@ void  sext(mode* self, oper x) {
   if(x.kind != vnum || x.ival < 0) emit(self, cast, 1);
 }
 
+// a number: an integer or a real, not a pointer, an array nor a struct
+#define digit(t) (!(t) || (t)->kind == base || (t)->kind == bitf)
+
+// x as a value of type t: an integer made a real when t is the real, a real
+// an integer when t is one, truncated to 64 bits, then cut to 32 unless t is
+// wide. A constant stays one when it can
+oper  bend(mode* self, oper x, meta* t) {
+  meta* u = x.type && x.type->kind == bitf? x.type->type: x.type;
+  bool  to = flot(self, t), from = flot(self, u);
+  if(to == from) return x;
+  if(!digit(to? u: t)) flaw(self, "a real is not a pointer, an array or a struct\n");
+  if(x.kind == vnum) return flo(self, x.ival);
+  if(x.kind == vflo && sum(x) > -2147483649.0 && sum(x) < 2147483648.0) return cnst((s32i)sum(x));
+  x = load(self, x);
+  emit(self, turn, to, wide(x.type) != 0);
+  if(to) return acc(self->real);
+  if(!wide(t)) emit(self, cast, 0);
+  return acc(t && t->kind == bitf? t->type: t);
+}
+
+// x as a condition: a real is compared with 0, in the flags, so -0.0 is false
+oper  truth(mode* self, oper x) {
+  if(!flot(self, x.type)) return x;
+  if(x.kind == vflo) return cnst(sum(x) != 0);
+  u32i  op = tokd('!', '=') | WIDE | REAL;
+  load(self, x);
+  emit(self, swap);
+  emit(self, move, 0);
+  emit(self, flop, op | TEST);
+  return (oper){vcmp, (s32i)op, NULL, 0};
+}
+
+// the argument i of a function, or of a pointer to one, of type f, made the
+// type of its parameter when that is a real or the argument is: in real
+// when it is one then
+oper  suit(mode* self, const meta* f, u32i i, oper x, u32i* real) {
+  bool  known = f && i < 6 && (f->kind == proc? f->slot >= 0 && i < (u32i)f->slot: f->size != VARY && i < f->size);
+  if(known && f->reals >> i & 1) x = bend(self, x, self->real);
+  else if(known && flot(self, x.type)) x = bend(self, x, f->longs >> i & 1? find(self, 0, sget(self, "long")): NULL);
+  if(flot(self, x.type)) *real |= 1u << i;
+  return x;
+}
+
 // name(args): each argument is pushed on 64 bits, then popped into its
 // register, the last one moved there from acc. A constant, or a local in a
 // register, waits (late) and is moved to its register once the others are
@@ -476,7 +548,7 @@ oper  dial(mode* self, item* name) {
   bool  trap = name == sget(self, "syscall");
   meta* func = find(self, self->unit, name);
   bool  ffi = func && (func->kind == pend || (func->kind == call && func->ext));
-  u32i  argc = 0, late = 0;
+  u32i  argc = 0, late = 0, real = 0;
   s32i  last = -1; // the argument in acc
   byte *at = NULL, *past = NULL; // around its push
   oper  x[7];
@@ -484,7 +556,7 @@ oper  dial(mode* self, item* name) {
   for(; !twin(self, ')'); argc++) {
     if(argc) skip(self, ',');
     if(argc == 6u + trap) flaw(self, "more than 6 arguments\n");
-    oper  v = x[argc] = expr(self, 1);
+    oper  v = x[argc] = suit(self, func && func->kind == call? func: NULL, argc, expr(self, 1), &real);
     bool  ext = !func || func->kind != call || func->ext || func->longs >> argc & 1; // a long parameter, or one not known yet
     if(!trap && !ffi && (v.kind == vnum || (v.kind == vreg && (wide(v.type) || !ext)))) { late |= 1u << argc; continue; }
     if(!wide(load(self, v).type) && ext) sext(self, v);
@@ -501,7 +573,7 @@ oper  dial(mode* self, item* name) {
     emit(self, trap, argc);
     return acc(NULL);
   }
-  if(ffi) return cabi(self, name, func, argc);
+  if(ffi) return cabi(self, name, func, argc, real);
   if(last >= 0) emit(self, pass, last);
   for(s32i i = argc; i--; ) {
     if(late >> i & 1)
@@ -521,7 +593,7 @@ s32i  room(mode* self, u32i size);
 // the C way (ring). That of an import is read from its slot, one in text is
 // pc-relative: an otic function's entry for C code, when it has one
 oper  hand(mode* self, item* name, meta* func) {
-  meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->more));
+  meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->reals, func->more));
   if(func->lib) { spot(self, port(self, func)); emit(self, read, 8); return acc(t); }
   const meta* body = func->addr? func: find(self, 0, name); // past a prototype
   if(!body || body->kind != call || !body->addr)
@@ -541,20 +613,20 @@ oper  ring(mode* self, oper x) {
   if(!f) flaw(self, "not a function\n");
   if(f != x.type) load(self, x); // else its address is in acc
   s32i  slot = room(self, 8);
-  u32i  argc = 0;
+  u32i  argc = 0, real = 0;
   emit(self, stor, slot, 8);
   self->dials++;
   for(; !twin(self, ')'); argc++) {
     if(argc) { skip(self, ','); emit(self, push); }
     if(argc == 6) flaw(self, "more than 6 arguments\n");
-    oper  y = expr(self, 1);
+    oper  y = suit(self, f, argc, expr(self, 1), &real);
     if(!wide(load(self, y).type)) sext(self, y);
   }
   if(f->slot >= 0 && (argc < (u32i)f->slot || (argc > (u32i)f->slot && !f->more)))
     flaw(self, "the function takes %d arguments, got %d\n", f->slot, argc);
   if(argc) emit(self, push);
   emit(self, addr, slot);
-  emit(self, ffi, NULL, argc, f->more? (u32i)f->slot: argc, self->form.os);
+  emit(self, ffi, NULL, argc, f->more? (u32i)f->slot: argc, real | flot(self, f->type) << RETS, self->form.os);
   u32i n = span(f->type);
   if(n && n < 4) emit(self, calc, '&', 1, (1 << n * 8) - 1);
   if(n == 4) emit(self, cast, 0);
@@ -626,6 +698,7 @@ oper  atom(mode* self) {
   oper x;
   switch(op) {
     case tnum: x = cnst((s32i)home(self)->talk.ival); chop(self); return x;
+    case treal: x = (oper){vflo, 0, self->real, home(self)->talk.fval}; chop(self); return x;
     case '"': {
       u32i off = lay(self, (u32i)(home(self)->talk.hash->size - 1), 0, 8);
       quote(home(self)->talk.hash, self->data->head + off);
@@ -642,11 +715,11 @@ oper  atom(mode* self) {
       bool  value = var && (var->kind == data || var->kind == glob); // a pointer called below
       if(!value && twin(self, '(')) { x = dial(self, name); break; }
       if(var && var->kind == call) { x = hand(self, name, var); break; }
-      if(var && var->kind == pend) { x = (oper){vglo, WANT | ask(self, var), NULL}; break; }
+      if(var && var->kind == pend) { x = (oper){vglo, WANT | ask(self, var), NULL, 0}; break; }
       if(!var || (var->kind != data && var->kind != glob))
         flaw(self, "no variable '%.*s'\n", nick(name));
-      x = (oper){var->kind != data? vglo: var->slot < 0? vloc: vreg, var->slot, var->type};
-      if(var->ext) { spot(self, port(self, var)); emit(self, read, 8); x = (oper){vmem, 0, var->type}; }
+      x = (oper){var->kind != data? vglo: var->slot < 0? vloc: vreg, var->slot, var->type, 0};
+      if(var->ext) { spot(self, port(self, var)); emit(self, read, 8); x = (oper){vmem, 0, var->type, 0}; }
       break;
     }
     case '(':
@@ -670,6 +743,20 @@ oper  atom(mode* self) {
     case '-': case '!': case '~': {
       chop(self);
       x = atom(self);
+      if(flot(self, x.type)) { // -x is -0.0 - x, !x is x == 0.0
+        if(op == '~') flaw(self, "invalid operation on reals\n");
+        if(x.kind == vflo) {
+          if(op == '!') return cnst(sum(x) == 0);
+          x.fval ^= (u64i)1 << 63;
+          return x;
+        }
+        load(self, x);
+        emit(self, swap);
+        if(op == '-') load(self, flo(self, -0.0));
+        else emit(self, move, 0);
+        emit(self, flop, (op == '-'? '-': tokd('=', '=')) | WIDE | REAL);
+        return acc(op == '-'? self->real: NULL);
+      }
       if(x.kind == vnum)
         return cnst(op == '-'? (s32i)(0 - (u32i)x.ival): op == '!'? !x.ival: ~x.ival);
       x = load(self, x);
@@ -689,7 +776,7 @@ oper  atom(mode* self) {
       meta* t = x.type && x.type->kind == many? x.type->type: NULL;
       skip(self, ']');
       if(t && i.kind == vnum && (x.kind == vloc || x.kind == vglo))
-        x = (oper){x.kind, x.ival + i.ival * (s32i)t->size, t};
+        x = (oper){x.kind, x.ival + i.ival * (s32i)t->size, t, 0};
       else x = star(self, pair(self, '+', x, i, mark));
     }
     else if(twin(self, '.')) x = memb(self, x);
@@ -703,10 +790,12 @@ oper  both(mode* self, u32i op, oper x, int r) {
   bool  any  = op == tokd('|', '|'); // the value of x that decides
   byte* mark = self->text->body;
   oper  y;
+  x = truth(self, x);
   if(x.kind == vnum) {
-    y = expr(self, r + 1);
+    y = truth(self, expr(self, r + 1));
     if(!x.ival != any) { trim(self, mark); return cnst(any); } // y is dead
     if(y.kind == vnum) return cnst(!!y.ival);
+    if(y.kind == vcmp) return load(self, y);
     y = load(self, y);
     emit(self, calc, tokd('!', '=') | wide(y.type), 1, 0);
     return acc(NULL);
@@ -714,7 +803,7 @@ oper  both(mode* self, u32i op, oper x, int r) {
   if(x.kind == vcmp) emit(self, cond, x.ival, any);
   else { load(self, x); emit(self, when, any); }
   mark = self->text->body;
-  y = expr(self, r + 1);
+  y = truth(self, expr(self, r + 1));
   if(y.kind == vcmp) load(self, y); // 0 or 1 already
   else emit(self, calc, tokd('!', '=') | wide(load(self, y).type), 1, 0);
   emit(self, jump);
@@ -732,10 +821,50 @@ void  grow(mode* self, oper x, s32i scale, u32i w) {
   if(scale != 1) emit(self, calc, '*' | WIDE, 1, scale);
 }
 
+// x op y as pair does it, one of them a real, the other made one: + - * /,
+// or a comparison left in the flags. Constants are folded by the host
+oper  rpair(mode* self, u32i op, oper x, oper y, kept mark) {
+  u32i  r = rank(op);
+  bool  test = r == 6 || r == 7;
+  if((!test && op != '+' && op != '-' && op != '*' && op != '/') || !digit(x.type) || !digit(y.type))
+    flaw(self, "invalid operation on reals\n");
+  if((x.kind == vnum || x.kind == vflo) && (y.kind == vnum || y.kind == vflo)) {
+    double a = sum(x), b = sum(y);
+    switch(op) {
+      case '+':            return flo(self, a + b);
+      case '-':            return flo(self, a - b);
+      case '*':            return flo(self, a * b);
+      case '/':            return flo(self, a / b);
+      case '<':            return cnst(a <  b);
+      case tokd('<', '='): return cnst(a <= b);
+      case '>':            return cnst(a >  b);
+      case tokd('>', '='): return cnst(a >= b);
+      case tokd('=', '='): return cnst(a == b);
+      default:             return cnst(a != b);
+    }
+  }
+  u32i  k = x.kind == vacc? --self->held: 0; // the scratch of x, when kept
+  if(y.kind == vnum) y = flo(self, y.ival);
+  if(x.kind == vnum) x = flo(self, x.ival);
+  y = load(self, y);
+  if(!flot(self, y.type)) emit(self, turn, 1, wide(y.type) != 0);
+  if(x.kind == vacc && k < HELD && self->dials == mark.dials) {
+    emit(self, lift, mark.at, k);
+    emit(self, take, k);
+  }
+  else if(x.kind == vacc) emit(self, pull);
+  else { emit(self, swap); x = load(self, x); }
+  if(!flot(self, x.type)) emit(self, turn, 1, wide(x.type) != 0);
+  emit(self, flop, op | WIDE | REAL | (test? TEST: 0));
+  if(test) return (oper){vcmp, (s32i)(op | WIDE | REAL), NULL, 0};
+  return acc(self->real);
+}
+
 // x op y, y parsed after mark; x was kept there when it was in acc: in a
 // scratch register unless a call came between. A comparison is left in the
 // flags. pointer + n moves n elements, pointer - pointer counts them; void* by bytes
 oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
+  if(flot(self, x.type) || flot(self, y.type)) return rpair(self, op, x, y, mark);
   meta *ex = elem(x.type), *ey = elem(y.type), *t = NULL; // t: type of the result
   s32i  sx = 1, sy = 1;
   u32i  w = wide(x.type) | wide(y.type), r = rank(op);
@@ -790,7 +919,7 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
       emit(self, calc, c, 0, 0);
     }
   }
-  if(test) return (oper){vcmp, op | w, NULL};
+  if(test) return (oper){vcmp, op | w, NULL, 0};
   if(ex && ey && op == '-' && ex->size > 1) emit(self, calc, '/', 1, ex->size);
   return acc(t);
 }
@@ -812,17 +941,19 @@ u32i  sets(u32i kind) {
 oper  give(mode* self, u32i op, oper x) {
   meta* t = x.type, *f = t && t->kind == bitf? t: NULL;
   if(f) t = f->type; // the value is of its integer type
-  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || (t && (t->kind == many || t->kind == list || t->kind == proc)))
+  if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || x.kind == vflo
+     || (t && (t->kind == many || t->kind == list || t->kind == proc)))
     flaw(self, "cannot assign\n");
   if(x.kind == vreg) { // in the register itself when it takes op; the value stays there
     kept  mark = keep(self, &x); // which keeps nothing
     oper  y = expr(self, 1);
     meta* e = elem(t);
     u32i  w = wide(t);
-    if(op != '=' && (!plain(op) || elem(y.type) || (e && (rank(op) != 9 || e->kind == proc)))) {
+    if(op != '=' && (!plain(op) || elem(y.type) || flot(self, y.type) || (e && (rank(op) != 9 || e->kind == proc)))) {
       y = pair(self, op, x, y, mark);
       op = '=';
     }
+    y = bend(self, y, t); // a register holds no real
     s32i  by = NUM, n = op != '=' && e && e->size? e->size: 1; // pointer += n moves n elements
     if(y.kind == vnum) y.ival *= n;
     else if(y.kind == vreg && n == 1 && (!w || wide(y.type))) by = y.ival;
@@ -842,6 +973,7 @@ oper  give(mode* self, u32i op, oper x) {
   byte* past = self->text->body;
   oper  y = expr(self, 1);
   if(op != '=') y = pair(self, op, x, y, mark);
+  y = bend(self, y, t);
   bool  slot = y.kind == vloc && (y.type->kind == base || y.type->kind == refs);
   if(x.kind == vmem && op == '=' && !f && self->text->body == past
      && (y.kind == vnum || ((slot || y.kind == vreg) && (!wide(t) || wide(y.type))))) {
@@ -879,11 +1011,11 @@ oper  expr(mode* self, int least) {
 // branches on its flags
 void  gate(mode* self) {
   skip(self, '(');
-  oper  x = expr(self, 1);
+  oper  x = truth(self, expr(self, 1));
   skip(self, ')');
   if(x.kind == vreg) { // compared with 0 where it is
     emit(self, rop, tokd('!', '=') | TEST | wide(x.type), x.ival, NUM, 0);
-    x = (oper){vcmp, tokd('!', '='), NULL};
+    x = (oper){vcmp, tokd('!', '='), NULL, 0};
   }
   if(x.kind == vcmp) emit(self, cond, x.ival, 0);
   else { load(self, x); emit(self, when, 0); }
@@ -921,7 +1053,7 @@ s32i  room(mode* self, u32i size) {
 // fresh frame slots
 s32i  stay(mode* self, const item* name, const meta* t, u32i size) {
   u32i  r = name->pick - 1;
-  if(!name->pick || !fits(t) || self->busy >> r & 1) return room(self, size);
+  if(!name->pick || !fits(self, t) || self->busy >> r & 1) return room(self, size);
   self->busy |= 1u << r;
   return (s32i)r;
 }
@@ -958,7 +1090,7 @@ meta* coil(mode* self, meta* type, item** name);
 // names of the parameters may be left out, they are not declared
 meta* plan(mode* self, meta* type) {
   u32i  argc = 0;
-  byte  longs = 0;
+  byte  longs = 0, reals = 0;
   bool  more = 0;
   skip(self, '(');
   for(; !twin(self, ')'); argc++, twin(self, ',')) {
@@ -967,9 +1099,10 @@ meta* plan(mode* self, meta* type) {
     const meta* t = coil(self, sort(self), &n);
     if(!n && !t->size && !argc && twin(self, ')')) break; // (void)
     if(argc < 6 && wide(t)) longs |= 1 << argc;
+    if(argc < 6 && flot(self, t)) reals |= 1 << argc;
   }
   if(argc > 6) flaw(self, "more than 6 parameters\n");
-  return mold(self, type, argc, longs, more);
+  return mold(self, type, argc, longs, reals, more);
 }
 
 // a declarator of type: pointers to type with the name into *name, NULL when
@@ -1153,11 +1286,13 @@ void  seal(mode* self, meta* type, bool glob, s32i slot) {
   }
   else if(glob) {
     oper x = expr(self, 1);
+    if(x.kind == vnum || x.kind == vflo) x = bend(self, x, type);
     byte* at = self->data->head + slot; // after expr: a string in it moves data
-    if(x.kind != vnum || t || type->kind == list)
+    if((x.kind != vnum && x.kind != vflo) || t || type->kind == list)
       flaw(self, "expected a constant\n");
     s64i v = x.ival;
-    if(type->kind == bitf) { // into the bits of its unit
+    if(x.kind == vflo) copy(at, &x.fval, 8);
+    else if(type->kind == bitf) { // into the bits of its unit
       u64i u = 0;
       copy((byte*)&u, at, type->size);
       u ^= (u ^ (u64i)v << type->slot) & ones(type);
@@ -1165,7 +1300,7 @@ void  seal(mode* self, meta* type, bool glob, s32i slot) {
     }
     else copy(at, &v, type->size);
   }
-  else give(self, '=', (oper){slot < 0? vloc: vreg, slot, type});
+  else give(self, '=', (oper){slot < 0? vloc: vreg, slot, type, 0});
 }
 
 // (type){ init }, after the "(": a compound literal, a local that lives to the
@@ -1180,7 +1315,7 @@ oper  lit(mode* self) {
   s32i  slot = room(self, type->size);
   self->lits = self->slot;
   seal(self, type, 0, slot);
-  return (oper){vloc, slot, type};
+  return (oper){vloc, slot, type, 0};
 }
 
 // type declarator (= init)? (, declarator (= init)?)* ;
@@ -1249,7 +1384,7 @@ meta* bulk(mode* self, item* name) {
       meta* t = home(self)->talk.kind == ':'? of: noun(self, of, &n);
       u32i  a = lean(t), at = bit;
       if(twin(self, ':')) {
-        if(t->kind != base || !t->size) flaw(self, "a bit-field must be an integer\n");
+        if(t->kind != base || !t->size || flot(self, t)) flaw(self, "a bit-field must be an integer\n");
         oper  k = expr(self, 1);
         u32i  u = 8 * t->size;
         if(k.kind != vnum || k.ival < 0 || (u32i)k.ival > u || (!k.ival && n))
@@ -1315,14 +1450,14 @@ void  sift(mode* self, u32i top) {
     const meta* x = pin(self->pile, i);
     if(!(ok = sown(c, &n, x->name))) break;
     x->name->pick += 1;
-    if(!fits(x->type)) x->name->pick |= NEVER;
+    if(!fits(self, x->type)) x->name->pick |= NEVER;
   }
   do {
     u32i  k = u->talk.kind, w = 1u << 3 * (loops < 3? loops: 3);
     item* it = k == ttag && p != '.' && p != tokd('-', '>')? u->talk.hash: NULL; // not a member
     item* was = decl;
     // an operand ends before the token: a & after it is no address
-    bool  val = p == tnum || p == ')' || p == ']' || (p == ttag && last != ret && last != alt && last != len);
+    bool  val = p == tnum || p == treal || p == ')' || p == ']' || (p == ttag && last != ret && last != alt && last != len);
     bool  shut = 0; // the ) of a condition: a statement follows
     decl = NULL;
     depth += (k == '{') - (k == '}');
@@ -1335,7 +1470,7 @@ void  sift(mode* self, u32i top) {
     else if(it) {
       if(arm || amp || deep) { // declared, or its address is taken
         if(!(ok = sown(c, &n, it))) break;
-        if(amp || deep || !(stars || fits(of))) it->pick |= NEVER;
+        if(amp || deep || !(stars || fits(self, of))) it->pick |= NEVER;
         if(arm) decl = it;
       }
       if(it->pick && (it->pick & ~NEVER) < 1u << 28) it->pick += w;
@@ -1437,8 +1572,8 @@ void  stmt(mode* self) {
   else if(same(self, "return")) {
     chop(self);
     if(home(self)->talk.kind != ';') {
-      const meta* t = self->func->type;
-      oper  x = expr(self, 1);
+      meta* t = self->func->type;
+      oper  x = bend(self, expr(self, 1), t);
       if(!wide(t) != !wide(load(self, x).type)) { if(wide(t)) sext(self, x); else emit(self, cast, 0); }
     }
     skip(self, ';');
@@ -1519,6 +1654,7 @@ void  decl(mode* self) {
       if(!n && !of->size && !func->size && twin(self, ')')) break; // (void)
       if(!n) { anon = 1; continue; } // an import may leave it out
       if(wide(of)) func->longs |= 1 << func->size;
+      if(flot(self, of)) func->reals |= 1 << func->size;
       seed(self, .name=n, .type=of, .kind=data, .slot=-1); // placed once the body is sifted
     }
     if(func->size > 6) flaw(self, "more than 6 parameters\n");
@@ -1532,7 +1668,7 @@ void  decl(mode* self) {
     if(func->more) flaw(self, "only an import can be variadic\n");
     if(home(self)->talk.kind != '{') flaw(self, "expected function body\n");
     byte* hail = self->text->body;
-    emit(self, hail, self->form.os);
+    emit(self, hail, self->form.os, func->size, func->reals | flot(self, func->type) << RETS);
     func->addr = self->text->body;
     func->hail = hail != func->addr? hail: NULL;
     sift(self, top);
@@ -1655,6 +1791,8 @@ void  make(mode* self) {
   crux(self, "nu16", .size=2);
   crux(self, "int",  .size=4);
   crux(self, "long", .size=8);
+  crux(self, "real", .size=8);
+  self->real = pin(self->pile, self->top - 1);
 
   lead(self, self->name, NULL, un_code);
   reel(self);

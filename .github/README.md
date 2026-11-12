@@ -76,13 +76,19 @@ int main() {
 }
 ```
 
-- types: `void`, `bool`, `byte`, `char`, `nu16`, `int`, `long`, pointers,
-  arrays, structs (anonymous, bit-fields)
+- types: `void`, `bool`, `byte`, `char`, `nu16`, `int`, `long`, `real`,
+  pointers, arrays, structs (anonymous, bit-fields)
+- `real` is a 64-bit floating point number, C's `double`: literals `1.5`,
+  `.5`, `1e3`; with an integer it computes as a real, and an assignment,
+  argument or `return` converts between them (toward zero). It takes
+  `+ - * /`, comparisons (a NaN compares unordered) and conditions (`-0.0` is
+  false), and passes to and from C code the C way
 - function pointers: `int (*f)(int, long)`,
   `int (*ops[4])(int)`; a function's name (or `&name`) is its address. Calls
   through a pointer follow the C ABI, so imports and C callbacks (`qsort`)
-  work both ways (on Windows x86-64 an otic function's address is a small
-  Win64 entry); a global can't be initialized with one yet
+  work both ways (an otic function's address is a small entry for C code on
+  Windows x86-64, or when it takes or gives a real); a global can't be
+  initialized with one yet
 - statements: `when`/`else`, `while`, `break`, `skip`, `return`
 - `sizeof` of a type name or an operand (not computed); character literals
   (`'a'`, `'\n'`) are numbers

@@ -426,11 +426,13 @@ void arm8_dial(file* data) {
   arm8_put(data, (u32i)I3206_BL);                                   // bl, patched by link
 }
 
-// the condition code of comparison op
+// the condition code of comparison op. An unordered pair of reals (a NaN)
+// sets C and V: < and <= are mi and ls, which fail then, as gt and ge do
 arm8_cond arm8_cc(u32i op) {
-  op &= ~(WIDE | TEST);
+  bool f = op & REAL;
+  op &= ~(WIDE | TEST | REAL);
   return op == tokd('=', '=')? COND_EQ: op == tokd('!', '=')? COND_NE:
-         op == '<'? COND_LT: op == tokd('<', '=')? COND_LE: op == '>'? COND_GT: COND_GE;
+         op == '<'? f? COND_MI: COND_LT: op == tokd('<', '=')? f? COND_LS: COND_LE: op == '>'? COND_GT: COND_GE;
 }
 
 void arm8_flag(file* data, u32i op) {
@@ -468,6 +470,37 @@ void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
     default: // comparison: cmp w0, w1, then cset w0, cc unless TEST
       arm8_put(data, I3502_SUBS | w1 | 31);
       if(!(op & TEST)) arm8_flag(data, op);
+  }
+}
+
+// fmov d<d>, x<x> (in) or fmov x<x>, d<d>
+static void arm8_fmov(file* data, bool in, int d, int x) {
+  arm8_put(data, in? 0x9e670000 | x << 5 | d: 0x9e660000 | d << 5 | x);
+}
+
+// d0 = x0, d1 = x1, then d0 = d0 op d1 and x0 = d0, or fcmp d0, d1
+void arm8_flop(file* data, u32i op) {
+  u32i o = op & ~(WIDE | TEST | REAL);
+  arm8_fmov(data, 1, 0, r0);
+  arm8_fmov(data, 1, 1, r1);
+  if(o == '+' || o == '-' || o == '*' || o == '/') {
+    arm8_put(data, (o == '+'? 0x1e612800: o == '-'? 0x1e613800: o == '*'? 0x1e610800: 0x1e611800)); // fadd/fsub/fmul/fdiv d0, d0, d1
+    arm8_fmov(data, 0, 0, r0);
+    return;
+  }
+  arm8_put(data, 0x1e612000);                                       // fcmp d0, d1
+  if(!(op & TEST)) arm8_flag(data, op);
+}
+
+// x0 = (double)w0 or x0, or (long)x0 truncated
+void arm8_turn(file* data, bool real, bool wide) {
+  if(real) {
+    arm8_put(data, wide? 0x9e620000: 0x1e620000);                  // scvtf d0, x0 or w0
+    arm8_fmov(data, 0, 0, r0);
+  }
+  else {
+    arm8_fmov(data, 1, 0, r0);
+    arm8_put(data, 0x9e780000);                                     // fcvtzs x0, d0
   }
 }
 
@@ -539,25 +572,50 @@ void arm8_crt(file* data, const byte* main, const byte* start, clib c) {
   arm8_put(data, 0xd4200000);                                       // brk #0: start never returns
 }
 
-// AAPCS64: arguments in x0-x5, sp is always 16-byte aligned here. Apple passes
-// the variadic ones on the stack instead, 8 bytes each, through x9-x14
-byte* arm8_ffi(file* data, const byte* func, u32i argc, u32i fixed, osys os) {
+// AAPCS64: integers in x0-x5, reals in d0-d7, each in order, sp is always
+// 16-byte aligned here. Apple passes the variadic ones on the stack instead,
+// 8 bytes each, through x9-x14; Windows passes all of a variadic call in the
+// x registers of their places. A real result is in d0
+byte* arm8_ffi(file* data, const byte* func, u32i argc, u32i fixed, u32i real, osys os) {
   u32i vary = os == os_mac && fixed < argc? argc - fixed: 0, room = (vary * 8 + 15) & -16;
+  if(os == os_win && fixed < argc) real &= 1u << RETS;
+  u32i ints = 0, flts = 0; // the registers of each kind the named ones take
+  for(u32i i = 0; i < argc - vary; i++) real >> i & 1? flts++: ints++;
   if(!func) arm8_put(data, 0xf9400010);                             // ldr x16, [x0]
   for(u32i i = argc; i--; )
-    arm8_put(data, 0xf84107e0 | (vary && i >= fixed? 9 + i - fixed: i)); // ldr xi, [sp], #16
+    if(vary && i >= fixed) arm8_put(data, 0xf84107e0 | (9 + i - fixed)); // ldr x(9+j), [sp], #16
+    else if(real >> i & 1) arm8_put(data, 0xfc4107e0 | --flts);    // ldr dk, [sp], #16
+    else arm8_put(data, 0xf84107e0 | --ints);                       // ldr xk, [sp], #16
   if(room) arm8_put(data, 0xd10003ff | room << 10);                 // sub sp, sp, #room
   for(u32i j = 0; j < vary; j++)
     arm8_put(data, 0xf90003e0 | j << 10 | (9 + j));                 // str x(9+j), [sp, #8j]
   byte* at = func? data->body: NULL;
   if(func) { arm8_dial(data); arm8_link(data, at, func); }
   else arm8_put(data, 0xd63f0200);                                  // blr x16
+  if(real >> RETS & 1) arm8_fmov(data, 0, 0, r0);                   // fmov x0, d0
   if(room) arm8_put(data, 0x910003ff | room << 10);                 // add sp, sp, #room
   return at;
 }
 
-// AAPCS64 passes the arguments in x0-x7 everywhere: otic's way
-void arm8_hail(file* data, osys os) { (void)data; (void)os; }
+// AAPCS64 passes the integers in x0-x7 everywhere, otic's way, and the reals
+// in d0-d7, each in order: each moves to the x register of its place. A real
+// result goes back in d0, through a frame
+void arm8_hail(file* data, osys os, u32i argc, u32i real) {
+  (void)os;
+  u32i ints = 0, flts = 0;
+  for(u32i i = 0; i < argc; i++) real >> i & 1? flts++: ints++;
+  for(u32i i = argc; i--; ) { // down: a register moves to one past it, not yet read
+    if(real >> i & 1) { arm8_fmov(data, 0, --flts, i); continue; } // fmov xi, dk
+    if(--ints != i) arm8_put(data, X | I3510_ORR | ints << 16 | 31 << 5 | i); // mov xi, xk
+  }
+  if(!(real >> RETS & 1)) return;
+  arm8_put(data, 0xa9bf7bfd);                                       // stp x29, x30, [sp, #-16]!
+  arm8_put(data, 0x910003fd);                                       // mov x29, sp
+  arm8_put(data, I3206_BL | 4);                                     // bl the function, past what follows
+  arm8_fmov(data, 1, 0, r0);                                        // fmov d0, x0
+  arm8_put(data, 0xa8c17bfd);                                       // ldp x29, x30, [sp], #16
+  arm8_put(data, form(brur, ret, .rn=r30));                         // ret
+}
 
 const emit arm8 = {
   .move = arm8_move,
@@ -598,6 +656,8 @@ const emit arm8 = {
   .hail = arm8_hail,
   .rop  = arm8_rop,
   .stow = arm8_stow,
+  .flop = arm8_flop,
+  .turn = arm8_turn,
   .cpu  = cpu_arm8,
   .regs = 10,
 };

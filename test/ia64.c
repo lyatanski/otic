@@ -176,8 +176,8 @@ spec("ia64") {
       // push rdi; push rsi; mov rdi, rcx; mov rsi, rdx; mov rdx, r8; mov rcx, r9;
       // mov r8, [rsp+56]; mov r9, [rsp+64]; call +3; pop rsi; pop rdi; ret
       check(emits("57 56 48 89 cf 48 89 d6 4c 89 c2 4c 89 c9 4c 8b 44 24 38 4c 8b 4c 24 40 "
-                  "e8 03 00 00 00 5e 5f c3", e.hail(t, os_win)));
-      check(emits("", e.hail(t, os_linux)));
+                  "e8 03 00 00 00 5e 5f c3", e.hail(t, os_win, 0, 0)));
+      check(emits("", e.hail(t, os_linux, 0, 0)));
     }
     it("saves a register of a local in a slot, and brings it back") {
       check(emits("48 89 5d f8", e.stow(t, 0, -8, 0)));            // mov [rbp-8], rbx
@@ -195,6 +195,55 @@ spec("ia64") {
       // push rcx (6 times); mov rcx, rsp; call [rax]; hlt
       check(emits("48 8d 7c 24 08 31 f6 48 8d 15 f2 ff ff ff 48 83 e4 f0 31 c9 "
                   "51 51 51 51 51 51 48 89 e1 ff 10 f4", e.crt(t, t->head, NULL, cl_bionic)));
+    }
+  }
+
+  context("reals") {
+    it("computes in xmm0 and xmm1, back in rax") {
+      // movq xmm0, rax; movq xmm1, rcx; addsd xmm0, xmm1; movq rax, xmm0
+      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 f2 0f 58 c1 66 48 0f 7e c0", e.flop(t, '+')));
+      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 f2 0f 5e c1 66 48 0f 7e c0", e.flop(t, '/'))); // divsd
+    }
+    it("compares < the other way round, so a NaN fails it") {
+      // ...; ucomisd xmm1, xmm0; ja, or jbe when it fails
+      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 66 0f 2e c8", e.flop(t, '<' | REAL | TEST)));
+      check(emits("0f 87 00 00 00 00", e.cond(t, '<' | REAL, 1)));
+      check(emits("0f 86 00 00 00 00", e.cond(t, '<' | REAL, 0)));
+      check(emits("0f 83 00 00 00 00", e.cond(t, tokd('>', '=') | REAL, 1))); // jae
+    }
+    it("compares == as equal and ordered, in ZF") {
+      // ...; ucomisd xmm0, xmm1; setnp al; sete cl; and cl, al; setne al; movzx eax, al
+      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 66 0f 2e c1 0f 9b c0 0f 94 c1 20 c1 0f 95 c0 0f b6 c0",
+                  e.flop(t, tokd('=', '=') | REAL)));
+      check(emits("0f 84 00 00 00 00", e.cond(t, tokd('!', '=') | REAL, 1))); // je
+    }
+    it("turns an int or a long into a real, and a real into a long") {
+      check(emits("f2 0f 2a c0 66 48 0f 7e c0", e.turn(t, 1, 0)));     // cvtsi2sd xmm0, eax; movq rax, xmm0
+      check(emits("f2 48 0f 2a c0 66 48 0f 7e c0", e.turn(t, 1, 1)));  // cvtsi2sd xmm0, rax; ...
+      check(emits("66 48 0f 6e c0 f2 48 0f 2c c0", e.turn(t, 0, 1)));  // movq xmm0, rax; cvttsd2si rax, xmm0
+    }
+    it("passes SysV reals in xmm registers, counted in al, and takes a real result from xmm0") {
+      // mov r11, [rax]; pop rsi; pop rax; movq xmm0, rax; pop rdi; push rsp; push [rsp];
+      // and rsp, -16; mov eax, 1; call r11; movq rax, xmm0; mov rsp, [rsp+8]
+      check(emits("4c 8b 18 5e 58 66 48 0f 6e c0 5f 54 ff 34 24 48 83 e4 f0 b8 01 00 00 00 "
+                  "41 ff d3 66 48 0f 7e c0 48 8b 64 24 08", e.ffi(t, NULL, 3, 3, 0x2 | 1 << RETS, os_linux)));
+    }
+    it("passes Win64 reals in both registers of their place") {
+      // mov r11, [rax]; pop r8; movq xmm2, r8; pop rdx; pop rcx; movq xmm0, rcx; ...
+      check(emits("4c 8b 18 41 58 66 49 0f 6e d0 5a 59 66 48 0f 6e c1 54 ff 34 24 48 83 e4 f0 "
+                  "48 83 ec 20 41 ff d3 48 8b 64 24 28", e.ffi(t, NULL, 3, 1, 0x5, os_win)));
+    }
+    it("enters from SysV C code with reals, each to the register of its place") {
+      // mov rcx, rsi; movq rdx, xmm1; mov rsi, rdi; movq rdi, xmm0;
+      // call +6; movq xmm0, rax; ret
+      check(emits("48 89 f1 66 48 0f 7e ca 48 89 fe 66 48 0f 7e c7 e8 06 00 00 00 66 48 0f 6e c0 c3",
+                  e.hail(t, os_linux, 4, 0x5 | 1 << RETS)));
+    }
+    it("enters from Win64 C code with reals") {
+      // ...; mov rcx, r9; movq rsi, xmm1; mov r8, [rsp+56]; mov r9, [rsp+64];
+      // call +8; movq xmm0, rax; pop rsi; pop rdi; ret
+      check(emits("57 56 48 89 cf 48 89 d6 4c 89 c2 4c 89 c9 66 48 0f 7e ce 4c 8b 44 24 38 4c 8b 4c 24 40 "
+                  "e8 08 00 00 00 66 48 0f 6e c0 5e 5f c3", e.hail(t, os_win, 2, 0x2 | 1 << RETS)));
     }
   }
 }

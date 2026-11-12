@@ -1300,6 +1300,68 @@ spec(TAG) {
     #undef LIB
   }
 
+  context("reals") { // 64-bit IEEE doubles
+    it("reads real literals")
+      expect(1, "int main() { return 1.5 + .5 + 1e3 + 2.5E-1 + 1. == 1003.25; }\n");
+    it("folds reals, and cuts one to an int toward zero")
+      expect(9, "int main() { int a = 7.9, b = -2.5; return a + (b == -2) * 0 + (1 / 4.0 == 0.25) - 1 + (-b); }\n");
+    it("computes reals at run time, an int operand made one")
+      expect(84, "int main() { real a = 1.5, b = 2.25; int i = 4; long l = 10;\n"
+                 "  real c = a * b + i - a / b * l;\n" // 3.375 + 4 - 6.67
+                 "  int k = c * 100; return k + 14; }\n");
+    it("truncates a negative real toward zero, and a real past 32 bits into a long")
+      expect(3, "int main() { real a = -7, big = 1e12; int k = a / 2; long b = big;\n"
+                "  return -k * (b / 1000000 == 1000000); }\n");
+    it("compares reals, a NaN unordered")
+      expect(96, "int main() { real z = 0, one = 1, n = z / z; int r = 0;\n"
+                  "  when(n < one) r += 1; when(n <= one) r += 1; when(n > one) r += 1;\n"
+                  "  when(n >= one) r += 1; when(n == n) r += 1; when(n != n) r += 4;\n"
+                  "  when(!(n >= one)) r += 8; when(one < 2) r += 16;\n"
+                  "  return r + (n < one) + (n == n) * 2 + (n != n) * 32 + (one <= one) * 64 - 28; }\n");
+    it("takes 0.0 and -0.0 as false, a NaN as true")
+      expect(6, "int main() { real z = -0.0, p = 0, n = p / p; int r = 0;\n"
+                "  when(z) r += 1; when(p || z) r += 1; when(!z) r += 2; when(n && 1) r += 4;\n"
+                "  return r; }\n");
+    it("negates a real, -0.0 included")
+      expect(4, "int main() { real a = 2, z = 0; real m = -z; return -a + 5 + (1 / m < 0) - (1 / -m < 0); }\n");
+    it("assigns with op=, a real into an int and an int into a real")
+      expect(13, "int main() { real a = 1.5; int k = 3; long l = 4;\n"
+                 "  a += k; a *= 2; k += a; l -= a; a /= 4; return k + l * 0 + a * 2 - 4.5 + (l == -5); }\n");
+    it("keeps reals in arrays, structs and through pointers")
+      expect(33, "struct pt { real x; int n; real y; };\n"
+                 "int main() { real v[4] = {1, 2.5, -1}; pt p = {.y = 4, .x = 0.5};\n"
+                 "  real* q = v; real s = 0; int i = 0;\n"
+                 "  while(i < 4) { s += v[i] * 2 + q[i]; i += 1; }\n"
+                 "  *(q + 3) = p.x + p.y; p.n = v[3] * 2;\n"
+                 "  return s * 2 + v[3] * 2 + p.n; }\n");
+    it("has real globals")
+      expect(7, "real g = 2.5, h[2] = {1, -0.5};\nint k = 2.9;\n"
+                "int main() { g *= 2; return g + h[0] + h[1] * 2 + k; }\n");
+    it("passes and returns reals between functions, made the type of the parameter")
+      expect(40, "real lerp(real a, real b, real t) { return a + (b - a) * t; }\n"
+                 "int cut(int x) { return x; }\n"
+                 "real mix(int a, real b, long c, real d) { return a + b * 10 + c * 100 + d * 1000; }\n"
+                 "int main() { real m = mix(1, 2, 3, 4);\n"
+                 "  return lerp(10, 20, 0.25) + cut(19.9) + (m == 4321) * 10 - 1; }\n");
+    it("calls a function that takes and gives reals through a pointer, the C way")
+      expect(55, "real mix(int a, real b, long c, real d, int e, real f) {\n"
+                 "  return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6; }\n"
+                 "int main() { real (*p)(int, real, long, real, int, real) = mix;\n"
+                 "  return p(1, 1, 1, 1, 1, 1.5) + 31; }\n");
+    it("prints reals with C's printf")
+      prints("2.50 -1.250 7\n", "int printf(char* f, ...);\n"
+                                "int main() { real a = 2.5; int k = 7; printf(\"%.2f %.3f %d\\n\", a, -a / 2, k); return 0; }\n");
+    unix_it("calls libm with reals")
+      here(17, "load \"m\";\nreal sqrt(real x);\nreal pow(real x, real y);\nload \"c\";\n"
+               "int main() { real v = 2; return sqrt(v * 8) + pow(v, 4) - 3; }\n");
+    elfs_it("gives a C program a function that takes and gives reals")
+      check(library("lb-real", "real scale(int k, real x, real y) { return k * x + y; }\n", 0, "",
+                    "double scale(int k, double x, double y);\n"
+                    "int main() { return scale(3, 1.5, 0.25) == 4.75 ? 47 : 1; }\n") == 47);
+    it("rejects what a real cannot be or do")
+      expect(bad, "int main() { real a = 2; int* p = a; return 0; }\n");
+  }
+
   context("syscall") {
     linux_it("calls the kernel") // write(99, "x", 1) fails with EBADF
       expect(9, "int main() { return -syscall(" WRITE ", 99, \"x\", 1); }\n");

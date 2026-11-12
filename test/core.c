@@ -29,7 +29,7 @@ static u64i  laid; // data bytes when shown: make frees data after show
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
   X(loop) X(open) X(size) X(parm) X(args) X(dial) X(trap) X(done) X(boot)       \
   X(link) X(ffi) X(crt) X(flag) X(cond) X(keep) X(lift) X(take) X(pass)       \
-  X(rop) X(stow)
+  X(rop) X(stow) X(flop) X(turn)
 #define TAG(x) op_##x,
 #define NAME(x) #x,
 enum { OPS(TAG) };
@@ -93,10 +93,11 @@ static void mock_trap(file* t, u32i argc)              { note(t, op_trap, " %u",
 static void mock_done(file* t)                         { note(t, op_done, ""); }
 static void mock_boot(file* t)                         { note(t, op_boot, ""); }
 static void mock_link(const file* t, byte* from, const byte* to) { note(NULL, op_link, " %s %s", at(t, from), at(t, to)); }
-static byte* mock_ffi(file* t, const byte* func, u32i argc, u32i fixed, osys os) {
+static byte* mock_ffi(file* t, const byte* func, u32i argc, u32i fixed, u32i real, osys os) {
   (void)os;
   byte* site = t->body;
-  note(t, op_ffi, " %u/%u%s", fixed, argc, func? "": " slot");
+  if(real) note(t, op_ffi, " %u/%u%s real %#x", fixed, argc, func? "": " slot", real);
+  else note(t, op_ffi, " %u/%u%s", fixed, argc, func? "": " slot");
   return func? site: NULL;
 }
 static void mock_crt(file* t, const byte* main, const byte* start, clib c) {
@@ -108,7 +109,7 @@ static void mock_keep(file* t)                         { note(t, op_keep, ""); }
 static void mock_lift(const file* t, byte* keep, u32i k) { note(NULL, op_lift, " %s %u", at(t, keep), k); }
 static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, " %u", k); }
 static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
-static void mock_hail(file* t, osys os)                { (void)t; (void)os; }
+static void mock_hail(file* t, osys os, u32i argc, u32i real) { (void)t; (void)os; (void)argc; (void)real; }
 
 // an operand of rop: r2 a register of a local, a2 an argument register
 static char* mock_reg(s32i x, s32i n, char* o) {
@@ -124,6 +125,11 @@ static void mock_rop(file* t, u32i op, s32i to, s32i by, s32i n) {
   note(t, op_rop, "%s %s %s %s", w, mock_reg(to, 0, a), mock_op(op, o), mock_reg(by, n, b));
 }
 static void mock_stow(file* t, u32i r, s32i slot, bool back) { note(t, op_stow, back? " r%u < %d": " r%u > %d", r, slot); }
+static void mock_flop(file* t, u32i op) {
+  char o[4];
+  note(t, op_flop, "%s %s", op & TEST? ".t": "", mock_op(op, o));
+}
+static void mock_turn(file* t, bool real, bool wide)  { note(t, op_turn, real? wide? " real long": " real int": " long"); }
 
 static u32i regs; // registers for locals the next make_ has, reset after each
 
@@ -133,7 +139,7 @@ static const emit mock = {
   mock_when, mock_jump, mock_back, mock_loop, mock_open, mock_size, mock_parm,
   mock_args, mock_dial, mock_trap, mock_done, mock_boot, mock_link, mock_ffi,
   mock_crt, mock_flag, mock_cond, mock_keep, mock_lift, mock_tmpk, mock_pass,
-  mock_hail, mock_rop, mock_stow, cpu_ia64, 0,
+  mock_hail, mock_rop, mock_stow, mock_flop, mock_turn, cpu_ia64, 0,
 };
 
 static file* mock_pack(mode* m)          { packs++; (void)m; return NULL; }
@@ -579,11 +585,12 @@ spec("core") {
       check(self.defn == n + 5000 && knot(&self, many, t, 8) != href(&self, t));
       for(u32i i = 0; i < 5000; i++)
         if(knot(&self, many, t, 8 * (i + 1)) != pin(self.defs, n + i)) { check(0); break; }
-      meta* f = mold(&self, t, 2, 1, 0);
-      check(mold(&self, t, 2, 1, 0) == f && mold(&self, t, 2, 3, 0) != f && mold(&self, t, 2, 1, 1) != f);
+      meta* f = mold(&self, t, 2, 1, 0, 0);
+      check(mold(&self, t, 2, 1, 0, 0) == f && mold(&self, t, 2, 3, 0, 0) != f && mold(&self, t, 2, 1, 0, 1) != f
+            && mold(&self, t, 2, 1, 1, 0) != f);
       meta* b = nibs(&self, t, 3, 5);
       check(nibs(&self, t, 3, 5) == b && nibs(&self, t, 4, 5) != b && b->size == 8);
-      check(href(&self, t) == href(&self, t) && self.defn == n + 5000 + 1 + 3 + 2); // arrays, long*, f..., b...
+      check(href(&self, t) == href(&self, t) && self.defn == n + 5000 + 1 + 4 + 2); // arrays, long*, f..., b...
     }
     it("grows past any count of names, types, data, code, calls and breaks") {
       static char src[1 << 20];
@@ -640,6 +647,76 @@ spec("core") {
       check(cords[0].aim.off == ZERO && cords[1].aim.off == 0);
       check(!strcmp(at(self.text, cords[0].site.at), "glob"));
       free(cords);
+    }
+  }
+
+  context("reals") {
+    it("folds real constants, and cuts one to an int") {
+      check(compiles("int main() { return 1.5 * 2 + 1; }"));
+      check(has("open, move 4, done") && calls[op_flop] == 0 && calls[op_turn] == 0);
+    }
+    it("reads a real constant from data, 0.0 as a move") {
+      check(compiles("int main() { real a = 2.5; real b = 0.0; return 0; }"));
+      check(has("glob, read 8, stor -8:8, move 0, stor -16:8") && laid == 8 && tail8 == 0x4004000000000000ull);
+    }
+    it("writes a global real, an int constant made one, and cuts one to an int") {
+      double v;
+      check(compiles("real g = 1; real e = -1e3; int main() { return 0; }"));
+      memcpy(&v, &tail8, 8);
+      check(laid == 16 && v == -1000.0);
+      check(compiles("real e = 1; int main() { return 0; }"));
+      memcpy(&v, &tail8, 8);
+      check(laid == 8 && v == 1.0);
+      check(compiles("long k = 2.75; int main() { return 0; }"));
+      check(laid == 8 && tail8 == 2);
+    }
+    it("turns an int operand into a real, and the result into an int") {
+      check(compiles("int main() { real a = 1.5; int i = 2; return a * i; }"));
+      check(has("load -16:4, turn real int, swap, load -8:8, flop *, turn long, cast int, done"));
+    }
+    it("branches on the flags of a comparison of reals") {
+      check(compiles("int main() { real a = 1.5; when(a < 2.0) return 1; return 0; }"));
+      check(has("swap, load -8:8, flop.t <, cond !<, move 1"));
+    }
+    it("compares a real with 0.0 as a condition, so -0.0 is false") {
+      check(compiles("int main() { real a = 2; when(a) return 1; return !a; }"));
+      check(has("load -8:8, swap, move 0, flop.t !=, cond !!=") && has("load -8:8, swap, move 0, flop ==, done"));
+    }
+    it("negates a real as -0.0 minus it") {
+      check(compiles("int main() { real a = 2; return -a; }"));
+      check(has("load -8:8, swap, glob, read 8, flop -"));
+    }
+    it("keeps reals out of the registers of locals") {
+      regs = 5;
+      check(compiles("int main() { real a = 1; a += 1; a += 1; a += 1; return a; }"));
+      check(calls[op_rop] == 0 && calls[op_stow] == 0);
+    }
+    it("computes op= of a real into an int register") {
+      regs = 5;
+      check(compiles("int main() { real a = 2; int k = 3; k += a; return k; }"));
+      check(has("rop acc = r0, turn real int, flop +, turn long, cast int, rop r0 = acc"));
+    }
+    it("makes an argument the type of its parameter") {
+      check(compiles("real h(real x, int k) { return x; } int main() { return h(2, 3.5); }"));
+      check(has("glob, read 8, push, pass 0, rop.w a1 = 3, dial"));
+    }
+    it("tells C which arguments and results are reals") {
+      check(compiles("int printf(char* f, ...); real sqrt(real x);\n"
+                     "int main() { real a = 1; printf(\"%f\", a); return sqrt(2) > 1; }"));
+      check(has("ffi 1/2 slot real 0x2") && has("ffi 1/1 slot real 0x41"));
+    }
+    it("tells C a pointer to a function takes and gives reals") {
+      check(compiles("real h(int k, real x) { return x; }\n"
+                     "int main() { real (*p)(int, real) = h; return p(1, 2); }"));
+      check(has("ffi 2/2 slot real 0x42"));
+    }
+    it("rejects what a real cannot be or do") {
+      check(rejects("int main() { real a = 2; int* p = a; return 0; }", "a real is not a pointer"));
+      check(rejects("int main() { real a = 2; return a % 2; }", "invalid operation on reals"));
+      check(rejects("int main() { real a = 2; return ~a; }", "invalid operation on reals"));
+      check(rejects("int main() { real a = 2; int* p = &a; return p + a; }", "invalid operation on reals"));
+      check(rejects("struct s { real r : 3; }; int main() { return 0; }", "a bit-field must be an integer"));
+      check(rejects("real g = 1.5 + h; int main() { return 0; }", "no variable"));
     }
   }
 }

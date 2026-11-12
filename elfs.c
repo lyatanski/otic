@@ -317,9 +317,10 @@ static u32i  elfs_word(byte* str, u64i* at, const item* s) {
 }
 
 // sym, the symbols of t from first on, their names in str past its NUL, a
-// definition in text, data or bss at its address there and in section tsec,
-// dsec or bsec. A shared library (dyno) reaches its globals directly: they
-// are protected, so that no program copies them away from it
+// definition in text (a function at its entry for C code), data or bss at its
+// address there and in section tsec, dsec or bsec. A shared library (dyno)
+// reaches its globals directly: they are protected, so that no program copies
+// them away from it
 static void  elfs_syms_put(const mode* self, const elfs_syms* t, sym64* sym, byte* str, bool dyno,
                            u64i text, u64i data, u64i bss, u16i tsec, u16i dsec, u16i bsec) {
   u64i at = 1;
@@ -332,7 +333,7 @@ static void  elfs_syms_put(const mode* self, const elfs_syms* t, sym64* sym, byt
       .bind  = m->weak? STB_WEAK: STB_GLOBAL,
       .other = dyno && !f? STV_PROTECTED: 0,
       .shidx = f? tsec: z? bsec: dsec,
-      .value = f? text + (m->addr - self->text->head): (z? bss: data) + (m->slot & ~ZERO),
+      .value = f? text + ((m->hail? m->hail: m->addr) - self->text->head): (z? bss: data) + (m->slot & ~ZERO),
       .size  = !f && m->type? m->type->size: 0,
     };
   }

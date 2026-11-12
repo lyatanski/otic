@@ -226,9 +226,13 @@ void ia64_shft(file* text, shft op, para dst, para src) {
   }
 }
 
-// the condition code of comparison op
+// the condition code of comparison op. Reals are compared unsigned, an
+// unordered pair (a NaN) setting ZF, PF and CF: < and <= are > and >= the
+// other way round, which fail then, == and != are what flop leaves in ZF
 cond ia64_cc(u32i op) {
-  op &= ~(WIDE | TEST);
+  bool f = op & REAL;
+  op &= ~(WIDE | TEST | REAL);
+  if(f) return op == tokd('=', '=')? jne: op == tokd('!', '=')? je: op == '<' || op == '>'? ja: jae;
   return op == tokd('=', '=')? je: op == tokd('!', '=')? jne:
          op == '<'? jl: op == tokd('<', '=')? jle: op == '>'? jg: jge;
 }
@@ -272,6 +276,48 @@ void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
       if(!(op & TEST)) ia64_flag(text, op);
   }
 #undef  W
+}
+
+// movq xmm<x>, r64 (in) or movq r64, xmm<x>
+static void ia64_movq(file* text, bool in, byte x, byte r) {
+  ib(text, 0x66); ib(text, rex(.w=1, .b=r > 7)); iw(text, in? 0x6e0f: 0x7e0f);
+  ib(text, modrm(.mod=3, .reg=x, .rm=r & 7));
+}
+
+// xmm0 = rax, xmm1 = rcx, then xmm0 op= xmm1 and rax = xmm0, or a comparison:
+// == and != leave ZF clear when equal and ordered (setnp al, sete cl, and cl, al)
+void ia64_flop(file* text, u32i op) {
+  u32i o = op & ~(WIDE | TEST | REAL);
+  ia64_movq(text, 1, 0, 0);
+  ia64_movq(text, 1, 1, 1);
+  if(o == '+' || o == '-' || o == '*' || o == '/') {
+    ib(text, 0xf2); ib(text, 0x0f);
+    ib(text, o == '+'? 0x58: o == '-'? 0x5c: o == '*'? 0x59: 0x5e);
+    ib(text, modrm(.mod=3, .reg=0, .rm=1));     // addsd/subsd/mulsd/divsd xmm0, xmm1
+    ia64_movq(text, 0, 0, 0);
+    return;
+  }
+  bool back = o == '<' || o == tokd('<', '=');
+  iw(text, 0x0f66); ib(text, 0x2e);             // ucomisd xmm0, xmm1, or xmm1, xmm0
+  ib(text, back? modrm(.mod=3, .reg=1, .rm=0): modrm(.mod=3, .reg=0, .rm=1));
+  if(o == tokd('=', '=') || o == tokd('!', '=')) {
+    iw(text, 0x9b0f); ib(text, 0xc0);           // setnp al
+    iw(text, 0x940f); ib(text, 0xc1);           // sete cl
+    iw(text, 0xc120);                           // and cl, al
+  }
+  if(!(op & TEST)) ia64_flag(text, op);
+}
+
+// rax = (double)eax or rax, or (long)rax truncated
+void ia64_turn(file* text, bool real, bool wide) {
+  if(real) {
+    ib(text, 0xf2); if(wide) ib(text, rex(.w=1)); iw(text, 0x2a0f); ib(text, 0xc0); // cvtsi2sd xmm0, eax/rax
+    ia64_movq(text, 0, 0, 0);
+  }
+  else {
+    ia64_movq(text, 1, 0, 0);
+    ib(text, 0xf2); ib(text, rex(.w=1)); iw(text, 0x2c0f); ib(text, 0xc0); // cvttsd2si rax, xmm0
+  }
 }
 
 void ia64_cast(file* text, bool wide) {
@@ -490,43 +536,76 @@ void ia64_crt(file* text, const byte* main, const byte* start, clib c) {
   ib(text, 0xf4);                                 // hlt: start never returns
 }
 
-// SysV (Linux, macOS): arguments in rdi rsi rdx rcx r8 r9, al = 0 vector
-// registers for a variadic callee. Win64: in rcx rdx r8 r9 and on the stack
-// past 32 bytes of shadow space. Both want rsp 16-byte aligned, which pushed
-// operands may break: the old rsp is pushed twice, then rsp rounded down, so
-// one copy is at [rsp+8] either way
-byte* ia64_ffi(file* text, const byte* func, u32i argc, u32i fixed, osys os) {
+// SysV (Linux, macOS): integers in rdi rsi rdx rcx r8 r9, reals in xmm0-7,
+// each in order, al = the vector registers used for a variadic callee. Win64:
+// argument i in the ith of rcx rdx r8 r9, or xmm0-3 as well for a real, and
+// on the stack past 32 bytes of shadow space. Both want rsp 16-byte aligned,
+// which pushed operands may break: the old rsp is pushed twice, then rsp
+// rounded down, so one copy is at [rsp+8] either way. A real result is in xmm0
+byte* ia64_ffi(file* text, const byte* func, u32i argc, u32i fixed, u32i real, osys os) {
   (void)fixed;
   static const byte win[] = { 1, 2, 8, 9, 10, 0 }; // r10 and rax go on the stack
   byte room = os == os_win? argc > 4? 48: 32: 0;
+  u32i ints = 0, flts = 0; // SysV: the registers of each kind taken
+  for(u32i i = 0; i < argc; i++) real >> i & 1? flts++: ints++;
+  u32i vecs = flts;
   if(!func) { ib(text, 0x4c); iw(text, 0x188b); } // mov r11, [rax]
-  for(u32i i = argc; i--; ) ia64_drop(text, os == os_win? win[i]: ia64_regs[i]);
+  for(u32i i = argc; i--; ) {
+    bool f = real >> i & 1;
+    if(os == os_win) { ia64_drop(text, win[i]); if(f && i < 4) ia64_movq(text, 1, i, win[i]); }
+    else if(f) { ia64_drop(text, 0); ia64_movq(text, 1, --flts, 0); } // pop rax, to its vector register
+    else ia64_drop(text, ia64_regs[--ints]);
+  }
   ib(text, 0x54);                                 // push rsp
   ib(text, 0xff); iw(text, 0x2434);               // push [rsp]
   id(text, 0xf0e48348);                           // and rsp, -16
   if(room) { id(text, 0xec8348 | room << 24); }   // sub rsp, room
+  else if(vecs) ia64_move(text, vecs);            // mov eax, vecs
   else iw(text, 0xc031);                          // xor eax, eax
   if(argc > 4 && room) { id(text, 0x2454894c); ib(text, 32); } // mov [rsp+32], r10
   if(argc > 5 && room) { id(text, 0x24448948); ib(text, 40); } // mov [rsp+40], rax
   byte* at = func? text->body: NULL;
   if(func) { ia64_dial(text); ia64_link(text, at, func); }
   else { ib(text, 0x41); iw(text, 0xd3ff); }      // call r11
+  if(real >> RETS & 1) ia64_movq(text, 0, 0, 0);  // movq rax, xmm0
   id(text, 0x24648b48); ib(text, room + 8);       // mov rsp, [rsp+room+8]
   return at;
 }
 
-// Win64 callers pass the arguments in rcx rdx r8 r9 and past 32 bytes of
-// shadow space, and keep rdi and rsi: the SysV registers otic takes them in
-void ia64_hail(file* text, osys os) {
-  if(os != os_win) return;
+// Win64 callers pass the arguments in rcx rdx r8 r9, xmm0-3 for reals, and
+// past 32 bytes of shadow space, and keep rdi and rsi: the SysV registers otic
+// takes them in. SysV callers pass reals in xmm0-7 and the rest in the
+// integer registers in order: each moves to the register of its place. A real
+// result goes back in xmm0
+void ia64_hail(file* text, osys os, u32i argc, u32i real) {
+  bool back = real >> RETS & 1;
+  if(os != os_win) {
+    u32i ints = 0, flts = 0;
+    for(u32i i = 0; i < argc; i++) real >> i & 1? flts++: ints++;
+    for(u32i i = argc; i--; ) { // down: a register moves to one past it, not yet read
+      byte to = ia64_regs[i];
+      if(real >> i & 1) { ia64_movq(text, 0, --flts, to); continue; }
+      byte by = ia64_regs[--ints];
+      if(by == to) continue;
+      ib(text, rex(.w=1, .r=by > 7, .b=to > 7)); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=by & 7, .rm=to & 7));
+    }
+    if(!back) return;
+    ib(text, 0xe8); id(text, 6);                  // call the function, past what follows
+    ia64_movq(text, 1, 0, 0);                     // movq xmm0, rax
+    ia64_ret(text);
+    return;
+  }
   iw(text, 0x5657);                               // push rdi; push rsi
   ib(text, 0x48); iw(text, 0xcf89);               // mov rdi, rcx
   ib(text, 0x48); iw(text, 0xd689);               // mov rsi, rdx
   ib(text, 0x4c); iw(text, 0xc289);               // mov rdx, r8
   ib(text, 0x4c); iw(text, 0xc989);               // mov rcx, r9
+  for(u32i i = 0; i < argc && i < 4; i++)
+    if(real >> i & 1) ia64_movq(text, 0, i, ia64_regs[i]); // movq reg, xmm<i>
   id(text, 0x24448b4c); ib(text, 56);             // mov r8, [rsp+56]
   id(text, 0x244c8b4c); ib(text, 64);             // mov r9, [rsp+64]
-  ib(text, 0xe8); id(text, 3);                    // call the function, past what follows
+  ib(text, 0xe8); id(text, back? 8: 3);           // call the function, past what follows
+  if(back) ia64_movq(text, 1, 0, 0);              // movq xmm0, rax
   iw(text, 0x5f5e); ib(text, 0xc3);               // pop rsi; pop rdi; ret
 }
 
@@ -569,6 +648,8 @@ const emit ia64 = {
   .hail = ia64_hail,
   .rop  = ia64_rop,
   .stow = ia64_stow,
+  .flop = ia64_flop,
+  .turn = ia64_turn,
   .cpu  = cpu_ia64,
   .regs = sizeof ia64_kept,
 };

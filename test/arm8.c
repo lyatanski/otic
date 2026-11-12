@@ -250,4 +250,46 @@ spec("arm8") {
                   d = here, e.dial(t), e.move(t, 7), f = here, e.done(t), e.link(t, d, f)));
     }
   }
+
+  context("reals") {
+    it("computes in d0 and d1, back in x0") {
+      // fmov d0, x0; fmov d1, x1; fadd d0, d0, d1; fmov x0, d0
+      check(emits("00 00 67 9e 21 00 67 9e 00 28 61 1e 00 00 66 9e", e.flop(t, '+')));
+      check(emits("00 00 67 9e 21 00 67 9e 00 18 61 1e 00 00 66 9e", e.flop(t, '/'))); // fdiv
+    }
+    it("compares with fcmp, < and <= as mi and ls, which a NaN fails") {
+      // ...; fcmp d0, d1; cset w0, ls
+      check(emits("00 00 67 9e 21 00 67 9e 00 20 61 1e e0 87 9f 1a", e.flop(t, tokd('<', '=') | REAL)));
+      check(emits("04 00 00 54 1f 20 03 d5", e.cond(t, '<' | REAL, 1)));  // b.mi; nop
+      check(emits("05 00 00 54 1f 20 03 d5", e.cond(t, '<' | REAL, 0)));  // b.pl; nop
+    }
+    it("turns an int or a long into a real, and a real into a long") {
+      check(emits("00 00 62 1e 00 00 66 9e", e.turn(t, 1, 0)));  // scvtf d0, w0; fmov x0, d0
+      check(emits("00 00 62 9e 00 00 66 9e", e.turn(t, 1, 1)));  // scvtf d0, x0; fmov x0, d0
+      check(emits("00 00 67 9e 00 00 78 9e", e.turn(t, 0, 1)));  // fmov d0, x0; fcvtzs x0, d0
+    }
+    it("passes reals in d registers, and takes a real result from d0") {
+      // ldr x16, [x0]; ldr x1, [sp], #16; ldr d0, [sp], #16; ldr x0, [sp], #16; blr x16; fmov x0, d0
+      check(emits("10 00 40 f9 e1 07 41 f8 e0 07 41 fc e0 07 41 f8 00 02 3f d6 00 00 66 9e",
+                  e.ffi(t, NULL, 3, 3, 0x2 | 1 << RETS, os_linux)));
+    }
+    it("passes Apple's variadic reals on the stack, as their bits") {
+      // ldr x16, [x0]; ldr x10, [sp], #16; ldr x9, [sp], #16; ldr d0, [sp], #16;
+      // sub sp, sp, #16; str x9, [sp]; str x10, [sp, #8]; blr x16; add sp, sp, #16
+      check(emits("10 00 40 f9 ea 07 41 f8 e9 07 41 f8 e0 07 41 fc ff 43 00 d1 e9 03 00 f9 ea 07 00 f9 "
+                  "00 02 3f d6 ff 43 00 91", e.ffi(t, NULL, 3, 1, 0x5, os_mac)));
+    }
+    it("passes Windows' variadic reals in the x registers of their places") {
+      // ldr x16, [x0]; ldr x2, [sp], #16; ldr x1, [sp], #16; ldr x0, [sp], #16; blr x16
+      check(emits("10 00 40 f9 e2 07 41 f8 e1 07 41 f8 e0 07 41 f8 00 02 3f d6",
+                  e.ffi(t, NULL, 3, 1, 0x6, os_win)));
+    }
+    it("enters from C code with reals, each to the x register of its place") {
+      // mov x3, x1; fmov x2, d1; mov x1, x0; fmov x0, d0;
+      // stp x29, x30, [sp, #-16]!; mov x29, sp; bl +16; fmov d0, x0; ldp x29, x30, [sp], #16; ret
+      check(emits("e3 03 01 aa 22 00 66 9e e1 03 00 aa 00 00 66 9e fd 7b bf a9 fd 03 00 91 04 00 00 94 "
+                  "00 00 67 9e fd 7b c1 a8 c0 03 5f d6", e.hail(t, os_linux, 4, 0x5 | 1 << RETS)));
+      check(emits("", e.hail(t, os_linux, 2, 0)));
+    }
+  }
 }

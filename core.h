@@ -100,6 +100,8 @@ typedef enum { os_linux, os_mac, os_win } osys;
 typedef enum { cl_glibc, cl_musl, cl_bionic } clib;
 #define WIDE (1 << 24) // calc op flag: on 64 bits, for pointers and long
 #define TEST (1 << 25) // calc op flag: a comparison sets the flags only, for flag and cond
+#define REAL (1 << 26) // flop op flag: a comparison of reals, for flag and cond
+#define RETS 6         // ffi and hail: bit RETS of real when the result is a real
 #define HELD 4         // scratch registers: kept left operands past these are on the stack
 // operands of rop that are no register of a local: acc, tmp, the constant n,
 // argument register i (ARG - i)
@@ -135,9 +137,10 @@ typedef struct {
   void (*boot)(file*);                             // entry stub: call main
   void (*link)(const file*, byte* boot, const byte* main); // point a call at its function
   // call C code at func, or at the address in [acc] (an import slot), the C
-  // way of os: pop the argc pushed arguments, the first fixed of them named.
+  // way of os: pop the argc pushed arguments, the first fixed of them named,
+  // argument i a real when bit i of real is set, the result when bit RETS is.
   // The call to func, which link may point elsewhere, NULL through [acc]
-  byte* (*ffi)(file*, const byte* func, u32i argc, u32i fixed, osys os);
+  byte* (*ffi)(file*, const byte* func, u32i argc, u32i fixed, u32i real, osys os);
   // entry of a C library, called by boot: start(main, argc, argv, 0, 0, 0)
   // with argc and argv from the initial stack, or for bionic start(stack, 0,
   // main, structors), the structors all 0. start NULL: through the import
@@ -151,14 +154,21 @@ typedef struct {
   void (*lift)(const file*, byte* keep, u32i k);
   void (*take)(file*, u32i k);                     // tmp = acc, acc = scratch k
   void (*pass)(file*, u32i i);                     // argument register i = acc
-  // an entry for C code of os to call the function that follows it: nothing
-  // when otic's way of passing arguments is that of os
-  void (*hail)(file*, osys os);
+  // an entry for C code of os to call the function that follows it, of argc
+  // parameters, real as for ffi: nothing when otic's way of passing arguments
+  // is that of os. otic passes a real's bits as it does a long's
+  void (*hail)(file*, osys os, u32i argc, u32i real);
   // to op= by, each a register of a local or an operand above, on 64 bits
   // when WIDE: op is = (a move, a constant sign extended), + - & | ^, or a
   // comparison, which sets the flags only
   void (*rop)(file*, u32i op, s32i to, s32i by, s32i n);
   void (*stow)(file*, u32i r, s32i slot, bool back); // slot = register r of a local, or back
+  // reals, 64-bit IEEE, held in acc and tmp as their bits: acc = acc op tmp,
+  // op + - * / or a comparison (| REAL), which sets the flags only when TEST
+  void (*flop)(file*, u32i op);
+  // acc = the integer in acc (on 64 bits when wide) as a real, when real;
+  // else the real in acc truncated to a 64-bit integer
+  void (*turn)(file*, bool real, bool wide);
   chip  cpu;  // target, each form maps it to its own machine id
   u32i  regs; // registers for locals, kept by the functions called
 } emit;
@@ -209,6 +219,7 @@ struct meta {
   bool  ext;  // a function from an object, or an import
   bool  more; // variadic: arguments may follow the size named ones
   byte  longs; // a function of the source: bit i when parameter i is 64 bits
+  byte  reals; // a function or a function type: bit i when parameter i is a real
   u32i  unit; // the unit that defines it
 };
 
@@ -320,6 +331,7 @@ struct mode {
               // in the file (PE's import address table); 0: after bss
   u32i  most; // largest alignment of data or code an object asks for
   meta* rune; // char: what a string literal points to
+  meta* real; // real: a 64-bit floating point number
 
   poke  hold;
   poke  drop;

@@ -318,7 +318,7 @@ static void  mach_put(const mode* self, const mach_syms* t, nl64* sym, byte* str
     sym->type  = n_sect | n_ext;
     sym->sect  = f? 1: z? 3: 2;
     sym->desc  = m->weak? n_weak_def: 0;
-    sym->value = f? text + (m->addr - self->text->head): (z? bss: data) + (m->slot & ~ZERO);
+    sym->value = f? text + ((m->hail? m->hail: m->addr) - self->text->head): (z? bss: data) + (m->slot & ~ZERO);
   }
 }
 
