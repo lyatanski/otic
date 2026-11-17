@@ -488,8 +488,8 @@ static u32i  elfs_file(const meta* l, clib c, char* out) {
 }
 
 // the names of the sections of debug information, after those of the image:
-// .debug_info .debug_abbrev .debug_line .eh_frame .symtab .strtab
-static const char elfs_dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.eh_frame\0.symtab\0.strtab";
+// .debug_info .debug_abbrev .debug_line .debug_aranges .eh_frame .symtab .strtab
+static const char elfs_dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.debug_aranges\0.eh_frame\0.symtab\0.strtab";
 
 // the symbols of a program with debug information: every function and global
 // the pass recorded, the static ones first, after the null symbol. Their
@@ -583,15 +583,15 @@ static file* elfs_dyno(mode* self) {
   // debug information (-g) goes after the names of the sections, outside the
   // segments: the loader never maps it
   const u64i namesz = sizeof names + (self->debug? sizeof elfs_dnames: 0);
-  const u32i nsh = s_all + (self->debug? 6: 0);
-  enum { d_info, d_abbr, d_line, d_frame, d_sym, d_str, d_all };
+  const u32i nsh = s_all + (self->debug? 7: 0);
+  enum { d_info, d_abbr, d_line, d_range, d_frame, d_sym, d_str, d_all };
   dwarf dw = {0};
   u32i  nds = 0, ndl = 0;
   u64i  dstrs = 0, dat0[d_all] = {0}, dlen[d_all] = {0}, dend = (dat + size + namesz + 7) & -8;
   if(self->debug) {
     self->core.dbug(self, top, dat + skew, dat + skew + bss, &dw);
     elfs_dsize(self, &nds, &ndl, &dstrs);
-    const u64i lens[d_all] = {dw.info.n, dw.abbr.n, dw.line.n, dw.frame.n, nds * sizeof(sym64), dstrs};
+    const u64i lens[d_all] = {dw.info.n, dw.abbr.n, dw.line.n, dw.ranges.n, dw.frame.n, nds * sizeof(sym64), dstrs};
     for(u32i i = 0; i < d_all; i++) {
       if(i == d_frame || i == d_sym) dend = (dend + 7) & -8;
       dat0[i] = dend;
@@ -635,7 +635,7 @@ static file* elfs_dyno(mode* self) {
     {DT_SYMENT, sizeof(sym64)}, {DT_RELA, drel}, {DT_RELASZ, nrel * sizeof(rela64)},
     {DT_RELAENT, sizeof(rela64)}, {DT_NULL, 0},
   };
-  sh64 sh[s_all + 6] = {{0},
+  sh64 sh[s_all + 7] = {{0},
     {.type = SHT_HASH, .flags = SHF_ALLOC, .addr = hash, .offset = hash, .size = 4 * (2 + nsym + 1),
      .link = s_sym, .align = 8, .entsize = 4},
     {.type = SHT_DYNSYM, .flags = SHF_ALLOC, .addr = dsym, .offset = dsym, .size = nsym * sizeof(sym64),
@@ -701,6 +701,7 @@ static file* elfs_dyno(mode* self) {
     copy(o + dat0[d_info], dw.info.p, dw.info.n);
     copy(o + dat0[d_abbr], dw.abbr.p, dw.abbr.n);
     copy(o + dat0[d_line], dw.line.p, dw.line.n);
+    copy(o + dat0[d_range], dw.ranges.p, dw.ranges.n);
     copy(o + dat0[d_frame], dw.frame.p, dw.frame.n);
     elfs_dput(self, (sym64*)(o + dat0[d_sym]) + 1, o + dat0[d_str], top, dat + skew, dat + skew + bss,
               s_text, s_data, s_bss);
@@ -708,6 +709,7 @@ static file* elfs_dyno(mode* self) {
     self->heap(dw.abbr.p, 0);
     self->heap(dw.line.p, 0);
     self->heap(dw.frame.p, 0);
+    self->heap(dw.ranges.p, 0);
   }
   copy(o + shoff, sh, nsh * sizeof(sh64));
   self->heap(cords, 0);

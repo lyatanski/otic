@@ -388,11 +388,33 @@ static int  captured(const char* cmd, char* out, int cap) {
   return code;
 }
 
-// 1 when llvm-dwarfdump and readelf can read what a Linux program carries
+// 1 when llvm-dwarfdump and llvm-objdump can read what a program carries, on any host
+static int  llvms(void) {
+  static int ok = -1;
+  if(ok < 0) ok = !system("llvm-dwarfdump --version >" NULL_DEV " 2>&1 && llvm-objdump --version >" NULL_DEV " 2>&1");
+  return ok;
+}
+
+// 1 when readelf can read what a Linux program carries
 static int  dwarfs(void) {
   static int ok = -1;
 #ifdef __linux__
-  if(ok < 0) ok = !system("llvm-dwarfdump --version >" NULL_DEV " 2>&1 && readelf --version >" NULL_DEV " 2>&1");
+  if(ok < 0) ok = llvms() && !system("readelf --version >" NULL_DEV " 2>&1");
+#else
+  ok = 0;
+#endif
+  return ok;
+}
+
+// 1 when lldb can run a program here (macOS: it may not be let trace)
+static int  lldbs(void) {
+  static int ok = -1;
+#ifdef __APPLE__
+  char out[2048];
+  if(ok < 0) {
+    captured("lldb -b -o run /usr/bin/true", out, sizeof out);
+    ok = strstr(out, "exited with status = 0") != NULL;
+  }
 #else
   ok = 0;
 #endif
@@ -415,19 +437,21 @@ static int  gdbs(void) {
 }
 
 // src at bins/name.ot, built with -g and -e for arch (ia64 or arm8) and form
-// into bins/name: 0 when it was written, else otic's exit status
+// (NULL: the host's, the host's arch whatever arch says) into bins/name EXE:
+// 0 when it was written, else otic's exit status
 static int  debugged(const char* name, const char* src, const char* arch, const char* form) {
   char at[64], to[64];
   mkdir("bins", 0755);
   snprintf(at, sizeof at, "bins/%s.ot", name);
-  snprintf(to, sizeof to, "bins/%s", name);
+  snprintf(to, sizeof to, "bins/%s%s", name, form? "": EXE);
   FILE* fp = fopen(at, "wb");
   if(!fp) return -1;
   fputs(src, fp);
   fclose(fp);
   unlink(to);
   int null = open(NULL_DEV, O_WRONLY);
-  int code = spawn(null, (char*[]){otic(), "-a", (char*)arch, "-f", (char*)form, "-g", "-e", to, at, NULL});
+  int code = form? spawn(null, (char*[]){otic(), "-a", (char*)arch, "-f", (char*)form, "-g", "-e", to, at, NULL})
+                 : spawn(null, (char*[]){otic(), "-g", "-e", to, at, NULL});
   close(null);
   return code;
 }
@@ -1415,12 +1439,34 @@ spec(TAG) {
   }
 
   context("debug information") { // -g: DWARF 5 in an ELF program, read by llvm-dwarfdump and gdb
-    linux_it("writes a program that runs as it does without -g") {
-      check(debugged("dbg-run", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
-      chmod("bins/dbg-run", 0755);
-      check(spawn(1, (char*[]){"bins/dbg-run", NULL}) == 17);
+    it("writes a program that runs as it does without -g") { // in every form: the loader must take it
+      check(debugged("dbg-run", DBG_NODES, NULL, NULL) == 0);
+      chmod("bins/dbg-run" EXE, 0755);
+      check(spawn(1, (char*[]){"bins/dbg-run" EXE, NULL}) == 17);
     }
-    it("is checked by llvm-dwarfdump", dwarfs()) {
+    it("checks what the host form wrote with llvm-dwarfdump", llvms()) {
+      char out[1 << 14];
+      check(debugged("dbg-host", DBG_NODES, NULL, NULL) == 0);
+#ifdef __APPLE__ // the bundle holds it
+      captured("llvm-dwarfdump --verify bins/dbg-host.dSYM/Contents/Resources/DWARF/dbg-host", out, sizeof out);
+#else
+      captured("llvm-dwarfdump --verify bins/dbg-host" EXE, out, sizeof out);
+#endif
+      check(strstr(out, "No errors"));
+    }
+    it("stops in lldb at a line, with its locals and its callers", lldbs()) {
+      char out[4096];
+      check(debugged("dbg-lldb", DBG_NODES, NULL, NULL) == 0);
+      chmod("bins/dbg-lldb", 0755);
+      captured("lldb -b -o 'breakpoint set -f dbg-lldb.ot -l 9' -o run -o bt -o 'frame variable' -o 'frame variable *n'"
+               " bins/dbg-lldb", out, sizeof out);
+      if(!strstr(out, "dbg-lldb.ot:9")) fputs(out, stdout); // what lldb said
+      check(strstr(out, "dbg-lldb.ot:9"));
+      check(strstr(out, "frame #1") && strstr(out, "main"));
+      check(strstr(out, "(int) step = 2"));
+      check(strstr(out, "v = 2"));
+    }
+    it("is checked by llvm-dwarfdump", llvms()) {
       char out[1 << 16];
       check(debugged("dbg-dump", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
       captured("llvm-dwarfdump --verify bins/dbg-dump", out, sizeof out);
@@ -1486,7 +1532,7 @@ spec(TAG) {
       close(null);
       check(code == 0);
     }
-    it("writes a bundle for a Mach-O program, with the identifier of the program", dwarfs()) {
+    it("writes a bundle for a Mach-O program, with the identifier of the program", llvms()) {
       char out[1 << 14];
       const char* arch[] = {"ia64", "arm8"};
       for(int i = 0; i < 2; i++) {
@@ -1501,7 +1547,7 @@ spec(TAG) {
         check(!access("bins/dbg-mac.dSYM/Contents/Info.plist", F_OK));
       }
     }
-    it("writes a Mach-O library with its bundle", dwarfs()) {
+    it("writes a Mach-O library with its bundle", llvms()) {
       char out[1 << 14];
       module("dbg-dylib", "int twice(int x) { return x * 2; }\n");
       int null = open(NULL_DEV, O_WRONLY);
@@ -1510,7 +1556,7 @@ spec(TAG) {
       captured("llvm-dwarfdump --verify bins/dbg-dylib.dylib.dSYM/Contents/Resources/DWARF/dbg-dylib.dylib", out, sizeof out);
       check(strstr(out, "No errors"));
     }
-    it("writes a PE program with its debug sections", dwarfs()) {
+    it("writes a PE program with its debug sections", llvms()) {
       char out[1 << 14];
       const char* arch[] = {"ia64", "arm8"};
       for(int i = 0; i < 2; i++) {

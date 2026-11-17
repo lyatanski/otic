@@ -509,6 +509,19 @@ void  dwarf_pack(mode* self, u64i text, u64i data, u64i bss, dwarf* out) {
   dw_put(self, b, 0, 1); // the end of the unit's children
   dw_patch(b, 0, b->n - 4, 4);
 
+  // .debug_aranges: the code of the unit, for a debugger that looks an address up
+  blob* r = &out->ranges;
+  dw_put(self, r, 0, 4);
+  dw_put(self, r, 2, 2);
+  dw_put(self, r, 0, 4); // the unit
+  dw_put(self, r, 8, 1);
+  dw_put(self, r, 0, 1);
+  dw_put(self, r, 0, 4); // the tuples start at a multiple of 16
+  dw_put(self, r, text, 8);
+  dw_put(self, r, code, 8);
+  dw_put(self, r, 0, 16);
+  dw_patch(r, 0, r->n - 4, 4);
+
   dw_lines(self, &out->line, text, code);
   dw_frames(self, &out->frame, text);
 }

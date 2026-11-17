@@ -199,7 +199,7 @@ file* pe32_pack(mode* self) {
   const u32i code = (u32i)(self->text->body - self->text->head);
   const u32i boot = up(code, 16); // the stub after the code
   const u32i text = boot + pe32_boot(NULL, cpu, 0, 0, 0, crt);
-  const u32i ndbg = self->debug? 4: 0; // sections of debug information: .debug_info .debug_abbrev .debug_line .eh_frame
+  const u32i ndbg = self->debug? 5: 0; // sections of debug information: .debug_info .debug_abbrev .debug_line .debug_aranges .eh_frame
   const u32i head = up(sizeof(pe32_head) + ndbg * sizeof(pe32_sect), falign);
   const u32i trva = salign, drva = trva + up(text, salign); // section addresses
   const u32i toff = head, doff = toff + up(text, falign);   // and file offsets
@@ -213,16 +213,16 @@ file* pe32_pack(mode* self) {
   // debug information (-g) after the data: sections the loader may drop, whose
   // names are in the string table after the symbols' table, which a COFF file
   // has at the end. Addresses are those the image asks to be loaded at
-  static const char dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.eh_frame";
+  static const char dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.debug_aranges\0.eh_frame";
   dwarf dw = {0};
-  pe32_sect dsec[4] = {{.vmsz = 0}};
+  pe32_sect dsec[5] = {{.vmsz = 0}};
   const u32i dbss = idat + up(size, step); // bss, in .data
-  const blob* blobs[4] = {&dw.info, &dw.abbr, &dw.line, &dw.frame};
+  const blob* blobs[5] = {&dw.info, &dw.abbr, &dw.line, &dw.ranges, &dw.frame};
   u32i  fend = doff + fsz, vend = drva + up(vmsz, salign), nsym = 0, symoff = 0, strsz = 4, symstr = 0;
   if(self->debug) {
     self->core.dbug(self, org + trva, org + drva + idat, org + drva + dbss, &dw);
     u32i nm = 4;
-    for(u32i i = 0; i < 4; i++) {
+    for(u32i i = 0; i < 5; i++) {
       const u32i n = blobs[i]->n, name = nm;
       snprintf(dsec[i].name, sizeof dsec[i].name, "/%u", name);
       nm += (u32i)slen(dnames + nm - 4) + 1;
@@ -279,7 +279,7 @@ file* pe32_pack(mode* self) {
   copy(out->head, &h, sizeof(h));
   if(self->debug) {
     copy(out->head + sizeof(h), dsec, sizeof dsec);
-    for(u32i i = 0; i < 4; i++) {
+    for(u32i i = 0; i < 5; i++) {
       copy(out->head + dsec[i].off, blobs[i]->p, blobs[i]->n);
       self->heap(blobs[i]->p, 0);
     }

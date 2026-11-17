@@ -179,28 +179,28 @@ static void  mach_uuid(const mode* self, byte* out) {
 // the sections. The frames are left to the debugger: it unwinds by the frame
 // pointer
 static void  mach_dsym(mode* self, const mach_geo* g, const byte* uuid) {
-  static const char names[3][16] = {"__debug_info", "__debug_abbrev", "__debug_line"};
+  static const char names[4][16] = {"__debug_info", "__debug_abbrev", "__debug_line", "__debug_aranges"};
   const u64i page = 0x4000;
   dwarf dw;
   self->core.dbug(self, g->org + g->top, g->org + g->text, g->org + g->text + g->bss, &dw);
-  const blob* blobs[3] = {&dw.info, &dw.abbr, &dw.line};
-  const u64i top = sizeof(mach_mh) + 24 + sizeof(mach_symtab) + 3 * sizeof(seg64) + 6 * sizeof(sec64);
+  const blob* blobs[4] = {&dw.info, &dw.abbr, &dw.line, &dw.ranges};
+  const u64i top = sizeof(mach_mh) + 24 + sizeof(mach_symtab) + 3 * sizeof(seg64) + 7 * sizeof(sec64);
   const u64i off = (top + page - 1) & ~(page - 1), vm = g->org + g->text + g->vmsz;
   u64i  len = 0;
-  for(u32i i = 0; i < 3; i++) len += blobs[i]->n;
+  for(u32i i = 0; i < 4; i++) len += blobs[i]->n;
   const u64i all = off + len;
 
   seg64 seg[3] = {
     {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", g->org, g->text, 0, 0, 5, 5, 1, 0},
     {lc_segment, sizeof(seg64) + 2 * sizeof(sec64), "__DATA", g->org + g->text, g->vmsz, 0, 0, 3, 3, 2, 0},
-    {lc_segment, sizeof(seg64) + 3 * sizeof(sec64), "__DWARF", vm, (len + page - 1) & ~(page - 1), off, len, 7, 3, 3, 0},
+    {lc_segment, sizeof(seg64) + 4 * sizeof(sec64), "__DWARF", vm, (len + page - 1) & ~(page - 1), off, len, 7, 3, 4, 0},
   };
-  sec64 sec[6] = {
+  sec64 sec[7] = {
     {"__text", "__TEXT", g->org + g->top, g->code, 0, g->lg, .flags = (u32i)s_code},
     {"__data", "__DATA", g->org + g->text, g->size, 0, g->lg, .flags = s_regular},
     {"__bss", "__DATA", g->org + g->text + g->bss, g->end - g->bss, 0, g->lg, .flags = s_zerofill},
   };
-  for(u32i i = 0, at = 0; i < 3; at += blobs[i++]->n) {
+  for(u32i i = 0, at = 0; i < 4; at += blobs[i++]->n) {
     sec[3 + i] = (sec64){.addr = vm + at, .size = blobs[i]->n, .off = (u32i)(off + at), .flags = 0x02000000}; // S_ATTR_DEBUG
     copy((byte*)sec[3 + i].name, names[i], 16);
     copy((byte*)sec[3 + i].seg, "__DWARF", 8);
@@ -215,12 +215,13 @@ static void  mach_dsym(mode* self, const mach_geo* g, const byte* uuid) {
   byte* c = copy(mach_uuid_cmd(copy(o, &mh, sizeof mh), uuid), &st, sizeof st);
   c = copy(copy(c, seg, sizeof(seg64)), sec, sizeof(sec64));
   c = copy(copy(c, seg + 1, sizeof(seg64)), sec + 1, 2 * sizeof(sec64));
-  copy(copy(c, seg + 2, sizeof(seg64)), sec + 3, 3 * sizeof(sec64));
-  for(u32i i = 0, at = 0; i < 3; at += blobs[i++]->n) copy(o + off + at, blobs[i]->p, blobs[i]->n);
+  copy(copy(c, seg + 2, sizeof(seg64)), sec + 3, 4 * sizeof(sec64));
+  for(u32i i = 0, at = 0; i < 4; at += blobs[i++]->n) copy(o + off + at, blobs[i]->p, blobs[i]->n);
   self->heap(dw.info.p, 0);
   self->heap(dw.abbr.p, 0);
   self->heap(dw.line.p, 0);
   self->heap(dw.frame.p, 0);
+  self->heap(dw.ranges.p, 0);
 
   const char* name = self->outp;
   for(const char* n = name; *n; n++) if(*n == '/') name = n + 1;

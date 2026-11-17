@@ -339,7 +339,7 @@ typedef struct {
 } dbg;
 
 // the sections of debug information of an image
-struct dwarf { blob info, abbr, line, frame; };
+struct dwarf { blob info, abbr, line, frame, ranges; };
 
 // a file a form writes beside its image (-g: a Mach-O program's debug bundle),
 // its path from mode.heap
