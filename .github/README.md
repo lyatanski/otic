@@ -92,7 +92,12 @@ int main() {
 - statements: `when`/`else`, `while`, `break`, `skip`, `return`
 - `sizeof` of a type name or an operand (not computed); character literals
   (`'a'`, `'\n'`) are numbers
-- initializers with designators, compound literals, `static`, `extern`
+- designators set one field or element and zero the rest: `{.y = 5}`,
+  `{[2] = 7}` (as in `a` and `t` above); a compound literal builds a value
+  in place: `&(vec){3, 4}`
+- `static` and `extern` at the top level: a `static` name stays in its
+  source file; an `extern` global lives in a loaded library and has no
+  storage of its own
 - `syscall(n, ...)` goes straight to the kernel
 - a `#!` first line is skipped, so a source can be a script: `#!/usr/bin/env otic`
 - `#f(args)` calls `f` while compiling, as host code, and takes its result in
