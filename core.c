@@ -695,6 +695,93 @@ sized:
   return (s32i)t->size;
 }
 
+void  fini(mode* self);
+
+// what the # at hand gives, after the #: its operand is a call name(args) of a
+// function with its code, whose result is an int, long, real or char*. The
+// call is compiled as a function of no parameters at the end of text, run at
+// compile time by mode.eval, in an image of all that is compiled so far whose
+// globals keep what earlier #s did to them, then dropped with what it laid in
+// data, bss and the import slots: the output is what it would be without it.
+// The locals of the function being compiled are out of scope in the
+// arguments. A mode that makes code for another target takes the result, in
+// order, from the tape of the host's mode for the same source (mirror)
+yield sharp(mode* self) {
+  if(home(self)->talk.kind != ttag) flaw(self, "expected the name of a function after #\n");
+  item* name = home(self)->talk.hash;
+  meta* func = find(self, self->unit, name);
+  if(!func || func->kind != call) flaw(self, "no function '%.*s'\n", nick(name));
+  if(self->frame != ~0u && func == self->func)
+    flaw(self, "'%.*s' is being compiled, define it before running it\n", nick(name));
+  meta* t = func->type;
+  bool  text = t->kind == refs && t->type == tget(self, "char"), real = flot(self, t);
+  if(!text && t->kind != base) flaw(self, "'%.*s' gives a result that cannot be used at compile time\n", nick(name));
+  chop(self);
+  if(!twin(self, '(')) flaw(self, "expected ( after '%.*s': only a call runs at compile time\n", nick(name));
+
+  struct { s32i slot, deep, lits; u32i busy, regn, held, dials; } was =
+    {self->slot, self->deep, self->lits, self->busy, self->regn, self->held, self->dials};
+  byte* mark = self->text->body;
+  u32i  fixs = self->fixs, imps = self->impn, size = (u32i)(self->data->body - self->data->head);
+  u64i  bss  = self->zero;
+  bool  hide = self->frame != ~0u && !self->hidden;
+  if(hide) { // a local has no meaning in a function of its own
+    for(u32i i = self->top; i-- > self->frame; ) { meta* x = pin(self->pile, i); x->name->data = x->hide; }
+    self->hidden = 1;
+  }
+  self->slot = self->deep = self->lits = 0;
+  self->busy = self->regn = self->held = 0;
+  emit(self, hail, self->form.os, 0, (u32i)real << RETS);
+  byte* addr = self->text->body;
+  emit(self, open);
+  dial(self, name);
+  fini(self);
+  emit(self, size, addr, (self->deep + 15) & -16);
+  for(u32i i = fixs; i < self->fixs; i++)
+    if(self->link[i].at >= mark && self->link[i].at)
+      flaw(self, "'%.*s' is not defined yet, define it before the call\n", nick(self->link[i].name));
+
+  yield r = {.type = t};
+  if(self->eval) {
+    r.bits = self->eval(self, mark, real);
+    if(text) {
+      const char* p = (const char*)(uintptr_t)r.bits;
+      r.size = p? (u32i)slen(p): 0;
+      r.text = self->heap(NULL, r.size + 1);
+      copy((byte*)r.text, p? p: "", r.size + 1);
+    }
+    self->tape = swell(self, self->tape, self->tapen, &self->tapec, sizeof(yield), 16);
+    self->tape[self->tapen++] = r;
+  }
+  else {
+    if(!self->mirror) flaw(self, "cannot run code at compile time here\n");
+    if(!self->shaded) {
+      mode* h = self->mirror(self);
+      self->tape = h->tape, self->tapen = h->tapen, self->tapec = h->tapec;
+      self->shaded = 1;
+    }
+    if(self->taken == self->tapen || !self->tape[self->taken].text != !text)
+      flaw(self, "the host build did not run this #\n");
+    r = self->tape[self->taken++];
+    r.type = t;
+  }
+
+  trim(self, mark);
+  file* d = self->data;
+  for(u32i i = size; i < (u32i)(d->body - d->head); i++) d->head[i] = 0;
+  d->body = d->head + size;
+  self->zero = bss;
+  for(u32i i = imps; i < self->impn; i++) self->imps[i]->slot = 0;
+  self->impn = imps;
+  self->slot = was.slot, self->deep = was.deep, self->lits = was.lits;
+  self->busy = was.busy, self->regn = was.regn, self->held = was.held, self->dials = was.dials;
+  if(hide) {
+    for(u32i i = self->frame; i < self->top; i++) { meta* x = pin(self->pile, i); x->name->data = x; }
+    self->hidden = 0;
+  }
+  return r;
+}
+
 oper  atom(mode* self) {
   u32i op = home(self)->talk.kind;
   oper x;
@@ -723,6 +810,18 @@ oper  atom(mode* self) {
       x = (oper){.kind = var->kind != data? vglo: var->slot < 0? vloc: vreg, .ival = var->slot, .type = var->type};
       if(var->ext) { spot(self, port(self, var)); emit(self, read, 8); x = (oper){.kind = vmem, .type = var->type}; }
       break;
+    }
+    case '#': { // a number computed while compiling
+      chop(self);
+      yield y = sharp(self);
+      if(y.text) flaw(self, "source text from # goes where a declaration does, not in an expression\n");
+      if(flot(self, y.type)) { double v; copy((byte*)&v, &y.bits, sizeof v); return flo(self, v); }
+      s64i  v = (s64i)y.bits;
+      switch(span(y.type)) { case 0: v = 0; break; case 1: v = (byte)v; break; case 2: v = (u16i)v; break; case 4: v = (s32i)v; }
+      if(v == (s32i)v) return cnst(self, (s32i)v);
+      u32i  off = lay(self, 8, 0, 8); // a long that is no int: read from data
+      copy(self->data->head + off, &v, 8);
+      return (oper){.kind = vglo, .ival = (s32i)off, .type = tget(self, "long")};
     }
     case '(':
       chop(self);
@@ -1611,7 +1710,29 @@ item* bond(mode* self) {
   return s;
 }
 
+void  feed(mode* self, u32i at);
+
 void  decl(mode* self) {
+  // # name(args) ";"?: run at compile time; the source it gives, a char*, is
+  // declarations that go here, as a unit of their own
+  if(twin(self, '#')) {
+    u64i  line = home(self)->line;
+    yield y = sharp(self);
+    if(y.text) {
+      if(self->layers == 64) flaw(self, "generated source nests too deep\n");
+      file* code = self->heap(NULL, sizeof(file) + y.size);
+      code->body = code->head;
+      code->tail = code->head + y.size;
+      copy(code->head, y.text, y.size + 1);
+      char* path = self->heap(NULL, slen(home(self)->path) + 24);
+      snprintf(path, slen(home(self)->path) + 24, "%s#%llu", home(self)->path, (unsigned long long)line);
+      self->layers++;
+      feed(self, nest(self, (unit){.path = path, .code = code, .kind = un_code}));
+      self->layers--;
+    }
+    twin(self, ';');
+    return;
+  }
   // load "name" ";": a shared library, the bodyless functions after it in this
   // source file are imported from it
   if(same(self, "load")) {
@@ -1669,6 +1790,7 @@ void  decl(mode* self) {
     if(anon) flaw(self, "a parameter without a name\n");
     if(func->more) flaw(self, "only an import can be variadic\n");
     if(home(self)->talk.kind != '{') flaw(self, "expected function body\n");
+    self->frame = top;
     byte* hail = self->text->body;
     emit(self, hail, self->form.os, func->size, func->reals | flot(self, func->type) << RETS);
     func->addr = self->text->body;
@@ -1688,6 +1810,7 @@ void  decl(mode* self) {
     emit(self, move, 0); fini(self); // implicit return 0
     emit(self, size, func->addr, (self->deep + 15) & -16);
     bury(self, top);
+    self->frame = ~0u;
     while(self->regn) self->pick[--self->regn]->pick = 0;
     reel(self); // between functions: members go after text
     return;
@@ -1732,7 +1855,7 @@ void  feed(mode* self, u32i at) {
     self->heap(code, 0);
     self->units[at].code = NULL;
   } else {
-    for(chop(self); home(self)->talk.kind; ) decl(self);
+    for(chop(self); home(self)->talk.kind; self->ripe = (u32i)(self->data->body - self->data->head)) decl(self);
     tie(self, fixs, 0);
     self->heap(code, 0);
     self->units[at].code = NULL;
@@ -1769,11 +1892,15 @@ void  lead(mode* self, const char* name, file* code, byte kind) {
   if(!land(self, path, size, code, kind)) fail("cannot open: %s\n", name);
 }
 
-void  make(mode* self) {
+// the front end: the source and what it links parsed, the calls bound, the
+// libraries and archives done with. The library whose start a C program has,
+// when linked in, else NULL. A mirror stops here: it has no image to write
+meta* build(mode* self) {
   // unit = callable
   //      | variable
   //      | typedecl
 
+  self->frame = ~0u;
   self->core = (core){dock, gap, lay, hget, find, heft, ask, sign, knit};
   self->text = (file*)self->hold(0, CODE);
   self->text->body = self->text->head;
@@ -1815,6 +1942,11 @@ void  make(mode* self) {
   self->askx.size = self->askx.used = 0;
   self->link = self->heap(self->link, 0);
   self->fixc = 0;
+  return libc;
+}
+
+void  make(mode* self) {
+  meta* libc = build(self);
 
   // without main, a library: the boot stub stays unused at the start of text
   meta* func = find(self, 0, sget(self, "main"));

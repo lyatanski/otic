@@ -7,6 +7,7 @@
 #else
 #include <sys/mman.h>   /* for mmap         */
 #include <dlfcn.h>      /* for dlopen       */
+#include <signal.h>     /* for signal       */
 #endif
 
 // after the system headers: macros of the parts (arm8.c X) clash with them
@@ -105,6 +106,17 @@ void prep(void* memory, size_t size) {
 #endif
 }
 
+// the pages prep made executable, writable again
+void thaw(void* memory, size_t size) {
+#ifdef _WIN32
+  DWORD old;
+  if(!VirtualProtect(memory, size, PAGE_READWRITE, &old))
+#else
+  if(mprotect(memory, size, PROT_READ | PROT_WRITE))
+#endif
+    fail("cannot unprotect %zu bytes\n", size);
+}
+
 void* drop(void* memory, size_t size) {
 #ifdef _WIN32
   VirtualFree(memory, 0, MEM_RELEASE);
@@ -153,14 +165,17 @@ bool  have(const item* s) {
 
 // the address of each import in its slot, from the libraries it loads. On
 // Windows a name may be exported behind an underscore: spell makes the import
-// that name, for a program written to load it
-void  plug(const mode* self, u64i* slot, bool spell) {
+// that name, for a program written to load it. An import that the host lacks
+// fails, unless soft: its slot stays as it was
+void  plug(const mode* self, u64i* slot, bool spell, bool soft) {
   char  name[256];
   for(u32i i = 0; i < self->impn; i++) {
     meta* x = self->imps[i];
     meta* l = x->lib; // loaded when first used: its handle is its addr
-    if(!l->addr && !(l->addr = bring(l->name)))
+    if(!l->addr && !(l->addr = bring(l->name))) {
+      if(soft) continue;
       fail("cannot load library %.*s\n", nick(l->name));
+    }
     void* lib = l->addr;
     if(x->name->size >= sizeof name) fail("name too long: %.*s\n", nick(x->name));
     snprintf(name, sizeof name, "%.*s", nick(x->name));
@@ -184,9 +199,69 @@ void  plug(const mode* self, u64i* slot, bool spell) {
     (void)spell;
     void* at = dlsym(lib, name);
 #endif
+    if(!at && soft) continue;
     if(!at) fail("undefined: %s in %.*s\n", name, nick(l->name));
     slot[x->slot - 1] = (u64i)at;
   }
+}
+
+// Compile-time code (#) runs in one image for the whole compilation, so that
+// what a # does to its globals and its heap is there for the next: text, data,
+// bss and the import slots at fixed places of one region. Each # copies the
+// text over again, docked (dock patches text in place: it is put back clean
+// after), and the data laid since the last. One image for the process: a mode
+// that makes code for the host has it, else the mirror of one that does not
+#define IMGT (64u << 20) // text, then data, bss and the slots after it
+#define IMGD (32u << 20)
+#define IMGB (32u << 20)
+#define IMGS (64u << 10)
+static byte* image;
+static u32i  warm;  // bytes of data the image has
+static const char* where; // the # that runs: if its code crashes
+static u64i  atline;
+
+#ifndef _WIN32
+static void  crash(int sig) {
+  printf("%s:%llu: code run at compile time crashed (signal %d)\n", where, (unsigned long long)atline, sig);
+  exit(1);
+}
+#endif
+
+// the result bits of the function at entry in text, a real's too
+u64i  eval(mode* self, byte* entry, bool real) {
+  u64i  code = self->text->body - self->text->head;
+  u64i  size = self->data->body - self->data->head;
+  if(code > IMGT || size > IMGD || self->zero > IMGB || 8 * self->impn > IMGS)
+    fail("code run at compile time is too large\\n");
+  if(!image) {
+    image = self->hold(0, (u64i)IMGT + IMGD + IMGB + IMGS);
+#ifndef _WIN32
+    signal(SIGSEGV, crash); signal(SIGBUS, crash); signal(SIGILL, crash);
+    signal(SIGFPE, crash);  signal(SIGTRAP, crash);
+#endif
+  }
+  else thaw(image, IMGT);
+  byte* clean = self->heap(NULL, code + 1);
+  copy(clean, self->text->head, code);
+  self->bssat = IMGT + IMGD;
+  self->slotat = IMGT + IMGD + IMGB;
+  dock(self, IMGT, (u64i)image);
+  self->bssat = self->slotat = 0;
+  copy(image, self->text->head, code);
+  copy(self->text->head, clean, code);
+  self->heap(clean, 0);
+  if(size > warm) copy(image + IMGT + warm, self->data->head + warm, size - warm);
+  warm = self->ripe < size? self->ripe: (u32i)size;
+  plug(self, (u64i*)(image + IMGT + IMGD + IMGB), 0, 1);
+  prep(image, IMGT);
+  where = home(self)->path;
+  atline = home(self)->line;
+  byte* at = image + (entry - self->text->head);
+  if(!real) return ((u64i (*)(void))at)();
+  double v = ((double (*)(void))at)();
+  u64i  bits;
+  copy((byte*)&bits, &v, sizeof bits);
+  return bits;
 }
 
 typedef int (*func)(void);
@@ -205,7 +280,7 @@ void  exec(mode* self) {
   dock(self, at, (u64i)run);
   copy(run, self->text->head, code);
   copy(run + at, self->data->head, size);
-  plug(self, (u64i*)(run + all) - self->impn, 0);
+  plug(self, (u64i*)(run + all) - self->impn, 0, 0);
   if(at) prep(run, at); // text only: data and bss stay writable
   int return_code = ((func)(run + (self->hail - self->text->head)))();
   printf("%d\n", return_code);
@@ -218,7 +293,7 @@ void  save(mode* self) {
   if(self->impn && self->main && self->form.os == host.os && self->arch.cpu == base.cpu
      && (self->form.os != os_linux || self->clib == CLIB)) {
     u64i* slot = self->heap(NULL, 8 * self->impn);
-    plug(self, slot, 1);
+    plug(self, slot, 1, 0);
     self->heap(slot, 0);
   }
   file* out = self->form.pack(self);
@@ -227,6 +302,32 @@ void  save(mode* self) {
   fwrite(out->head, 1, out->body - out->head, fp);
   if(ferror(fp) | fclose(fp)) fail("write error: %s\n", self->outp);
   self->heap(out, 0);
+}
+
+// for code that makes another target's: a mode of the host for the same
+// source, built as running it here would (libraries as exec has them), whose
+// # run and left their results in its tape
+mode* mirror(mode* from) {
+  mode* self = zero(from, sizeof(mode));
+  *self = (mode){
+    .hold = hold,
+    .drop = drop,
+    .heap = heap,
+    .scan = scan,
+    .arch = base,
+    .form = host,
+    .ario = {ario_load, ario_pull},
+    .have = have,
+    .clib = CLIB,
+    .name = from->name,
+    .libs = lb_none,
+    .eval = eval,
+    .dirn = from->dirn,
+  };
+  copy((byte*)self->dirs, from->dirs, sizeof self->dirs);
+  nest(self, (unit){.kind = un_root});
+  build(self);
+  return self;
 }
 
 typedef struct opts opts;
@@ -352,6 +453,9 @@ int   main(int argc, char** argv) {
   if(self.show == exec && self.arch.cpu != base.cpu)
     fail("cannot run foreign code, write it with -e\n");
   if(self.show == exec) self.libs = lb_none; // running needs main
+  self.mirror = mirror;
+  if(self.arch.cpu == base.cpu && self.form.os == host.os && (self.form.os != os_linux || self.clib == CLIB))
+    self.eval = eval; // code for the host runs at compile time here, else in a mirror
 
   make(&self);
 

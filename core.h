@@ -284,7 +284,8 @@ typedef struct {
 // what a form may ask of the front end: make fills it in, a spec mocks it.
 // dock lays data out at text + at, bss after it, text at org, the import
 // slots after bss or mode.fore bytes before data; gap is the
-// alignment of data and of bss after it; lay makes room for size bytes in
+// alignment of data and of bss after it (bss and the slots where bssat and
+// slotat say, when set: an image that grows); lay makes room for size bytes in
 // data, or in bss (| ZERO) when zero. An object is taken into the unit being
 // joined: name is a spelling in the table of unit at, find what it means
 // there, heft how firmly x defines it, ask pulls the archive member of x. For
@@ -305,6 +306,10 @@ typedef struct {
 // what a source without main makes: nothing (running: it fails), a shared
 // library, or a relocatable object (static)
 enum { lb_none, lb_dyno, lb_relo };
+
+// what a # gave: the bits of a number or a real (type says which), or the
+// bytes of a char* result, text of size, NUL terminated, from mode.heap
+typedef struct { meta* type; u64i bits; char* text; u32i size; } yield;
 
 struct mode {
   const char* name; // input
@@ -339,9 +344,24 @@ struct mode {
   pack  show;
   grab  scan;
   bool  (*have)(const item*); // running: whether the host has shared library s
+  // compile-time execution (#). eval runs the function at entry, a C-ABI entry
+  // in text, in an image of the code so far, as host machine code: its result
+  // bits (a real's too). NULL when this mode makes code for another target:
+  // mirror then builds and runs a mode of the host for the same source, whose
+  // tape of yields this one takes in order
+  u64i  (*eval)(mode*, byte* entry, bool real);
+  mode* (*mirror)(mode*);
+  yield* tape;     // the results of the # run so far, in order
+  u32i  tapen, tapec, taken; // its length and room; the next one a replay takes
+  bool  shaded;    // the tape is the mirror's
+  bool  hidden;    // the locals of the function are out of scope for a #
+  u32i  layers;    // sources a # generated, one inside another
+  u32i  ripe;      // bytes of data that finished declarations have laid
+  u64i  bssat, slotat; // set while docking an image: where bss and the import slots are
 
   u32i  top, piles;
   meta** pile;     // the names in scope, in chunks (cell): top of them, piles chunks
+  u32i  frame;     // the first name of the function being compiled in pile, ~0u outside one
   u32i  held;      // left operands kept: the next one goes to scratch held
   u32i  dials;     // calls emitted: a kept operand stays on the stack across one
   s32i  slot;      // frame bytes in use
@@ -376,6 +396,7 @@ struct mode {
 };
 
 void  make(mode*);
+meta* build(mode*); // the source parsed, its units and libraries joined, calls bound: all but the image
 void  dock(mode*, u64i at, u64i org); // lay data out at text + at, bss after it, text at org
 u64i  gap(const mode*); // alignment of data and of bss after it
 bool  alike(const void* x, const void* y, u64i size);

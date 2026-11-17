@@ -329,6 +329,36 @@ static int  machlib(const char* name, const char* src, bool stat, char* arch, co
   return system(cmd)? odd: 0;
 }
 
+// src written as bins/name.c and built for arch and form with -e into
+// bins/name.out: its bytes in out (size), 0 when tic failed
+static long built(const char* src, const char* name, const char* arch, const char* form, char* out, long cap) {
+  char at[64], to[64];
+  mkdir("bins", 0755);
+  snprintf(at, sizeof at, "bins/%s.c", name);
+  snprintf(to, sizeof to, "bins/%s.out", name);
+  FILE* fp = fopen(at, "wb");
+  if(!fp) return 0;
+  fputs(src, fp);
+  fclose(fp);
+  unlink(to);
+  int null = open(NULL_DEV, O_WRONLY);
+  int code = spawn(null, (char*[]){tic(), "-a", (char*)arch, "-f", (char*)form, "-e", to, at, NULL});
+  close(null);
+  if(code || !(fp = fopen(to, "rb"))) return 0;
+  long n = (long)fread(out, 1, cap, fp);
+  fclose(fp);
+  return n;
+}
+
+// a and b built for arch and form (another target than this one: what a #
+// runs in is a host mode, whose results the build takes) come out the same
+static bool alikes(const char* a, const char* b, const char* arch, const char* form) {
+  static char x[1 << 16], y[1 << 16];
+  long n = built(a, "ct-a", arch, form, x, sizeof x), m = built(b, "ct-b", arch, form, y, sizeof y);
+  return n > 0 && n == m && !memcmp(x, y, (size_t)n);
+}
+#define twins(a, b, arch, form) check(alikes(a, b, arch, form))
+
 // 25-statement bodies: their branches are over 127 bytes on x86
 #define RET5 "return 1; return 1; return 1; return 1; return 1; "
 #define ADD5 "s += 1; s += 1; s += 1; s += 1; s += 1; "
@@ -1367,6 +1397,90 @@ spec(TAG) {
       expect(9, "int main() { return -syscall(" WRITE ", 99, \"x\", 1); }\n");
     linux_it("passes a string to the kernel")
       expect(3, "int main() { return syscall(" WRITE ", 1, \"\", 0) + 3; }\n");
+  }
+
+  context("compile time") { // # runs a call while compiling, in a host image
+    it("gives a constant for an array size")
+      expect(9, "int sq(int x) { return x * x; }\nint t[#sq(3)];\nint main() { return sizeof t / sizeof t[0]; }\n");
+    it("gives a constant for an initializer and a condition")
+      expect(42, "int dbl(int x) { return x + x; }\nint g = #dbl(21);\n"
+                 "int main() { when(#dbl(1) == 2) return g; return 0; }\n");
+    it("gives a long that is no int")
+      expect(4, "long big() { long x = 1; return x << 40; }\nint main() { return #big() >> 38; }\n");
+    it("gives a real")
+      expect(7, "real half(int x) { return x / 2.0; }\nint main() { return #half(7) * 2; }\n");
+    it("cuts a char result")
+      expect(200, "char c() { return 456; }\nint main() { return #c(); }\n");
+    it("gives 0 for a void function")
+      expect(0, "int n;\nvoid bump() { n += 1; }\nint main() { #bump(); #bump(); return n; }\n");
+    it("computes inside an expression with kept operands")
+      expect(60, "int twice(int x) { return x * 2; }\nint main() {\n  int a = 5, b = 7;\n"
+                 "  return a + #twice(3) * b + (a < #twice(3)) + #twice(6 + 0);\n}\n");
+    it("computes inside a loop and keeps the locals in their registers")
+      expect(110, "int g = 3;\nint twice(int x) { return x * 2; }\nint main() {\n"
+                  "  int a = 1, b = 2, i = 0, s = 0;\n  while(i < 10) { s += a * #twice(4) + b - #twice(1) + g; i += 1; }\n"
+                  "  return s;\n}\n");
+    it("takes the result of a call as an argument")
+      expect(10, "int add(int a, int b) { return a + b; }\nint main() { return #add(#add(1, 2), #add(3, 4)); }\n");
+    it("keeps the globals that an earlier call changed, not in the program")
+      expect(12, "int count;\nint next() { count += 1; return count; }\n"
+                 "int main() { int a = #next(); int b = #next(); return a * 10 + b + count; }\n");
+    it("starts a global with its initial value")
+      expect(72, "int count = 5;\nint next() { count += 1; return count; }\n"
+                 "int main() { int a = #next(); int b = #next(); return a * 10 + b + count; }\n");
+    it("calls C code")
+      here(9, "load \"c\";\nint abs(int a);\nint main() { return #abs(0 - 9); }\n");
+    it("reads a string argument")
+      here(11, "load \"c\";\nint strlen(char* s);\nint main() { char* t = \"abc\"; return #strlen(\"hello world\") + strlen(t) - 3; }\n");
+    it("takes declarations from a char* result")
+      expect(42, "char* gen() { return \"int forty() { return 40; } struct pt { int x; int y; }; int base = 2;\"; }\n"
+                 "#gen()\nint main() { pt p = {1, 1}; return forty() + p.x + p.y + base - 2; }\n");
+    it("takes source that runs a call itself")
+      expect(7, "int seven() { return 7; }\nchar* gen() { return \"int f() { return #seven(); }\"; }\n"
+                "#gen();\nint main() { return f(); }\n");
+    it("rejects a local in the arguments")
+      expect(bad, "int add(int a, int b) { return a + b; }\nint main() { int x = 1; return #add(x, 2); }\n");
+    it("rejects the function being compiled")
+      expect(bad, "int f(int n) { return #f(n); }\nint main() { return 0; }\n");
+    it("rejects a function defined later")
+      expect(bad, "int main() { return #later(1); }\nint later(int a) { return a; }\n");
+    it("rejects a pointer result")
+      expect(bad, "int* p() { return 0; }\nint main() { return #p(); }\n");
+    it("rejects source text in an expression")
+      expect(bad, "char* s() { return \"1\"; }\nint main() { return #s(); }\n");
+    it("rejects a syntax error in generated source")
+      expect(bad, "char* gen() { return \"int f( {\"; }\n#gen()\nint main() { return 0; }\n");
+    it("rejects source that generates itself without end")
+      expect(bad, "char* again() { return \"#again()\"; }\n#again()\nint main() { return 0; }\n");
+    it("rejects what is no call")
+      expect(bad, "int main() { return #1; }\n");
+    it("rejects a function name without a call")
+      expect(bad, "int f() { return 1; }\nint main() { return #f; }\n");
+    it("builds what writing the constants would, for the host's other target") {
+      twins("int sq(int x) { return x * x; }\nint t[#sq(3)];\nint main() { return #sq(5) + sizeof t / 4; }\n",
+            "int sq(int x) { return x * x; }\nint t[9];\nint main() { return 25 + sizeof t / 4; }\n",
+            pick("arm8", "ia64"), "elfs");
+    }
+    it("builds the same on every form") {
+      twins("int sq(int x) { return x * x; }\nint main() { return #sq(5); }\n",
+            "int sq(int x) { return x * x; }\nint main() { return 25; }\n", "ia64", "pe32");
+      twins("int sq(int x) { return x * x; }\nint main() { return #sq(5); }\n",
+            "int sq(int x) { return x * x; }\nint main() { return 25; }\n", "arm8", "mach");
+    }
+    it("takes generated source and global state in a cross build") {
+      twins("char* gen() { return \"int forty() { return 40; }\"; }\n#gen()\n"
+            "int count;\nint next() { count += 1; return count; }\nint main() { return forty() + #next() + #next(); }\n",
+            "char* gen() { return \"int forty() { return 40; }\"; }\nint forty() { return 40; }\n"
+            "int count;\nint next() { count += 1; return count; }\nint main() { return forty() + 1 + 2; }\n",
+            pick("arm8", "ia64"), "elfs");
+    }
+    it("takes a real in a cross build") {
+      twins("real half(int x) { return x / 2.0; }\nint main() { return #half(7) * 2; }\n",
+            "real half(int x) { return x / 2.0; }\nint main() { return 3.5 * 2; }\n", pick("arm8", "ia64"), "elfs");
+    }
+    it("rejects an error in a cross build too")
+      check(!built("int add(int a, int b) { return a + b; }\nint main() { int x = 1; return #add(x, 2); }\n",
+                   "ct-a", pick("arm8", "ia64"), "elfs", (char[64]){0}, 64));
   }
 
   context("errors") {

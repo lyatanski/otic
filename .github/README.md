@@ -94,6 +94,35 @@ int main() {
   (`'a'`, `'\n'`) are numbers
 - initializers with designators, compound literals, `static`, `extern`
 - `syscall(n, ...)` goes straight to the kernel
+- `#f(args)` calls `f` while compiling, as host code, and takes its result in
+  place of the source: an int, long or real is a constant (an array size, an
+  initializer, a condition), a `char*` at the top level is source text,
+  compiled there as declarations. The arguments are constants or other `#`
+  calls; a local of the enclosing function is out of scope. Globals keep what
+  earlier `#` calls did to them while compiling, and the program starts with
+  its own. It works for every target: a build for another cpu or format takes
+  its results from a host build of the same source
+
+```c
+load "c";
+int sprintf(char* out, char* fmt, ...);
+
+int sq(int x) { return x * x; }
+
+char text[256];
+
+// returns "int get_<name>() { return <value>; }"
+char* getter(char* name, int value) {
+  sprintf(text, "int get_%s() { return %d; }", name, value);
+  return text;
+}
+
+int table[#sq(4)];          // 16 elements
+#getter("x", 3)             // declares get_x
+#getter("y", #sq(5))        // declares get_y, returning 25
+
+int main() { return get_x() + get_y() + sizeof table / 4; }   // 44
+```
 
 ## Tests
 
