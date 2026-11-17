@@ -29,6 +29,7 @@ u64i  slen(const char* s); // bytes before the NUL
 // the symbol tables
 typedef struct unit unit;
 typedef struct mode mode;
+typedef struct dwarf dwarf;
 
 // a name in the table of a unit, and what it means there
 typedef struct item item;
@@ -221,6 +222,7 @@ struct meta {
   byte  longs; // a function of the source: bit i when parameter i is 64 bits
   byte  reals; // a function or a function type: bit i when parameter i is a real
   u32i  unit; // the unit that defines it
+  u32i  die;  // a type: its number in the debug information (-g), 0 until it has one
 };
 
 // metas in chunks of PART that never move, as names and types point at them:
@@ -301,7 +303,47 @@ typedef struct {
   u32i  (*ask)(mode*, meta* x);
   u32i  (*sign)(mode*, meta*** out);
   u32i  (*knit)(mode*, cord** out);
+  // the debug sections (-g) of an image with text, data and bss at those
+  // addresses, in out
+  void  (*dbug)(mode*, u64i text, u64i data, u64i bss, dwarf* out);
 } core;
+
+
+// debug information (-g): what the pass records as it goes (dwarf.c), and a
+// form writes after the image. Text offsets are from the start of text; a
+// type is a number (meta.die), its DIE in tys, its place in offs
+typedef struct { u32i at, unit, line; } dwrow;      // a row of the line table
+typedef struct { u32i lo, hi, up; } dwblk;          // a block: its code, and the block around it plus 1 (0: the function)
+typedef struct { item* name; u32i type, unit, line, block; s32i slot; bool parm; } dwvar; // a local, at slot from rbp or x29
+typedef struct { u32i lo, hi; } dwend;              // an epilogue: its code
+typedef struct {
+  item* name; u32i type, unit, line, lo, hi; bool own;
+  u32i  vars, nvars, blks, nblks, ends, nends;      // its locals, blocks and epilogues, in the arrays
+} dwfun;
+typedef struct { item* name; u32i type, unit, line, slot, size; bool own; } dwglb; // a global: its data offset (| ZERO)
+typedef struct { u32i at, id; } dwfix;              // a reference in tys to type id, patched when written
+typedef struct { byte* p; u32i n, c; } blob;        // bytes from mode.heap: n of c in use
+
+typedef struct {
+  dwrow* rows; u32i nrow, crow;
+  dwblk* blks; u32i nblk, cblk;
+  dwvar* vars; u32i nvar, cvar;
+  dwend* ends; u32i nend, cend;
+  dwfun* funs; u32i nfun, cfun;
+  dwglb* glbs; u32i nglb, cglb;
+  blob   tys;                     // the DIEs of the types, as they are made
+  u32i*  offs; u32i ids, coff;    // offs[id]: where in tys the DIE of type id is, ids made so far
+  dwfix* fixs; u32i nfix, cfix;
+  u32i*  open; u32i deep, copen;  // the blocks being compiled, innermost last
+  u32i   vars0, blks0, ends0;     // the first local, block and epilogue of the function being compiled
+} dbg;
+
+// the sections of debug information of an image
+struct dwarf { blob info, abbr, line, frame; };
+
+// a file a form writes beside its image (-g: a Mach-O program's debug bundle),
+// its path from mode.heap
+typedef struct { char* path; file* data; } sidecar;
 
 // what a source without main makes: nothing (running: it fails), a shared
 // library, or a relocatable object (static)
@@ -393,6 +435,11 @@ struct mode {
   const char* dirs[16]; // libraries locations
   u32i  hookn, hookc;
   hook* hooks;
+  bool  debug;     // -g: write debug information
+  const char* cwd; // the directory the paths are relative to, NULL when unknown
+  dbg*  dbg;       // what the pass recorded for it
+  sidecar side[2]; // the files the form wants written beside its image
+  u32i  sides;
 };
 
 void  make(mode*);
@@ -417,6 +464,18 @@ u32i  quote(const item* s, byte* out);
 void  bind(const mode*, byte* at, const item* name, const meta* func, u32i argc, bool ext);
 bool  join(mode*, const char* path, u64i size, file* code, byte kind);
 bool  land(mode*, char* path, u64i size, file* code, byte kind);
+
+// dwarf.c: each does nothing without mode.debug
+void  dwarf_line(mode*);                         // a statement starts here
+void  dwarf_trim(mode*, const byte* mark);       // text rewound to mark
+void  dwarf_open(mode*, u64i line);                // a function begins, called at line
+void  dwarf_enter(mode*);                        // a block begins
+void  dwarf_leave(mode*);                        // and ends
+void  dwarf_var(mode*, item* name, meta* type, s32i slot, bool parm, u64i line);
+void  dwarf_done(mode*, const byte* from);       // an epilogue from there to here
+void  dwarf_func(mode*, const meta* func, u64i line, const byte* lo); // its body is compiled
+void  dwarf_glob(mode*, item* name, meta* type, u32i slot, bool own, u64i line);
+void  dwarf_pack(mode*, u64i text, u64i data, u64i bss, dwarf* out);
 
 // link.c
 u64i  tidy(char* path, u64i size);

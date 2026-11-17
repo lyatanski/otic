@@ -421,6 +421,7 @@ oper  memb(mode* self, oper x) {
 
 // rewind text to mark: calls in the dropped code are checked but not patched
 void  trim(mode* self, byte* mark) {
+  dwarf_trim(self, mark);
   self->text->body = mark;
   for(u32i i = self->fixs; i-- && self->link[i].at >= mark; ) self->link[i].at = NULL;
   while(self->seats && self->aims[self->seats - 1].at >= mark) self->seats--;
@@ -1424,6 +1425,7 @@ oper  lit(mode* self) {
 
 // type declarator (= init)? (, declarator (= init)?)* ;
 void  vars(mode* self) {
+  u64i  line = home(self)->line;
   meta* base = sort(self);
   if(twin(self, ';')) return; // a struct, defined
   do {
@@ -1431,6 +1433,7 @@ void  vars(mode* self) {
     meta* type = noun(self, base, &name);
     s32i  slot = stay(self, name, type, type->size);
     seed(self, .name=name, .type=type, .kind=data, .slot=slot);
+    dwarf_var(self, name, type, slot, 0, line);
     if(twin(self, '=')) seal(self, type, 0, slot);
   } while(twin(self, ','));
   skip(self, ';');
@@ -1537,7 +1540,7 @@ static u32i  sown(item** c, u32i* n, item* name) {
 // address is taken anywhere in the body, as &name or within &(...), gets
 // none: a use before the code for it exists is what a single pass cannot see
 void  sift(mode* self, u32i top) {
-  if(!self->arch.regs) return;
+  if(!self->arch.regs || self->debug) return; // -g keeps every local in the frame, where a debugger finds it
   unit* u = home(self);
   byte* at = u->code->body;
   u64i  line = u->line;
@@ -1611,7 +1614,9 @@ void  sift(mode* self, u32i top) {
 // were saved in, and the epilogue
 void  fini(mode* self) {
   for(u32i r = 0; r < self->regn; r++) emit(self, stow, r, -8 * (s32i)(r + 1), 1);
+  byte* from = self->text->body;
   emit(self, done);
+  dwarf_done(self, from);
 }
 
 // loop body: skip jumps back to again, break past the loop
@@ -1628,8 +1633,11 @@ void  iter(mode* self, byte* again) {
 void  stmt(mode* self) {
   u32i  top  = self->top;
   s32i  slot = self->slot, lits = self->lits;
+  dwarf_line(self);
   if(twin(self, '{')) {
+    dwarf_enter(self);
     while(!twin(self, '}')) stmt(self);
+    dwarf_leave(self);
     self->lits = lits;
   }
   else if(twin(self, ';')) {
@@ -1716,6 +1724,7 @@ item* bond(mode* self) {
 void  feed(mode* self, u32i at);
 
 void  decl(mode* self) {
+  u64i  born = home(self)->line; // where a function or global starts, for the debugger
   // # name(args) ";"?: run at compile time; the source it gives, a char*, is
   // declarations that go here, as a unit of their own
   if(twin(self, '#')) {
@@ -1798,6 +1807,7 @@ void  decl(mode* self) {
     emit(self, hail, self->form.os, func->size, func->reals | flot(self, func->type) << RETS);
     func->addr = self->text->body;
     func->hail = hail != func->addr? hail: NULL;
+    dwarf_open(self, born);
     sift(self, top);
     self->slot = self->deep = 8 * self->regn; // the first slots save the registers of locals
     emit(self, open);
@@ -1805,6 +1815,7 @@ void  decl(mode* self) {
     for(u32i i = 0; i < func->size; i++) {
       meta* p = pin(self->pile, top + i);
       p->slot = stay(self, p->name, p->type, 8);
+      dwarf_var(self, p->name, p->type, p->slot, 1, born);
       if(p->slot < 0) { emit(self, parm, i, p->slot); continue; }
       emit(self, rop, '=' | wide(p->type), p->slot, ARG - (s32i)i, 0);
       if(span(p->type) < 4) emit(self, rop, '&', p->slot, NUM, (1 << span(p->type) * 8) - 1); // as a slot would hold it
@@ -1812,6 +1823,7 @@ void  decl(mode* self) {
     stmt(self);
     emit(self, move, 0); fini(self); // implicit return 0
     emit(self, size, func->addr, (self->deep + 15) & -16);
+    dwarf_func(self, func, born, func->addr);
     bury(self, top);
     self->frame = ~0u;
     while(self->regn) self->pick[--self->regn]->pick = 0;
@@ -1832,6 +1844,7 @@ void  decl(mode* self) {
     u32i off = lay(self, type->size, home(self)->talk.kind != '=', 8);
     if(twin(self, '=')) seal(self, type, 1, (s32i)off);
     seed(self, .name=name, .type=type, .kind=glob, .slot=off, .own=own);
+    dwarf_glob(self, name, type, off, own, born);
     if(!twin(self, ',')) break;
   }
   skip(self, ';');
@@ -1904,13 +1917,14 @@ meta* build(mode* self) {
   //      | typedecl
 
   self->frame = ~0u;
-  self->core = (core){dock, gap, lay, hget, find, heft, ask, sign, knit};
+  self->core = (core){dock, gap, lay, hget, find, heft, ask, sign, knit, dwarf_pack};
   self->text = (file*)self->hold(0, CODE);
   self->text->body = self->text->head;
   self->text->tail = (byte*)self->text + CODE;
   self->data = zero(self, sizeof(file) + DATA);
   self->data->body = self->data->head;
   self->data->tail = self->data->head + DATA;
+  if(self->debug) self->dbg = zero(self, sizeof(dbg));
 
   emit(self, boot);
 

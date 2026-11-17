@@ -376,6 +376,84 @@ static const char* bulk(const char* fmt, unsigned n) {
   return all < (int)sizeof src? src: "too long for bulk"; // a case that fails to compile
 }
 
+// the output of cmd (stdout and stderr) in out, NUL ended: its exit status
+static int  captured(const char* cmd, char* out, int cap) {
+  char run[1024];
+  snprintf(run, sizeof run, "%s >bins/capture.txt 2>&1", cmd);
+  int code = system(run);
+  FILE* fp = fopen("bins/capture.txt", "rb");
+  int n = fp? (int)fread(out, 1, (size_t)cap - 1, fp): 0;
+  if(fp) fclose(fp);
+  out[n] = 0;
+  return code;
+}
+
+// 1 when llvm-dwarfdump and readelf can read what a Linux program carries
+static int  dwarfs(void) {
+  static int ok = -1;
+#ifdef __linux__
+  if(ok < 0) ok = !system("llvm-dwarfdump --version >" NULL_DEV " 2>&1 && readelf --version >" NULL_DEV " 2>&1");
+#else
+  ok = 0;
+#endif
+  return ok;
+}
+
+// 1 when gdb can run a program here (a sandbox may not let it trace)
+static int  gdbs(void) {
+  static int ok = -1;
+#ifdef __linux__
+  char out[1024];
+  if(ok < 0) {
+    captured("gdb -q -batch -ex 'set debuginfod enabled off' -ex run /bin/true", out, sizeof out);
+    ok = strstr(out, "exited normally") != NULL;
+  }
+#else
+  ok = 0;
+#endif
+  return ok;
+}
+
+// src at bins/name.ot, built with -g and -e for arch (ia64 or arm8) and form
+// into bins/name: 0 when it was written, else otic's exit status
+static int  debugged(const char* name, const char* src, const char* arch, const char* form) {
+  char at[64], to[64];
+  mkdir("bins", 0755);
+  snprintf(at, sizeof at, "bins/%s.ot", name);
+  snprintf(to, sizeof to, "bins/%s", name);
+  FILE* fp = fopen(at, "wb");
+  if(!fp) return -1;
+  fputs(src, fp);
+  fclose(fp);
+  unlink(to);
+  int null = open(NULL_DEV, O_WRONLY);
+  int code = spawn(null, (char*[]){otic(), "-a", (char*)arch, "-f", (char*)form, "-g", "-e", to, at, NULL});
+  close(null);
+  return code;
+}
+
+// the sources of the cases of debug information
+#define DBG_NODES "struct vec { int x; int y; };\n"          /* 1 */ \
+  "struct node { int v; node* next; };\n"                    /* 2 */ \
+  "int g = 5;\n"                                             /* 3 */ \
+  "long big[4];\n"                                           /* 4 */ \
+  "int sum(node* n) {\n"                                     /* 5 */ \
+  "  int s = 0;\n"                                           /* 6 */ \
+  "  while(n) {\n"                                           /* 7 */ \
+  "    int step = n->v;\n"                                   /* 8 */ \
+  "    s += step;\n"                                         /* 9 */ \
+  "    n = n->next;\n"                                       /* 10 */ \
+  "  }\n"                                                    /* 11 */ \
+  "  return s;\n"                                            /* 12 */ \
+  "}\n"                                                      /* 13 */ \
+  "static int twice(int x) { return x * 2; }\n"              /* 14 */ \
+  "int main() {\n"                                           /* 15 */ \
+  "  node c = {3}, b = {2, &c};\n"                           /* 16 */ \
+  "  vec p = {1, 2};\n"                                      /* 17 */ \
+  "  int t = sum(&b);\n"                                     /* 18 */ \
+  "  return twice(t) + g + p.y;\n"                           /* 19 */ \
+  "}\n"
+
 spec(TAG) {
   context("declarations") {
     it("returns a constant")
@@ -1334,6 +1412,127 @@ spec(TAG) {
     }
     #undef USE
     #undef LIB
+  }
+
+  context("debug information") { // -g: DWARF 5 in an ELF program, read by llvm-dwarfdump and gdb
+    linux_it("writes a program that runs as it does without -g") {
+      check(debugged("dbg-run", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
+      chmod("bins/dbg-run", 0755);
+      check(spawn(1, (char*[]){"bins/dbg-run", NULL}) == 17);
+    }
+    it("is checked by llvm-dwarfdump", dwarfs()) {
+      char out[1 << 16];
+      check(debugged("dbg-dump", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
+      captured("llvm-dwarfdump --verify bins/dbg-dump", out, sizeof out);
+      check(strstr(out, "No errors"));
+      check(!strstr(out, "error:"));
+      captured("llvm-dwarfdump --debug-info bins/dbg-dump", out, sizeof out);
+      check(strstr(out, "DW_AT_name\t(\"sum\")") && strstr(out, "DW_AT_name\t(\"twice\")"));
+      check(strstr(out, "DW_AT_name\t(\"node\")") && strstr(out, "DW_AT_name\t(\"big\")"));
+      check(strstr(out, "DW_TAG_formal_parameter") && strstr(out, "DW_TAG_lexical_block"));
+      check(strstr(out, "DW_AT_decl_line\t(8)"));
+      captured("llvm-dwarfdump --debug-line bins/dbg-dump", out, sizeof out);
+      check(strstr(out, "dbg-dump.ot") && strstr(out, "end_sequence"));
+    }
+    it("describes the frames of both targets", dwarfs()) {
+      char out[1 << 16];
+      check(debugged("dbg-arm", DBG_NODES, "arm8", "elfs") == 0);
+      captured("llvm-dwarfdump --verify bins/dbg-arm", out, sizeof out);
+      check(strstr(out, "No errors"));
+      captured("readelf --debug-dump=frames bins/dbg-arm", out, sizeof out);
+      check(strstr(out, "DW_CFA_def_cfa_register: r29 (x29)"));
+      check(debugged("dbg-x86", DBG_NODES, "ia64", "elfs") == 0);
+      captured("readelf --debug-dump=frames bins/dbg-x86", out, sizeof out);
+      check(strstr(out, "DW_CFA_def_cfa_register: r6 (rbp)"));
+    }
+    it("names its functions and globals in a symbol table", dwarfs()) {
+      char out[1 << 14];
+      check(debugged("dbg-sym", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
+      captured("readelf -s bins/dbg-sym", out, sizeof out);
+      check(strstr(out, " FUNC    GLOBAL DEFAULT    5 sum"));
+      check(strstr(out, " FUNC    LOCAL  DEFAULT    5 twice"));
+      check(strstr(out, " OBJECT  GLOBAL DEFAULT    8 big"));
+    }
+    it("stops in gdb at a line, with its locals and its callers", gdbs()) {
+      char out[4096];
+      check(debugged("dbg-gdb", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
+      chmod("bins/dbg-gdb", 0755);
+      captured("gdb -q -batch -ex 'set debuginfod enabled off' -ex 'break dbg-gdb.ot:9' -ex run"
+               " -ex bt -ex 'info locals' -ex 'p *n' -ex 'p g' -ex 'p big' -ex up -ex 'p p' -ex 'ptype struct node'"
+               " bins/dbg-gdb", out, sizeof out);
+      check(strstr(out, "Breakpoint 1, sum (n=0x"));
+      check(strstr(out, "dbg-gdb.ot:9"));
+      check(strstr(out, "#1  0x") && strstr(out, "in main () at ") && strstr(out, "dbg-gdb.ot:18"));
+      check(strstr(out, "step = 2"));
+      check(strstr(out, " = {v = 2, next = 0x"));
+      check(strstr(out, " = 5") && strstr(out, " = {0, 0, 0, 0}"));
+      check(strstr(out, " = {x = 1, y = 2}"));
+      check(strstr(out, "struct node *next;"));
+    }
+    it("steps over lines and returns a value in gdb", gdbs()) {
+      char out[4096];
+      check(debugged("dbg-step", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
+      chmod("bins/dbg-step", 0755);
+      captured("gdb -q -batch -ex 'set debuginfod enabled off' -ex 'break sum' -ex run -ex next -ex next -ex next"
+               " -ex finish bins/dbg-step", out, sizeof out);
+      check(strstr(out, "Breakpoint 1, sum (n=0x") && strstr(out, "dbg-step.ot:6"));
+      check(strstr(out, "\n7\t") && strstr(out, "\n8\t"));
+      check(strstr(out, "Value returned is $1 = 5"));
+    }
+    it("leaves a program run in memory as it is") {
+      int null = open(NULL_DEV, O_WRONLY);
+      check(debugged("dbg-mem", DBG_NODES, "ia64", "elfs") >= 0);
+      int code = spawn(null, (char*[]){otic(), "-g", "bins/dbg-mem.ot", NULL});
+      close(null);
+      check(code == 0);
+    }
+    it("writes a bundle for a Mach-O program, with the identifier of the program", dwarfs()) {
+      char out[1 << 14];
+      const char* arch[] = {"ia64", "arm8"};
+      for(int i = 0; i < 2; i++) {
+        check(debugged("dbg-mac", DBG_NODES, arch[i], "mach") == 0);
+        captured("llvm-dwarfdump --verify bins/dbg-mac.dSYM/Contents/Resources/DWARF/dbg-mac", out, sizeof out);
+        check(strstr(out, "No errors"));
+        captured("llvm-dwarfdump --debug-info bins/dbg-mac.dSYM/Contents/Resources/DWARF/dbg-mac", out, sizeof out);
+        check(strstr(out, "DW_AT_name\t(\"sum\")") && strstr(out, "DW_AT_location\t(DW_OP_addr 0x1"));
+        captured("llvm-dwarfdump --uuid bins/dbg-mac bins/dbg-mac.dSYM/Contents/Resources/DWARF/dbg-mac", out, sizeof out);
+        const char* a = strstr(out, "UUID: "), *b = a? strstr(a + 6, "UUID: "): NULL;
+        check(b && !strncmp(a + 6, b + 6, 36));
+        check(!access("bins/dbg-mac.dSYM/Contents/Info.plist", F_OK));
+      }
+    }
+    it("writes a Mach-O library with its bundle", dwarfs()) {
+      char out[1 << 14];
+      module("dbg-dylib", "int twice(int x) { return x * 2; }\n");
+      int null = open(NULL_DEV, O_WRONLY);
+      check(spawn(null, (char*[]){otic(), "-f", "mach", "-g", "-e", "bins/dbg-dylib.dylib", "bins/dbg-dylib.ot", NULL}) == 0);
+      close(null);
+      captured("llvm-dwarfdump --verify bins/dbg-dylib.dylib.dSYM/Contents/Resources/DWARF/dbg-dylib.dylib", out, sizeof out);
+      check(strstr(out, "No errors"));
+    }
+    it("writes a PE program with its debug sections", dwarfs()) {
+      char out[1 << 14];
+      const char* arch[] = {"ia64", "arm8"};
+      for(int i = 0; i < 2; i++) {
+        check(debugged("dbg-pe", DBG_NODES, arch[i], "pe32") == 0);
+        captured("llvm-dwarfdump --verify bins/dbg-pe", out, sizeof out);
+        check(strstr(out, "No errors"));
+        captured("llvm-dwarfdump --name=main bins/dbg-pe", out, sizeof out);
+        check(strstr(out, "DW_AT_low_pc\t(0x00000001400010")); // the image base and the text section
+        captured("llvm-objdump -h bins/dbg-pe", out, sizeof out);
+        check(strstr(out, ".debug_info") && strstr(out, ".debug_line") && strstr(out, ".eh_frame"));
+        captured("llvm-objdump -t bins/dbg-pe", out, sizeof out);
+        check(strstr(out, " sum") && strstr(out, " main") && strstr(out, " big"));
+      }
+    }
+    it("does not write an object with it yet") {
+      int null = open(NULL_DEV, O_WRONLY);
+      module("dbg-lib", "int twice(int x) { return x * 2; }\n");
+      check(spawn(null, (char*[]){otic(), "-g", "-f", "elfs", "-s", "-e", "bins/dbg-lib.o", "bins/dbg-lib.ot", NULL}) == 1);
+      check(spawn(null, (char*[]){otic(), "-g", "-f", "mach", "-s", "-e", "bins/dbg-lib.o", "bins/dbg-lib.ot", NULL}) == 1);
+      check(spawn(null, (char*[]){otic(), "-g", "-f", "pe32", "-e", "bins/dbg-lib.exe", "bins/dbg-lib.ot", NULL}) == 1);
+      close(null);
+    }
   }
 
   context("reals") { // 64-bit IEEE doubles

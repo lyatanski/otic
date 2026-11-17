@@ -5,7 +5,7 @@ mkdir -p $out
 echo -- build
 gcc -Wall -Wextra -O3 -s -o$out/one main.c
 
-for file in main util core link ia64 arm8 elfs ario mach pe32
+for file in main util core dwarf link ia64 arm8 elfs ario mach pe32
 do
   src=$file.c
   dst=$out/$file.o

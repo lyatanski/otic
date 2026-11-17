@@ -154,6 +154,100 @@ static u32i  mach_lib(const meta* l, char* out) {
   return n + 9;
 }
 
+// LC_UUID with the 16 bytes of uuid, at c: past it
+static byte* mach_uuid_cmd(byte* c, const byte* uuid) {
+  const u32i head[2] = {0x1b, 24};
+  return copy(copy(c, head, sizeof head), uuid, 16);
+}
+
+// the segments and sections of an image, for its debug bundle: __TEXT at org,
+// its section at org + top, the bytes of __TEXT, then __DATA with the data
+// (size bytes), bss from bss to end, and vmsz in all
+typedef struct { u64i org, top, code, text, size, bss, end, vmsz; u32i lg; } mach_geo;
+
+// an identifier for the image, which its debug bundle repeats: from its text and data
+static void  mach_uuid(const mode* self, byte* out) {
+  byte a[32], b[32];
+  sha256(self->text->head, self->text->body - self->text->head, a);
+  sha256(self->data->head, self->data->body - self->data->head, b);
+  for(u32i i = 0; i < 16; i++) out[i] = a[i] ^ b[i + 16];
+}
+
+// -g: the debug bundle of the image, beside it as <out>.dSYM, which lldb reads:
+// a file of type MH_DSYM with the segments of the image holding no bytes, so
+// that its addresses mean the same, the same UUID, and a __DWARF segment with
+// the sections. The frames are left to the debugger: it unwinds by the frame
+// pointer
+static void  mach_dsym(mode* self, const mach_geo* g, const byte* uuid) {
+  static const char names[3][16] = {"__debug_info", "__debug_abbrev", "__debug_line"};
+  const u64i page = 0x4000;
+  dwarf dw;
+  self->core.dbug(self, g->org + g->top, g->org + g->text, g->org + g->text + g->bss, &dw);
+  const blob* blobs[3] = {&dw.info, &dw.abbr, &dw.line};
+  const u64i top = sizeof(mach_mh) + 24 + sizeof(mach_symtab) + 3 * sizeof(seg64) + 6 * sizeof(sec64);
+  const u64i off = (top + page - 1) & ~(page - 1), vm = g->org + g->text + g->vmsz;
+  u64i  len = 0;
+  for(u32i i = 0; i < 3; i++) len += blobs[i]->n;
+  const u64i all = off + len;
+
+  seg64 seg[3] = {
+    {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", g->org, g->text, 0, 0, 5, 5, 1, 0},
+    {lc_segment, sizeof(seg64) + 2 * sizeof(sec64), "__DATA", g->org + g->text, g->vmsz, 0, 0, 3, 3, 2, 0},
+    {lc_segment, sizeof(seg64) + 3 * sizeof(sec64), "__DWARF", vm, (len + page - 1) & ~(page - 1), off, len, 7, 3, 3, 0},
+  };
+  sec64 sec[6] = {
+    {"__text", "__TEXT", g->org + g->top, g->code, 0, g->lg, .flags = (u32i)s_code},
+    {"__data", "__DATA", g->org + g->text, g->size, 0, g->lg, .flags = s_regular},
+    {"__bss", "__DATA", g->org + g->text + g->bss, g->end - g->bss, 0, g->lg, .flags = s_zerofill},
+  };
+  for(u32i i = 0, at = 0; i < 3; at += blobs[i++]->n) {
+    sec[3 + i] = (sec64){.addr = vm + at, .size = blobs[i]->n, .off = (u32i)(off + at), .flags = 0x02000000}; // S_ATTR_DEBUG
+    copy((byte*)sec[3 + i].name, names[i], 16);
+    copy((byte*)sec[3 + i].seg, "__DWARF", 8);
+  }
+  mach_symtab st = {lc_symtab, sizeof st, (u32i)off, 0, (u32i)off, 0};
+  mach_mh mh = {(u32i)mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, 10, 5,
+                (u32i)(top - sizeof(mach_mh)), 0, 0}; // MH_DSYM
+
+  file* out = zero(self, sizeof(file) + all);
+  byte* o = out->head;
+  out->body = out->tail = o + all;
+  byte* c = copy(mach_uuid_cmd(copy(o, &mh, sizeof mh), uuid), &st, sizeof st);
+  c = copy(copy(c, seg, sizeof(seg64)), sec, sizeof(sec64));
+  c = copy(copy(c, seg + 1, sizeof(seg64)), sec + 1, 2 * sizeof(sec64));
+  copy(copy(c, seg + 2, sizeof(seg64)), sec + 3, 3 * sizeof(sec64));
+  for(u32i i = 0, at = 0; i < 3; at += blobs[i++]->n) copy(o + off + at, blobs[i]->p, blobs[i]->n);
+  self->heap(dw.info.p, 0);
+  self->heap(dw.abbr.p, 0);
+  self->heap(dw.line.p, 0);
+  self->heap(dw.frame.p, 0);
+
+  const char* name = self->outp;
+  for(const char* n = name; *n; n++) if(*n == '/') name = n + 1;
+  static const char plist[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n\t<dict>\n"
+    "\t\t<key>CFBundleDevelopmentRegion</key>\n\t\t<string>English</string>\n"
+    "\t\t<key>CFBundleIdentifier</key>\n\t\t<string>com.apple.xcode.dsym.%s</string>\n"
+    "\t\t<key>CFBundleInfoDictionaryVersion</key>\n\t\t<string>6.0</string>\n"
+    "\t\t<key>CFBundlePackageType</key>\n\t\t<string>dSYM</string>\n"
+    "\t\t<key>CFBundleSignature</key>\n\t\t<string>?\?\?\?</string>\n"
+    "\t\t<key>CFBundleShortVersionString</key>\n\t\t<string>1.0</string>\n"
+    "\t\t<key>CFBundleVersion</key>\n\t\t<string>1</string>\n"
+    "\t</dict>\n</plist>\n";
+  const u64i n = slen(self->outp) + slen(name) + 48, m = sizeof plist + slen(name);
+  char* path = self->heap(NULL, n), *info = self->heap(NULL, n);
+  snprintf(path, n, "%s.dSYM/Contents/Resources/DWARF/%s", self->outp, name);
+  snprintf(info, n, "%s.dSYM/Contents/Info.plist", self->outp);
+  file* list = zero(self, sizeof(file) + m);
+  list->body = list->head + snprintf((char*)list->head, m, plist, name);
+  list->tail = list->head + m;
+  self->side[0] = (sidecar){path, out};
+  self->side[1] = (sidecar){info, list};
+  self->sides = 2;
+}
+
 // an executable: its imports are bound by dyld through their slots, after
 // bss in __DATA, each to the library of its load (its ordinal, libSystem
 // first), the binds in __LINKEDIT before the signature
@@ -175,7 +269,7 @@ static file* mach_exec(mode* self) {
     ord[i] = 2 + k;
   }
   const u64i info = self->impn? sizeof(mach_info): 0;
-  const u64i top  = sizeof(mach_head) + info + dylibs + sizeof(mach_blob);
+  const u64i top  = sizeof(mach_head) + info + dylibs + sizeof(mach_blob) + (self->debug? 24: 0);
   const u64i code = self->text->body - self->text->head;
   const u64i text = (top + code + page - 1) & ~(page - 1); // __TEXT, __DATA, the signature
   const u64i size = self->data->body - self->data->head;
@@ -185,6 +279,11 @@ static file* mach_exec(mode* self) {
   const u64i link = text + ((size + page - 1) & ~(page - 1));
   const u32i lg = mach_log(step);
   self->core.dock(self, text - top, 0);
+  byte uuid[16];
+  if(self->debug) {
+    mach_uuid(self, uuid);
+    mach_dsym(self, &(mach_geo){org, top, code, text, size, bss, end, vmsz, lg}, uuid);
+  }
 
   // the binds: each slot to its name in the library of its ordinal
   byte* bind = self->heap(NULL, binds), *b = bind;
@@ -210,7 +309,7 @@ static file* mach_exec(mode* self) {
 
   mach_head h = {
     .mh   = {(u32i)mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_exec,
-             11 + (info? 1: 0) + nneed, (u32i)(top - sizeof(h.mh)),
+             11 + (info? 1: 0) + nneed + (self->debug? 1: 0), (u32i)(top - sizeof(h.mh)),
              (self->impn? 0: mh_noundefs) | mh_dyldlink | mh_twolevel | mh_pie, 0},
     .zero = {lc_segment, sizeof(seg64), "__PAGEZERO", .vmsz = org},
     .text = {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", org, text, 0, text,
@@ -243,6 +342,7 @@ static file* mach_exec(mode* self) {
     mach_lib(need[k], (char*)c + 24);
     c += cmd;
   }
+  if(self->debug) c = mach_uuid_cmd(c, uuid);
   copy(copy(c, &seal, sizeof seal), self->text->head, code);
   copy(o + text, self->data->head, size);
   copy(o + link, bind, nbind);
@@ -463,13 +563,14 @@ static file* mach_dyno(mode* self) {
 
   const u64i top  = sizeof(mach_mh) + 3 * sizeof(seg64) + 3 * sizeof(sec64) + sizeof(mach_info)
                   + sizeof(mach_symtab) + sizeof(mach_dysym) + idsz + sizeof(mach_dylib)
-                  + sizeof(mach_build) + sizeof(mach_blob);
+                  + sizeof(mach_build) + sizeof(mach_blob) + (self->debug? 24: 0);
   const u64i text = (top + code + page - 1) & ~(page - 1); // __DATA in the file and in memory
   const u64i bss  = (size + step - 1) & ~(step - 1), slots = bss + ((self->zero + 7) & -8);
   const u64i end  = slots + 8 * self->impn;
   const u64i vmsz = ((end? end: 1) + page - 1) & ~(page - 1);
   const u64i link = text + ((size + page - 1) & ~(page - 1));
   self->core.dock(self, text - top, top);
+  byte uuid[16];
 
   // __LINKEDIT: binds, trie, symbols and their names, made before it is laid out
   nl64* sym = self->heap(NULL, nsym * sizeof(nl64) + 1);
@@ -496,6 +597,10 @@ static file* mach_dyno(mode* self) {
   const u64i sig  = (strs + t.strs + 15) & -16, all = sig + mach_sigsz(sig);
 
   const u32i lg = mach_log(step);
+  if(self->debug) {
+    mach_uuid(self, uuid);
+    mach_dsym(self, &(mach_geo){0, top, code, text, size, bss, end, vmsz, lg}, uuid);
+  }
   seg64 seg[3] = {
     {lc_segment, sizeof(seg64) + sizeof(sec64), "__TEXT", 0, text, 0, text, 5, 5, 1, 0}, // r-x
     {lc_segment, sizeof(seg64) + 2 * sizeof(sec64), "__DATA", text, vmsz, text, size, 3, 3, 2, 0},
@@ -517,7 +622,7 @@ static file* mach_dyno(mode* self) {
   mach_build bld  = {lc_build, sizeof bld, 1, 0xb0000, 0xb0000, 0}; // macOS 11.0
   mach_blob  sign = {lc_signature, sizeof sign, (u32i)sig, (u32i)(all - sig)};
   mach_mh    mh   = {(u32i)mh_magic, mach_cpu[self->arch.cpu].type, mach_cpu[self->arch.cpu].sub, mh_dylib,
-                     10, (u32i)(top - sizeof(mach_mh)),
+                     10 + (self->debug? 1: 0), (u32i)(top - sizeof(mach_mh)),
                      mh_dyldlink | mh_twolevel | mh_noreexport | (self->impn? 0: mh_noundefs), 0};
 
   file* out = zero(self, sizeof(file) + all);
@@ -531,7 +636,9 @@ static file* mach_dyno(mode* self) {
   copy(copy(c, &id, 24), "@rpath/", 7);
   copy(c + 24 + 7, name, slen(name));
   c += idsz;
-  c = copy(copy(copy(c, &libs, sizeof libs), &bld, sizeof bld), &sign, sizeof sign);
+  c = copy(copy(c, &libs, sizeof libs), &bld, sizeof bld);
+  if(self->debug) c = mach_uuid_cmd(c, uuid);
+  c = copy(c, &sign, sizeof sign);
   copy(o + top, self->text->head, code);
   copy(o + text, self->data->head, size);
   copy(o + link, bind, nbind);
@@ -551,6 +658,7 @@ static file* mach_dyno(mode* self) {
 
 // an executable, or without main a library: a dylib, or static as an object
 file* mach_pack(mode* self) {
+  if(self->debug && !self->main && self->libs == lb_relo) fail("-g is not supported for an object yet\n");
   if(self->main) return mach_exec(self);
   return self->libs == lb_relo? mach_relo(self): mach_dyno(self);
 }

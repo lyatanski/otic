@@ -487,6 +487,46 @@ static u32i  elfs_file(const meta* l, clib c, char* out) {
   return n + 6;
 }
 
+// the names of the sections of debug information, after those of the image:
+// .debug_info .debug_abbrev .debug_line .eh_frame .symtab .strtab
+static const char elfs_dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.eh_frame\0.symtab\0.strtab";
+
+// the symbols of a program with debug information: every function and global
+// the pass recorded, the static ones first, after the null symbol. Their
+// number, how many are local (the null one too), and the bytes of their names
+static void  elfs_dsize(const mode* self, u32i* nsym, u32i* locals, u64i* strs) {
+  const dbg* d = self->dbg;
+  *nsym = 1 + d->nfun + d->nglb;
+  *locals = 1;
+  *strs = 1;
+  for(u32i i = 0; i < d->nfun; i++) *locals += d->funs[i].own, *strs += d->funs[i].name->size + 1;
+  for(u32i i = 0; i < d->nglb; i++) *locals += d->glbs[i].own, *strs += d->glbs[i].name->size + 1;
+}
+
+// sym and its names in str (elfs_dsize), the code at text, data and bss at
+// those addresses, in sections tsec, dsec and bsec
+static void  elfs_dput(const mode* self, sym64* sym, byte* str, u64i text, u64i data, u64i bss,
+                       u16i tsec, u16i dsec, u16i bsec) {
+  const dbg* d = self->dbg;
+  u64i at = 1;
+  for(u32i pass = 0; pass < 2; pass++) {
+    for(u32i i = 0; i < d->nfun; i++) {
+      const dwfun* f = d->funs + i;
+      if(f->own != !pass) continue;
+      *sym++ = (sym64){.name = elfs_word(str, &at, f->name), .type = STT_FUNC,
+                       .bind = pass? STB_GLOBAL: STB_LOCAL, .shidx = tsec, .value = text + f->lo, .size = f->hi - f->lo};
+    }
+    for(u32i i = 0; i < d->nglb; i++) {
+      const dwglb* g = d->glbs + i;
+      bool  z = g->slot & ZERO;
+      if(g->own != !pass) continue;
+      *sym++ = (sym64){.name = elfs_word(str, &at, g->name), .type = STT_OBJECT,
+                       .bind = pass? STB_GLOBAL: STB_LOCAL, .shidx = z? bsec: dsec,
+                       .value = (z? bss: data) + (g->slot & ~ZERO), .size = g->size};
+    }
+  }
+}
+
 // an image, position independent: its dynamic tables, then text, in the first
 // segment, the dynamic section, data, bss and the import slots in a second,
 // writable one, 64 KB further in memory. A shared library (without main)
@@ -540,7 +580,26 @@ static file* elfs_dyno(mode* self) {
   const u64i dat  = (rw + ndyn * sizeof(dyn64) + step - 1) & ~(step - 1);
   const u64i bss  = ((size + step - 1) & ~(step - 1)), slots = bss + ((self->zero + 7) & -8);
   const u64i skew = 0x10000;
-  const u64i shoff = (dat + size + sizeof names + 7) & -8, all = shoff + s_all * sizeof(sh64);
+  // debug information (-g) goes after the names of the sections, outside the
+  // segments: the loader never maps it
+  const u64i namesz = sizeof names + (self->debug? sizeof elfs_dnames: 0);
+  const u32i nsh = s_all + (self->debug? 6: 0);
+  enum { d_info, d_abbr, d_line, d_frame, d_sym, d_str, d_all };
+  dwarf dw = {0};
+  u32i  nds = 0, ndl = 0;
+  u64i  dstrs = 0, dat0[d_all] = {0}, dlen[d_all] = {0}, dend = (dat + size + namesz + 7) & -8;
+  if(self->debug) {
+    self->core.dbug(self, top, dat + skew, dat + skew + bss, &dw);
+    elfs_dsize(self, &nds, &ndl, &dstrs);
+    const u64i lens[d_all] = {dw.info.n, dw.abbr.n, dw.line.n, dw.frame.n, nds * sizeof(sym64), dstrs};
+    for(u32i i = 0; i < d_all; i++) {
+      if(i == d_frame || i == d_sym) dend = (dend + 7) & -8;
+      dat0[i] = dend;
+      dlen[i] = lens[i];
+      dend += lens[i];
+    }
+  }
+  const u64i shoff = (dend + 7) & -8, all = shoff + nsh * sizeof(sh64);
   self->core.dock(self, dat + skew - top, top);
 
   elfs_id id = {.seal = {0x7f, 'E', 'L', 'F'}, .bits = eb_cl64, .data = ed_2lsb, .issue = ev_curr};
@@ -555,7 +614,7 @@ static file* elfs_dyno(mode* self) {
     .phsize = sizeof(ph64),
     .phnum  = (u16i)nph,
     .shsize = sizeof(sh64),
-    .shnum  = s_all,
+    .shnum  = (u16i)nsh,
     .shstr  = s_names,
   };
   const u64i intr = tabs + nph * sizeof(ph64);
@@ -576,7 +635,7 @@ static file* elfs_dyno(mode* self) {
     {DT_SYMENT, sizeof(sym64)}, {DT_RELA, drel}, {DT_RELASZ, nrel * sizeof(rela64)},
     {DT_RELAENT, sizeof(rela64)}, {DT_NULL, 0},
   };
-  sh64 sh[s_all] = {{0},
+  sh64 sh[s_all + 6] = {{0},
     {.type = SHT_HASH, .flags = SHF_ALLOC, .addr = hash, .offset = hash, .size = 4 * (2 + nsym + 1),
      .link = s_sym, .align = 8, .entsize = 4},
     {.type = SHT_DYNSYM, .flags = SHF_ALLOC, .addr = dsym, .offset = dsym, .size = nsym * sizeof(sym64),
@@ -592,9 +651,17 @@ static file* elfs_dyno(mode* self) {
      .align = step},
     {.type = SHT_NOBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat + skew + bss, .offset = dat + size,
      .size = slots - bss + 8 * self->impn, .align = step},
-    {.type = SHT_STRTAB, .offset = dat + size, .size = sizeof names, .align = 1},
+    {.type = SHT_STRTAB, .offset = dat + size, .size = namesz, .align = 1},
   };
   for(u32i i = 1; i < s_all; i++) sh[i].name = elfs_nth(names, i - 1);
+  if(self->debug) {
+    u32i  nm = sizeof names;
+    for(u32i i = 0; i < d_all; i++, nm += (u32i)slen(elfs_dnames + nm - sizeof names) + 1) {
+      sh[s_all + i] = (sh64){.name = nm, .type = i == d_sym? SHT_SYMTAB: i == d_str? SHT_STRTAB: SHT_PROGBITS,
+                             .offset = dat0[i], .size = dlen[i], .align = i == d_frame || i == d_sym? 8: 1};
+      if(i == d_sym) sh[s_all + i].link = s_all + d_str, sh[s_all + i].info = ndl, sh[s_all + i].entsize = sizeof(sym64);
+    }
+  }
 
   file* out = zero(self, sizeof(file) + all);
   byte* o = out->head;
@@ -629,7 +696,20 @@ static file* elfs_dyno(mode* self) {
   copy(o + top, self->text->head, code);
   copy(o + dat, self->data->head, size);
   copy(o + dat + size, names, sizeof names);
-  copy(o + shoff, sh, sizeof sh);
+  if(self->debug) {
+    copy(o + dat + size + sizeof names, elfs_dnames, sizeof elfs_dnames);
+    copy(o + dat0[d_info], dw.info.p, dw.info.n);
+    copy(o + dat0[d_abbr], dw.abbr.p, dw.abbr.n);
+    copy(o + dat0[d_line], dw.line.p, dw.line.n);
+    copy(o + dat0[d_frame], dw.frame.p, dw.frame.n);
+    elfs_dput(self, (sym64*)(o + dat0[d_sym]) + 1, o + dat0[d_str], top, dat + skew, dat + skew + bss,
+              s_text, s_data, s_bss);
+    self->heap(dw.info.p, 0);
+    self->heap(dw.abbr.p, 0);
+    self->heap(dw.line.p, 0);
+    self->heap(dw.frame.p, 0);
+  }
+  copy(o + shoff, sh, nsh * sizeof(sh64));
   self->heap(cords, 0);
   self->heap(need, 0);
   self->heap(t.defs, 0);
@@ -641,6 +721,7 @@ static file* elfs_dyno(mode* self) {
 // a program or a shared library as one image, or without main a static
 // library, an object
 file* elfs_pack(mode* self) {
+  if(self->debug && !self->main && self->libs == lb_relo) fail("-g is not supported for an object yet\n");
   return !self->main && self->libs == lb_relo? elfs_relo(self): elfs_dyno(self);
 }
 

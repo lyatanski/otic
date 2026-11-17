@@ -14,6 +14,7 @@ static char    said[256]; // what fail said
 
 #include "../util.c"
 #include "../core.c"
+#include "../dwarf.c"
 #include "../link.c"
 #include "test.h"
 

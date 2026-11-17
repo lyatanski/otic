@@ -4,8 +4,13 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>    /* VirtualAlloc, LoadLibrary, FlushInstructionCache */
+#include <direct.h>     /* _mkdir */
+#include <sys/stat.h>
+#define mkdir(path, mode) _mkdir(path)
 #else
 #include <sys/mman.h>   /* for mmap         */
+#include <unistd.h>     /* for getcwd       */
+#include <sys/stat.h>   /* for mkdir        */
 #include <dlfcn.h>      /* for dlopen       */
 #include <signal.h>     /* for signal       */
 #endif
@@ -14,6 +19,7 @@
 #ifndef part
 #include "util.c"
 #include "core.c"
+#include "dwarf.c"
 #include "link.c"
 #include "ia64.c"
 #include "arm8.c"
@@ -286,6 +292,15 @@ void  exec(mode* self) {
   printf("%d\n", return_code);
 }
 
+// the bytes of out into the file at path, which is freed
+static void store(mode* self, const char* path, file* out) {
+  FILE* fp = fopen(path, "wb");
+  if(!fp) fail("cannot write: %s\n", path);
+  fwrite(out->head, 1, out->body - out->head, fp);
+  if(ferror(fp) | fclose(fp)) fail("write error: %s\n", path);
+  self->heap(out, 0);
+}
+
 // a program written for the host, with its C library: each import is looked
 // up as running it would, so that one its library lacks fails now rather than
 // when the program loads
@@ -297,11 +312,18 @@ void  save(mode* self) {
     self->heap(slot, 0);
   }
   file* out = self->form.pack(self);
-  FILE* fp = fopen(self->outp, "wb");
-  if(!fp) fail("cannot write: %s\n", self->outp);
-  fwrite(out->head, 1, out->body - out->head, fp);
-  if(ferror(fp) | fclose(fp)) fail("write error: %s\n", self->outp);
-  self->heap(out, 0);
+  store(self, self->outp, out);
+  for(u32i i = 0; i < self->sides; i++) {
+    char* path = self->side[i].path;
+    for(char* c = path; *c; c++) { // the directories of the path
+      if(*c != '/') continue;
+      *c = 0;
+      mkdir(path, 0755);
+      *c = '/';
+    }
+    store(self, path, self->side[i].data);
+    self->heap(path, 0);
+  }
 }
 
 // for code that makes another target's: a mode of the host for the same
@@ -390,6 +412,11 @@ static void libc(mode* self, const opts* opt, const char* para) {
   else fail("C library '%s' not supported\n", para);
 }
 
+static void gdbg(mode* self, const opts* opt, const char* para) {
+  (void)opt; (void)para;
+  self->debug = 1;
+}
+
 static void flat(mode* self, const opts* opt, const char* para) {
   (void)opt; (void)para;
   self->libs = lb_relo;
@@ -444,6 +471,7 @@ int   main(int argc, char** argv) {
     {"-f", "--form", .args = 1, .desc = "binary format: elfs, mach, pe32", .call = wrap},
     {"-e", "--emit", .args = 1, .desc = "write a file instead of running the code", .call = dest},
     {"-s", "--static", .desc = "without main, write an object instead of a shared library", .call = flat},
+    {"-g", "--debug", .desc = "write debug information", .call = gdbg},
     {"-p", "--path", .args = 1, .desc = "directory to look for modules and libraries", .call = seek},
     {"-l", "--libc", .args = 1, .desc = "C library of a Linux program: glibc, musl, bionic", .call = libc},
     {"-h", "--help", .desc = "display help", .call = help}, {0},
@@ -452,7 +480,14 @@ int   main(int argc, char** argv) {
   if(!self.name) fail("no input file\n");
   if(self.show == exec && self.arch.cpu != base.cpu)
     fail("cannot run foreign code, write it with -e\n");
-  if(self.show == exec) self.libs = lb_none; // running needs main
+  if(self.show == exec) self.libs = lb_none, self.debug = 0; // running needs main; nothing reads debug information there
+  char cwd[1024];
+#ifdef _WIN32
+  DWORD  size = self.debug? GetCurrentDirectoryA(sizeof cwd, cwd): 0;
+  if(size && size < sizeof cwd) self.cwd = cwd;
+#else
+  if(self.debug && getcwd(cwd, sizeof cwd)) self.cwd = cwd;
+#endif
   self.mirror = mirror;
   if(self.arch.cpu == base.cpu && self.form.os == host.os && (self.form.os != os_linux || self.clib == CLIB))
     self.eval = eval; // code for the host runs at compile time here, else in a mirror

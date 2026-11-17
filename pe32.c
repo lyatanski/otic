@@ -130,6 +130,38 @@ static u32i pe32_boot(byte* at, chip cpu, u32i rva, u32i main, u32i iat, bool cr
   return sizeof(code);
 }
 
+// the COFF symbols of a program with debug information, one of 18 bytes for
+// each function and global the pass recorded, into rec when given: a name of
+// more than 8 bytes goes into str, which is at at in the string table. The
+// values are offsets in .text, or in .data, where bss follows data at bss.
+// The bytes of str used
+static u32i pe32_dsyms(const mode* self, byte* rec, byte* str, u32i at, u32i idat, u32i bss) {
+  const dbg* d = self->dbg;
+  u32i used = 0;
+  for(u32i i = 0; i < d->nfun + d->nglb; i++) {
+    const bool f = i < d->nfun;
+    const dwglb* g = f? NULL: d->glbs + i - d->nfun;
+    const item* name = f? d->funs[i].name: g->name;
+    if(rec) {
+      byte* r = rec + 18 * i;
+      u32i  value = f? d->funs[i].lo: g->slot & ZERO? bss + (g->slot & ~ZERO): idat + g->slot;
+      u16i  sect = f? 1: 2, type = f? 0x20: 0; // a function
+      if(name->size <= 8) copy(r, name->name, name->size);
+      else {
+        u32i off = at + used;
+        copy(r + 4, &off, 4);
+        copy(str + used, name->name, name->size);
+      }
+      copy(r + 8, &value, 4);
+      copy(r + 12, &sect, 2);
+      copy(r + 14, &type, 2);
+      r[16] = (f? d->funs[i].own: g->own)? 3: 2; // static, external
+    }
+    if(name->size > 8) used += (u32i)name->size + 1;
+  }
+  return used;
+}
+
 file* pe32_pack(mode* self) {
   if(!self->main) fail("a library is not supported in this form yet\n");
   const u64i org = 0x140000000;
@@ -167,7 +199,8 @@ file* pe32_pack(mode* self) {
   const u32i code = (u32i)(self->text->body - self->text->head);
   const u32i boot = up(code, 16); // the stub after the code
   const u32i text = boot + pe32_boot(NULL, cpu, 0, 0, 0, crt);
-  const u32i head = up(sizeof(pe32_head), falign);
+  const u32i ndbg = self->debug? 4: 0; // sections of debug information: .debug_info .debug_abbrev .debug_line .eh_frame
+  const u32i head = up(sizeof(pe32_head) + ndbg * sizeof(pe32_sect), falign);
   const u32i trva = salign, drva = trva + up(text, salign); // section addresses
   const u32i toff = head, doff = toff + up(text, falign);   // and file offsets
   const u32i size = (u32i)(self->data->body - self->data->head);
@@ -177,10 +210,41 @@ file* pe32_pack(mode* self) {
   self->fore = idat - slot; // dock places the slots there
   self->core.dock(self, drva + idat - trva, 0);
 
+  // debug information (-g) after the data: sections the loader may drop, whose
+  // names are in the string table after the symbols' table, which a COFF file
+  // has at the end. Addresses are those the image asks to be loaded at
+  static const char dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.eh_frame";
+  dwarf dw = {0};
+  pe32_sect dsec[4] = {{.vmsz = 0}};
+  const u32i dbss = idat + up(size, step); // bss, in .data
+  const blob* blobs[4] = {&dw.info, &dw.abbr, &dw.line, &dw.frame};
+  u32i  fend = doff + fsz, vend = drva + up(vmsz, salign), nsym = 0, symoff = 0, strsz = 4, symstr = 0;
+  if(self->debug) {
+    self->core.dbug(self, org + trva, org + drva + idat, org + drva + dbss, &dw);
+    u32i nm = 4;
+    for(u32i i = 0; i < 4; i++) {
+      const u32i n = blobs[i]->n, name = nm;
+      snprintf(dsec[i].name, sizeof dsec[i].name, "/%u", name);
+      nm += (u32i)slen(dnames + nm - 4) + 1;
+      dsec[i].vmsz = n;
+      dsec[i].addr = vend;
+      dsec[i].fsz = up(n, falign);
+      dsec[i].off = fend;
+      dsec[i].flags = 0x42000040; // initialized data, discardable, read
+      vend += up(n, salign);
+      fend += dsec[i].fsz;
+    }
+    nsym = self->dbg->nfun + self->dbg->nglb;
+    symoff = fend;
+    symstr = nm;
+    strsz = nm + pe32_dsyms(self, NULL, NULL, 0, 0, 0);
+  }
+  const u32i fin = self->debug? symoff + 18 * nsym + strsz: all;
+
   pe32_head h = {
     .dos  = {.magic = 0x5a4d, .next = offs(pe32_head, seal)}, // "MZ"
     .seal = 0x4550, // "PE\0\0"
-    .coff = {pe32_cpu[cpu].arch, 2, .opsize = sizeof(h.opt),
+    .coff = {pe32_cpu[cpu].arch, (u16i)(2 + ndbg), .symoff = symoff, .nsym = nsym, .opsize = sizeof(h.opt),
              .flags = 0x22}, // executable, large address aware
     .opt  = {
       .magic  = 0x20b, // PE32+
@@ -193,7 +257,7 @@ file* pe32_pack(mode* self) {
       .falign = falign,
       .os     = {pe32_cpu[cpu].os[0], pe32_cpu[cpu].os[1]},
       .sub    = {pe32_cpu[cpu].os[0], pe32_cpu[cpu].os[1]},
-      .size   = drva + up(vmsz, salign),
+      .size   = vend,
       .head   = head,
       .system = 3,      // console
       .dll    = 0x8160, // terminal server aware, NX, dynamic base, high entropy VA
@@ -209,10 +273,21 @@ file* pe32_pack(mode* self) {
   };
 #undef up
 
-  file* out = zero(self, sizeof(file) + all);
-  out->body = out->head + all;
-  out->tail = out->head + all;
+  file* out = zero(self, sizeof(file) + fin);
+  out->body = out->head + fin;
+  out->tail = out->head + fin;
   copy(out->head, &h, sizeof(h));
+  if(self->debug) {
+    copy(out->head + sizeof(h), dsec, sizeof dsec);
+    for(u32i i = 0; i < 4; i++) {
+      copy(out->head + dsec[i].off, blobs[i]->p, blobs[i]->n);
+      self->heap(blobs[i]->p, 0);
+    }
+    byte* str = out->head + symoff + 18 * nsym;
+    copy(str, &strsz, 4);
+    copy(str + 4, dnames, sizeof dnames);
+    pe32_dsyms(self, out->head + symoff, str + symstr, symstr, idat, dbss);
+  }
   copy(out->head + toff, self->text->head, code);
   pe32_boot(out->head + toff + boot, cpu, trva + boot, trva + (u32i)(self->main - self->text->head),
             iat + 8 * self->impn, crt);

@@ -36,6 +36,7 @@ chmod +x hello && ./hello
 | `-f`, `--form` | binary format: `elfs`, `mach`, `pe32` |
 | `-e`, `--emit` | write a file instead of running the code |
 | `-s`, `--static` | without `main`, write an object instead of a shared library |
+| `-g`, `--debug` | write debug information, DWARF 5: in an ELF or PE program, beside a Mach-O one or a dylib in a `.dSYM` bundle (not for objects yet; ignored when running) |
 | `-p`, `--path` | directory to look for modules (`.ot`, `.o`) and libraries |
 | `-l`, `--libc` | C library of a Linux program: `glibc`, `musl`, `bionic` (default: the host's) |
 | `-h`, `--help` | display help |
