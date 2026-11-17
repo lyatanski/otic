@@ -1,10 +1,10 @@
 // vim: ts=2:sw=2
-// tic's spec: each case is written to bins/ and compiled by the tic binary in
-// $TIC (default bins/one) in a child process (fail() exits, code may crash),
+// otic's spec: each case is written to bins/ and compiled by the otic binary in
+// $OTIC (default bins/one) in a child process (fail() exits, code may crash),
 // run in memory and as an executable written with `-e` (ELF, Mach-O
 // or PE). Constant operands are folded, so the cases that test generated code
 // take their operands from locals. It tests the target it is built for, which
-// must be tic's: for arm8, cross-build both.
+// must be otic's: for arm8, cross-build both.
 #include "test.h"
 #include <stdbool.h> /* bool before C23 */
 
@@ -113,19 +113,19 @@ static int  spawn(int fd, char** args) {
 }
 #endif
 
-static char* tic(void) {
-  char* path = getenv("TIC");
+static char* otic(void) {
+  char* path = getenv("OTIC");
   return path? path: "bins/one";
 }
 
-static char said[96]; // what tic said when it failed
+static char said[96]; // what otic said when it failed
 
-// `tic` alone: the value main returned, as printed on the last line
+// `otic` alone: the value main returned, as printed on the last line
 static int  jit(void) {
   int fd[2];
   if(pipe(fd)) return odd;
   char* args[16];
-  int code = spawn(fd[1], with(args, (char*[]){tic(), src_at, NULL}));
+  int code = spawn(fd[1], with(args, (char*[]){otic(), src_at, NULL}));
   close(fd[1]);
   char out[256], *last = out;
   int n = read(fd[0], out, sizeof out - 1);
@@ -139,12 +139,12 @@ static int  jit(void) {
   return sscanf(last, "%d", &value) == 1? value: odd;
 }
 
-// `tic -e`: the written executable's exit code, its stdout on fd
+// `otic -e`: the written executable's exit code, its stdout on fd
 static int  exe(int fd) {
   int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
   char* args[16];
-  int code = spawn(null, with(args, (char*[]){tic(), "-e", exe_at, src_at, NULL}));
+  int code = spawn(null, with(args, (char*[]){otic(), "-e", exe_at, src_at, NULL}));
   close(null);
   if(code == 1) return access(exe_at, F_OK)? bad: odd; // and no executable
   if(code || chmod(exe_at, 0755)) return odd;
@@ -162,7 +162,7 @@ static char* shown(int value, char* buf) {
 // src at src_at, its executable to be at exe_at: 0 when it cannot be written
 static bool written(const char* src) {
   mkdir("bins", 0755);
-  sprintf(src_at, "bins/" TAG "-%03zu.c", test_count);
+  sprintf(src_at, "bins/" TAG "-%03zu.ot", test_count);
   sprintf(exe_at, "bins/" TAG "-%03zu" EXE, test_count);
   FILE* fp = fopen(src_at, "wb");
   if(!fp) return 0;
@@ -183,13 +183,13 @@ static char* tried(const char* src, int run, int want) {
   if(got == run) { got = exe(1); how = "exe"; }
   else want = run;
   if(got == want) return NULL;
-  bool told = got == bad && how[3] == 'c'; // exec failed: with what tic said
+  bool told = got == bad && how[3] == 'c'; // exec failed: with what otic said
   snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s") "%s%.*s",
            how, shown(want, w), shown(got, g), told? ": ": "", told? (int)strcspn(said, "\n"): 0, said);
   return why;
 }
 
-// expect(want, src): main returns want, or tic exits 1 when want is bad
+// expect(want, src): main returns want, or otic exits 1 when want is bad
 #define expect(want, src) saw(want, want, src)
 // only(want, src): exec rejects it, the executable from -e returns want
 #define only(want, src) saw(bad, want, src)
@@ -222,17 +222,17 @@ static char* printed(const char* src, const char* want) {
 #define prints(want, src) \
   if((error = printed(src, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
-// a module at bins/name.c, beside the cases, for link "name"
+// a module at bins/name.ot, beside the cases, for link "name"
 static void module(const char* name, const char* src) {
   char at[64];
-  snprintf(at, sizeof at, "bins/%s.c", name);
+  snprintf(at, sizeof at, "bins/%s.ot", name);
   FILE* fp = fopen(at, "wb");
   if(fp) { fputs(src, fp); fclose(fp); }
 }
 
 // bins/name.a, a member per source in src (NULL ended), each compiled by the
 // host's cc without a stack protector (it calls libc) into bins/name-i.o: its
-// path, or NULL when it could not be built. The sources are not .c files, so
+// path, or NULL when it could not be built. The sources are not .ot files, so
 // link "name-i" finds the object
 static char* archive(const char* name, char** src) {
   static char at[64];
@@ -253,12 +253,12 @@ static char* archive(const char* name, char** src) {
   return system(cmd)? NULL: at;
 }
 
-// src as a library written by tic, bins/libname.so, or with -s (stat)
+// src as a library written by otic, bins/libname.so, or with -s (stat)
 // bins/name.o, then the C program drv built with it by the host's cc (with
-// cflags) and run: its exit code, bad when tic failed, odd when cc did
+// cflags) and run: its exit code, bad when otic failed, odd when cc did
 static int  library(const char* name, const char* src, bool stat, const char* cflags, const char* drv) {
   char at[64], out[64], cmd[512];
-  snprintf(at, sizeof at, "bins/%s.c", name);
+  snprintf(at, sizeof at, "bins/%s.ot", name);
   snprintf(out, sizeof out, stat? "bins/%s.o": "bins/lib%s.so", name);
   FILE* fp = fopen(at, "wb");
   if(!fp) return odd;
@@ -266,8 +266,8 @@ static int  library(const char* name, const char* src, bool stat, const char* cf
   fclose(fp);
   unlink(out);
   int null = open(NULL_DEV, O_WRONLY);
-  int code = spawn(null, stat? (char*[]){tic(), "-s", "-e", out, at, NULL}
-                             : (char*[]){tic(), "-e", out, at, NULL});
+  int code = spawn(null, stat? (char*[]){otic(), "-s", "-e", out, at, NULL}
+                             : (char*[]){otic(), "-e", out, at, NULL});
   close(null);
   if(code) return bad;
   snprintf(at, sizeof at, "bins/%s-drv.cin", name);
@@ -294,10 +294,10 @@ static int  apple(void) {
   return ok;
 }
 
-// src as a Mach-O library written by tic for arch (ia64 or arm8),
+// src as a Mach-O library written by otic for arch (ia64 or arm8),
 // bins/libname.dylib, or with -s (stat) bins/name.o, then the C program drv
 // compiled by clang and linked with it by ld64.lld against a stub of
-// libSystem: 0 when it links, bad when tic failed, odd when the build did.
+// libSystem: 0 when it links, bad when otic failed, odd when the build did.
 // Nothing here runs macOS code
 static int  machlib(const char* name, const char* src, bool stat, char* arch, const char* drv) {
   char  at[64], out[64], cmd[512];
@@ -308,15 +308,15 @@ static int  machlib(const char* name, const char* src, bool stat, char* arch, co
               "install-name: '/usr/lib/libSystem.B.dylib'\nexports:\n  - targets: [ %s-macos ]\n"
               "    symbols: [ dyld_stub_binder, _labs, _printf ]\n...\n", cpu, cpu);
   fclose(fp);
-  snprintf(at, sizeof at, "bins/%s.c", name);
+  snprintf(at, sizeof at, "bins/%s.ot", name);
   snprintf(out, sizeof out, stat? "bins/%s.o": "bins/lib%s.dylib", name);
   if(!(fp = fopen(at, "wb"))) return odd;
   fputs(src, fp);
   fclose(fp);
   unlink(out);
   int null = open(NULL_DEV, O_WRONLY);
-  int code = spawn(null, stat? (char*[]){tic(), "-f", "mach", "-a", arch, "-s", "-e", out, at, NULL}
-                             : (char*[]){tic(), "-f", "mach", "-a", arch, "-e", out, at, NULL});
+  int code = spawn(null, stat? (char*[]){otic(), "-f", "mach", "-a", arch, "-s", "-e", out, at, NULL}
+                             : (char*[]){otic(), "-f", "mach", "-a", arch, "-e", out, at, NULL});
   close(null);
   if(code) return bad;
   snprintf(at, sizeof at, "bins/%s-drv.cin", name);
@@ -329,12 +329,12 @@ static int  machlib(const char* name, const char* src, bool stat, char* arch, co
   return system(cmd)? odd: 0;
 }
 
-// src written as bins/name.c and built for arch and form with -e into
-// bins/name.out: its bytes in out (size), 0 when tic failed
+// src written as bins/name.ot and built for arch and form with -e into
+// bins/name.out: its bytes in out (size), 0 when otic failed
 static long built(const char* src, const char* name, const char* arch, const char* form, char* out, long cap) {
   char at[64], to[64];
   mkdir("bins", 0755);
-  snprintf(at, sizeof at, "bins/%s.c", name);
+  snprintf(at, sizeof at, "bins/%s.ot", name);
   snprintf(to, sizeof to, "bins/%s.out", name);
   FILE* fp = fopen(at, "wb");
   if(!fp) return 0;
@@ -342,7 +342,7 @@ static long built(const char* src, const char* name, const char* arch, const cha
   fclose(fp);
   unlink(to);
   int null = open(NULL_DEV, O_WRONLY);
-  int code = spawn(null, (char*[]){tic(), "-a", (char*)arch, "-f", (char*)form, "-e", to, at, NULL});
+  int code = spawn(null, (char*[]){otic(), "-a", (char*)arch, "-f", (char*)form, "-e", to, at, NULL});
   close(null);
   if(code || !(fp = fopen(to, "rb"))) return 0;
   long n = (long)fread(out, 1, cap, fp);
@@ -408,11 +408,11 @@ spec(TAG) {
     it("reads escaped characters")
       expect(149, "int main() { return '\\n' + '\\t' + '\\'' + '\\\\' + '\\0' - 1; }\n");
     it("skips a #! line at the start of the file")
-      expect(7, "#!/usr/bin/env tic\nint main() { return 7; }\n");
+      expect(7, "#!/usr/bin/env otic\nint main() { return 7; }\n");
     it("rejects a #! line after the first")
-      expect(bad, "\n#!/usr/bin/env tic\nint main() { return 7; }\n");
+      expect(bad, "\n#!/usr/bin/env otic\nint main() { return 7; }\n");
     it("rejects a #! line after a space")
-      expect(bad, " #!/usr/bin/env tic\nint main() { return 7; }\n");
+      expect(bad, " #!/usr/bin/env otic\nint main() { return 7; }\n");
     it("rejects an empty character")
       expect(bad, "int main() { return ''; }\n");
     it("rejects two characters in quotes")
@@ -1506,12 +1506,12 @@ spec(TAG) {
       expect(bad, "int f(int 5) { }\n");
     it("rejects running a program without main") { // -e writes a library
       module("nomain", "int f() { return 1; }\n");
-      snprintf(src_at, sizeof src_at, "bins/nomain.c");
+      snprintf(src_at, sizeof src_at, "bins/nomain.ot");
       check(jit() == bad);
     }
     it("rejects running main as a variable") {
       module("nomain", "int main;\n");
-      snprintf(src_at, sizeof src_at, "bins/nomain.c");
+      snprintf(src_at, sizeof src_at, "bins/nomain.ot");
       check(jit() == bad);
     }
     it("rejects an undefined variable")

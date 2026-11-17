@@ -17,7 +17,7 @@ static char    said[256]; // what fail said
 #include "../link.c"
 #include "test.h"
 
-// what the mocks were asked, ", " between: "scan dir/vec.c", "link 3 9"
+// what the mocks were asked, ", " between: "scan dir/vec.ot", "link 3 9"
 static char  trace[1024];
 static u32i  traced;
 
@@ -65,7 +65,7 @@ static void  mock_pull(mode* m, meta* x) {
 
 static mode  self;
 
-// a fresh front end: the root and main.c in dir, being parsed
+// a fresh front end: the root and main.ot in dir, being parsed
 static void  start(char* path) {
   free(self.units);
   free(self.asks);
@@ -162,43 +162,43 @@ spec("link") {
 
   context("haul") {
     u32i u;
-    it("joins name.c beside the source") {
-      start("dir/main.c");
-      there[theren++] = "dir/vec.c";
+    it("joins name.ot beside the source") {
+      start("dir/main.ot");
+      there[theren++] = "dir/vec.ot";
       check((u = hauls("\"vec\"")) == 2 && self.units[u].kind == un_code);
-      check(!strcmp(self.units[u].path, "dir/vec.c") && is("scan dir/vec.c"));
+      check(!strcmp(self.units[u].path, "dir/vec.ot") && is("scan dir/vec.ot"));
     }
-    it("tries name.c, name.o, then libname.a beside the source") {
-      start("dir/main.c");
+    it("tries name.ot, name.o, then libname.a beside the source") {
+      start("dir/main.ot");
       there[theren++] = "dir/libvec.a";
       check((u = hauls("\"vec\"")) == 2 && self.units[u].kind == un_arch);
-      check(is("scan dir/vec.c, scan dir/vec.o, scan dir/libvec.a"));
-      start("dir/main.c");
+      check(is("scan dir/vec.ot, scan dir/vec.o, scan dir/libvec.a"));
+      start("dir/main.ot");
       there[theren++] = "dir/vec.o";
       there[theren++] = "dir/libvec.a";
       check((u = hauls("\"vec\"")) == 2 && self.units[u].kind == un_objs);
     }
     it("puts lib before the last segment of the name") {
-      start("main.c");
+      start("main.ot");
       there[theren++] = "sub/libvec.a";
       check(hauls("\"sub/vec\"") == 2 && !strcmp(self.units[2].path, "sub/libvec.a"));
     }
     it("tidies the path, so a file joins once") {
-      start("dir/main.c");
-      there[theren++] = "vec.c";
-      check(hauls("\"../vec\"") == 2 && !strcmp(self.units[2].path, "vec.c"));
+      start("dir/main.ot");
+      there[theren++] = "vec.ot";
+      check(hauls("\"../vec\"") == 2 && !strcmp(self.units[2].path, "vec.ot"));
       check(hauls("\"./../dir/../vec\"") == 1 && self.unitn == 3);
     }
     it("looks in the library directories: sources and objects, the host, archives") {
-      start("dir/main.c");
+      start("dir/main.ot");
       self.dirs[self.dirn++] = "lib";
       self.dirs[self.dirn++] = "/usr/";
-      check(!hauls("\"vec\"") && says("dir/main.c:1: cannot find \"vec\""));
-      check(is("scan dir/vec.c, scan dir/vec.o, scan dir/libvec.a, scan lib/vec.c, scan lib/vec.o, "
-               "scan /usr/vec.c, scan /usr/vec.o, have 5 0, scan lib/libvec.a, scan /usr/libvec.a"));
+      check(!hauls("\"vec\"") && says("dir/main.ot:1: cannot find \"vec\""));
+      check(is("scan dir/vec.ot, scan dir/vec.o, scan dir/libvec.a, scan lib/vec.ot, scan lib/vec.o, "
+               "scan /usr/vec.ot, scan /usr/vec.o, have 5 0, scan lib/libvec.a, scan /usr/libvec.a"));
     }
     it("takes the first there") {
-      start("dir/main.c");
+      start("dir/main.ot");
       self.dirs[self.dirn++] = "lib";
       self.dirs[self.dirn++] = "usr";
       there[theren++] = "usr/vec.o";
@@ -206,17 +206,17 @@ spec("link") {
       check((u = hauls("\"vec\"")) == 2 && !strcmp(self.units[u].path, "usr/vec.o"));
     }
     it("takes the host's library before an archive in a directory") {
-      start("dir/main.c");
+      start("dir/main.ot");
       self.dirs[self.dirn++] = "lib";
       there[theren++] = "lib/libvec.a";
       hosts = 1;
       check(hauls("\"vec\"") == 1 && self.unitn == 2);
       meta* lib = self.units[1].from;
       check(lib && lib->kind == dlib && lib->name->size == 5);
-      check(is("scan dir/vec.c, scan dir/vec.o, scan dir/libvec.a, scan lib/vec.c, scan lib/vec.o, have 5 0"));
+      check(is("scan dir/vec.ot, scan dir/vec.o, scan dir/libvec.a, scan lib/vec.ot, scan lib/vec.o, have 5 0"));
     }
     it("but not when it is not running") {
-      start("dir/main.c");
+      start("dir/main.ot");
       self.have = NULL;
       self.dirs[self.dirn++] = "lib";
       there[theren++] = "lib/libvec.a";
@@ -226,14 +226,14 @@ spec("link") {
 
   context("units") {
     it("nests each unit at line 1, growing the list") {
-      start("main.c");
-      for(u32i i = 2; i < 40; i++) check(nest(&self, (unit){.path = "x.c", .line = 9}) == i);
+      start("main.ot");
+      for(u32i i = 2; i < 40; i++) check(nest(&self, (unit){.path = "x.ot", .line = 9}) == i);
       check(self.unitn == 40 && self.unitc >= 40 && self.units[39].line == 1);
-      check(!strcmp(self.units[1].path, "main.c") && self.units[0].kind == un_root);
+      check(!strcmp(self.units[1].path, "main.ot") && self.units[0].kind == un_root);
     }
     it("knows a name in two tables by its spelling") {
-      start("main.c");
-      nest(&self, (unit){.path = "b.c"});
+      start("main.ot");
+      nest(&self, (unit){.path = "b.ot"});
       item* a = say(1, "f", NULL), *b = say(2, "f", NULL), *c = say(2, "g", NULL);
       check(a != b && akin(a, b) && akin(a, a) && !akin(a, c));
     }
@@ -252,8 +252,8 @@ spec("link") {
 
   context("find") {
     item* s;
-    // main.c, then a.c, b.c and c.c
-    #define UNITS start("main.c"); for(u32i k = 0; k < 3; k++) nest(&self, (unit){.path = "x.c"})
+    // main.ot, then a.ot, b.ot and c.ot
+    #define UNITS start("main.ot"); for(u32i k = 0; k < 3; k++) nest(&self, (unit){.path = "x.ot"})
     it("takes the unit's own meaning") {
       UNITS;
       meta own = DECL, other = DEF;
@@ -313,14 +313,14 @@ spec("link") {
   context("archives") {
     item* s;
     it("asks once for each archive name") {
-      start("main.c");
+      start("main.ot");
       meta f = PEND, g = PEND;
       say(1, "f", &f);
       say(1, "g", &g);
       check(ask(&self, &f) == 0 && ask(&self, &g) == 1 && ask(&self, &f) == 0 && self.askn == 2);
     }
     it("tells apart many names asked, in the order first asked") {
-      start("main.c");
+      start("main.ot");
       static item names[5000];
       static meta x[5000];
       for(u32i i = 0; i < 5000; i++) x[i] = (meta){.name = names + i, .kind = pend};
@@ -330,7 +330,7 @@ spec("link") {
       check(same && self.askn == 5000);
     }
     it("reels in the members asked for, and those they ask for") {
-      start("main.c");
+      start("main.ot");
       meta f = PEND, gg = PEND, h = PEND;
       say(1, "f", &f);
       say(1, "gg", &gg);
@@ -344,7 +344,7 @@ spec("link") {
       check(is("pull 1 0, pull 2 0, pull 3 0"));
     }
     it("skips a name pulled with another member's") {
-      start("main.c");
+      start("main.ot");
       meta f = PEND, g = PEND;
       say(1, "f", &f);
       s = say(1, "gg", &g);
@@ -358,8 +358,8 @@ spec("link") {
 
   context("libraries") {
     it("racks a library once for its spelling") {
-      start("main.c");
-      nest(&self, (unit){.path = "b.c"});
+      start("main.ot");
+      nest(&self, (unit){.path = "b.ot"});
       item* s = say(1, "\"c\"", NULL);
       meta* x = rack(&self, s);
       check(x->kind == dlib && x->name == s && s->data == x && x->unit == 1);
@@ -367,13 +367,13 @@ spec("link") {
       check(rack(&self, say(2, "\"c\"", NULL)) == x && self.defn == 1);
     }
     it("gives an import its slot when first used") {
-      start("main.c");
+      start("main.ot");
       meta f = {.kind = call}, g = {.kind = call};
       check(port(&self, &f) == (SLOT | 0) && port(&self, &g) == (SLOT | 1));
       check(port(&self, &f) == (SLOT | 0) && self.impn == 2 && self.imps[1] == &g);
     }
     it("grows the import slots as they are used") {
-      start("main.c");
+      start("main.ot");
       static meta f[1000];
       memset(f, 0, sizeof f);
       for(u32i i = 0; i < 1000; i++) port(&self, f + i);
@@ -388,7 +388,7 @@ spec("link") {
     #define FIX(off, s, u, l, ...) \
       (self.link[self.fixs++] = (fix){.at = text->head + (off), .name = (s), .unit = (u), .line = (l), __VA_ARGS__})
     it("binds the calls whose function is known, keeps the others in order") {
-      start("main.c");
+      start("main.ot");
       say(1, "f", &f);
       say(1, "g", &g);
       FIX(10, say(1, "f", NULL), 1, 7);
@@ -400,7 +400,7 @@ spec("link") {
       check(self.link[0].at == text->head + 20 && self.link[1].at == text->head + 40);
     }
     it("leaves the calls before from") {
-      start("main.c");
+      start("main.ot");
       say(1, "f", &f);
       FIX(10, say(1, "f", NULL), 1, 7);
       FIX(20, say(1, "f", NULL), 1, 7);
@@ -408,8 +408,8 @@ spec("link") {
       check(is("link 20 1") && self.fixs == 1 && self.link[0].at == text->head + 10);
     }
     it("binds a call the way its unit sees the name, C code's as all do") {
-      start("main.c");
-      nest(&self, (unit){.path = "b.c"});
+      start("main.ot");
+      nest(&self, (unit){.path = "b.ot"});
       meta own = {.kind = call, .type = &whole, .addr = text->head + 5};
       say(1, "f", &f);
       say(2, "f", &own);
@@ -421,29 +421,29 @@ spec("link") {
       check(is("link 10 1, link 20 5, link 30 4") && self.fixs == 0);
     }
     it("fails at the call when the pass ends with no function") {
-      start("main.c");
-      nest(&self, (unit){.path = "b.c"});
+      start("main.ot");
+      nest(&self, (unit){.path = "b.ot"});
       FIX(10, say(2, "h", NULL), 2, 12);
       if(!setjmp(bail)) tie(&self, 0, 1);
-      check(says("b.c:12: no function 'h'"));
+      check(says("b.ot:12: no function 'h'"));
     }
     it("checks the arguments, and that a call not declared returns an int") {
-      start("main.c");
+      start("main.ot");
       say(1, "g", &g);
       FIX(10, say(1, "g", NULL), 1, 7, .argc = 1);
       if(!setjmp(bail)) tie(&self, 0, 1);
-      check(says("main.c:7: 'g' takes 2 arguments, got 1"));
-      start("main.c");
+      check(says("main.ot:7: 'g' takes 2 arguments, got 1"));
+      start("main.ot");
       meta l = DEF;
       l.type = &lng;
       say(1, "l", &l);
       FIX(10, say(1, "l", NULL), 1, 7);
       if(!setjmp(bail)) tie(&self, 0, 1);
-      check(says("main.c:7: 'l' does not return an int, define it before the call"));
+      check(says("main.ot:7: 'l' does not return an int, define it before the call"));
     }
     it("leaves the unit and its line as they were") {
-      start("main.c");
-      nest(&self, (unit){.path = "b.c"});
+      start("main.ot");
+      nest(&self, (unit){.path = "b.ot"});
       self.units[1].line = 3;
       say(2, "f", &f);
       FIX(10, say(2, "f", NULL), 2, 9);
@@ -459,7 +459,7 @@ spec("link") {
     static file* data = (file*)datas;
     #define LAID(n) (data->body = data->head + (n), data->tail = datas + sizeof datas, self.data = data)
     it("finds a global by name, else fails") {
-      start("main.c");
+      start("main.ot");
       imp.lib = &lib;
       say(1, "g", &g);
       say(1, "f", &f);
@@ -473,7 +473,7 @@ spec("link") {
       check(says("undefined: imp"));
     }
     it("poses each seat from the start of text") {
-      start("main.c");
+      start("main.ot");
       say(1, "g", &g);
       self.zero = 13;
       ask(&self, &g);
@@ -484,13 +484,13 @@ spec("link") {
       check(posed(NULL, WANT | 0) == 108);
     }
     it("aligns data, then bss, on the largest alignment asked") {
-      start("main.c");
+      start("main.ot");
       check(gap(&self) == 16);
       self.most = 64;
       check(gap(&self) == 64);
     }
     it("points each global of the source at its seat") {
-      start("main.c");
+      start("main.ot");
       LAID(20);
       self.aims[self.seats++] = (seat){text->head + 70, 8};
       self.aims[self.seats++] = (seat){text->head + 80, ZERO | 4};
@@ -499,7 +499,7 @@ spec("link") {
       check(is("site 70 938, site 80 956"));
     }
     it("patches the references of object code, near or wide") {
-      start("main.c");
+      start("main.ot");
       LAID(16);
       say(1, "f", &f);
       self.hooks = malloc(3 * sizeof(hook));
@@ -515,7 +515,7 @@ spec("link") {
       check(rel == 1 - 4 - 70 && wide == 0x400000 + 512 + 16 + 4 + 2 && near == 3 - 512);
     }
     it("makes a weak reference to nothing address 0") {
-      start("main.c");
+      start("main.ot");
       LAID(16);
       self.hooks = malloc(2 * sizeof(hook));
       self.hooks[self.hookn++] = (hook){.site = {NULL, 0}, .name = say(1, "w", NULL), .unit = 1, .weak = 1, .wide = 1};
@@ -528,7 +528,7 @@ spec("link") {
       check(wide == 0 && alike(text->head + 100, "\x48\xc7\xc1\0\0\0\0", 7));
     }
     it("fails on a reference too far") {
-      start("main.c");
+      start("main.ot");
       LAID(16);
       self.hooks = malloc(sizeof(hook));
       self.hooks[self.hookn++] = (hook){.site = {text->head + 70, 0}, .aim = {NULL, 0}};
@@ -539,12 +539,12 @@ spec("link") {
 
   context("library") {
     it("signs the functions with a body and the globals, defined or weak") {
-      start("main.c");
-      nest(&self, (unit){.path = "b.c"});
+      start("main.ot");
+      nest(&self, (unit){.path = "b.ot"});
       meta f = DEF, w = WEAK, g = {.kind = glob}, p = PEND, d = DECL, st = DEF, shadow = DEF;
       st.own = 1;
       say(1, "f", &f);
-      say(2, "f", &shadow); // f means main.c's
+      say(2, "f", &shadow); // f means main.ot's
       say(1, "w", &w);
       say(2, "g", &g);
       say(1, "p", &p);
@@ -557,7 +557,7 @@ spec("link") {
       check(n == 3 && hit == 7);
     }
     it("knits the references of object code, named while nothing defines them") {
-      start("main.c");
+      start("main.ot");
       meta f = DEF, g = {.kind = glob, .slot = 8};
       say(1, "f", &f);
       say(1, "g", &g);
@@ -575,7 +575,7 @@ spec("link") {
       free(c);
     }
     it("knits a global of the source asked from an archive to it once pulled, else by name") {
-      start("main.c");
+      start("main.ot");
       meta g = {.kind = glob, .slot = 24}, h = PEND;
       say(1, "g", &g);
       say(1, "h", &h);

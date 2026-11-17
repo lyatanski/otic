@@ -12,22 +12,22 @@ executable, shared library or object file.
 ## Build
 
 ```sh
-gcc -O3 -o tic main.c
+gcc -O3 -o otic main.c
 ```
 
 With MSVC, from a Developer Command Prompt:
 
 ```bat
-cl /std:clatest /O3 /Fetic main.c
+cl /std:clatest /O3 /Feotic main.c
 ```
 
 ## Usage
 
 ```sh
-./tic hello.c                 # compile and run in memory
-./tic -e hello hello.c        # write an executable for the host
+./otic hello.ot                 # compile and run in memory
+./otic -e hello hello.ot        # write an executable for the host
 chmod +x hello && ./hello
-./tic -a arm8 -f mach -e hello hello.c   # cross-compile
+./otic -a arm8 -f mach -e hello hello.ot   # cross-compile
 ```
 
 | option | description |
@@ -36,7 +36,7 @@ chmod +x hello && ./hello
 | `-f`, `--form` | binary format: `elfs`, `mach`, `pe32` |
 | `-e`, `--emit` | write a file instead of running the code |
 | `-s`, `--static` | without `main`, write an object instead of a shared library |
-| `-p`, `--path` | directory to look for modules (`.c`, `.o`) and libraries |
+| `-p`, `--path` | directory to look for modules (`.ot`, `.o`) and libraries |
 | `-l`, `--libc` | C library of a Linux program: `glibc`, `musl`, `bionic` (default: the host's) |
 | `-h`, `--help` | display help |
 
@@ -46,18 +46,18 @@ Source files are linked with `link` and shared libraries are loaded with
 `load`, instead of a preprocessor.
 
 ```c
-// vec.c
+// vec.ot
 struct vec { int x; int y; };
 
 int dot(vec* a, vec* b) { return a->x * b->x + a->y * b->y; }
 ```
 
 ```c
-// hello.c
+// hello.ot
 load "c";                    // a shared library: libc
 int printf(char* f, ...);    // its functions, declared after the load
 
-link "vec";                  // vec.c beside this file, compiled once
+link "vec";                  // vec.ot beside this file, compiled once
 
 struct node { int v; node* next; };   // a struct names a type, no typedef
 
@@ -94,7 +94,7 @@ int main() {
   (`'a'`, `'\n'`) are numbers
 - initializers with designators, compound literals, `static`, `extern`
 - `syscall(n, ...)` goes straight to the kernel
-- a `#!` first line is skipped, so a source can be a script: `#!/usr/bin/env tic`
+- a `#!` first line is skipped, so a source can be a script: `#!/usr/bin/env otic`
 - `#f(args)` calls `f` while compiling, as host code, and takes its result in
   place of the source: an int, long or real is a constant (an array size, an
   initializer, a condition), a `char*` at the top level is source text,
@@ -128,5 +128,5 @@ int main() { return get_x() + get_y() + sizeof table / 4; }   // 44
 ## Tests
 
 ```sh
-gcc -o spec test/main.c && TIC=./tic ./spec
+gcc -o spec test/main.c && OTIC=./otic ./spec
 ```

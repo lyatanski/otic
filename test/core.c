@@ -182,7 +182,7 @@ static void source(char* path, char* src) {
 static byte libs; // what make_ asks for without main, reset after each
 static clib clibs; // the C library of a Linux image, reset after each
 
-// compile main.c, src: 1 when make got to show, else 0 and said tells why
+// compile main.ot, src: 1 when make got to show, else 0 and said tells why
 static int  make_(char* src) {
   free(self.text);
   memset(&self, 0, sizeof self);
@@ -190,7 +190,7 @@ static int  make_(char* src) {
   laid = traced = shows = packs = takes = 0;
   trace[0] = said[0] = 0;
   self = (mode){
-    .name = "main.c",
+    .name = "main.ot",
     .hold = mock_hold, .drop = mock_drop, .heap = mock_heap, .show = mock_show, .scan = mock_scan,
     .arch = mock, .form = {mock_pack, mock_take, os_linux}, .libs = libs,
     .clib = clibs,
@@ -199,7 +199,7 @@ static int  make_(char* src) {
   libs = lb_none;
   clibs = cl_glibc;
   regs = 0;
-  source("main.c", src);
+  source("main.ot", src);
   nest(&self, (unit){.kind = un_root});
   if(setjmp(bail)) { filen = 0; return 0; }
   make(&self);
@@ -291,7 +291,7 @@ spec("core") {
       check(has("link boot open") && calls[op_crt] == 0 && self.impn == 1);
     }
     it("names the line of an error") {
-      check(rejects("int main() {\n  return 1;\n  @\n}", "main.c:3:"));
+      check(rejects("int main() {\n  return 1;\n  @\n}", "main.ot:3:"));
     }
   }
 
@@ -567,7 +567,7 @@ spec("core") {
     }
     it("puts the lexer back for the pass, the lines too") {
       regs = 2;
-      check(rejects("int main() {\n  int a = 1;\n  a += 2;\n  a += b;\n  return a;\n}", "main.c:4: no variable 'b'"));
+      check(rejects("int main() {\n  int a = 1;\n  a += 2;\n  a += b;\n  return a;\n}", "main.ot:4: no variable 'b'"));
     }
   }
 
@@ -611,13 +611,13 @@ spec("core") {
 
   context("units") {
     it("links another source once, as code before the call") {
-      source("lib.c", "int one() { return 1; }");
+      source("lib.ot", "int one() { return 1; }");
       check(compiles("link \"lib\"; link \"lib\"; int main() { return one(); }"));
       check(self.unitn == 3 && calls[op_open] == 2);
       check(has("link dial open"));
     }
     it("hides a static function from other sources") {
-      source("lib.c", "static int one() { return 1; }");
+      source("lib.ot", "static int one() { return 1; }");
       check(rejects("link \"lib\"; int main() { return one(); }", "no function 'one'"));
     }
     it("fails when a link finds nothing") {

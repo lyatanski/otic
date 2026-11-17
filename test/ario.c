@@ -113,10 +113,10 @@ static void  start(void) {
   takes = 0;
   said[0] = 0;
   self = (mode){
-    .name = "main.c", .heap = mock_heap,
+    .name = "main.ot", .heap = mock_heap,
     .form = {NULL, mock_take, os_linux}, .ario = {ario_load, ario_pull},
   };
-  nest(&self, (unit){.kind = un_root, .path = "main.c"});
+  nest(&self, (unit){.kind = un_root, .path = "main.ot"});
 }
 
 // the archive built so far joined as lib.a: 1, else 0 and said tells why

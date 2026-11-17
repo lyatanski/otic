@@ -57,7 +57,7 @@ typedef struct {
   mach_dylib libs;
 } mach_head;
 
-static const char mach_name[] = "tic"; // the signature's identifier
+static const char mach_name[] = "otic"; // the signature's identifier
 
 static u32i ror(u32i x, int n) { return x >> n | x << (32 - n); }
 

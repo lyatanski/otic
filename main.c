@@ -127,7 +127,7 @@ void* drop(void* memory, size_t size) {
   return NULL;
 }
 
-// the library s of a load ("c" is libc: tic's own on Unix), as given or
+// the library s of a load ("c" is libc: otic's own on Unix), as given or
 // decorated (m: libm.so, libm.dylib, m.dll)
 void* bring(const item* s) {
   char  name[256];
@@ -343,7 +343,7 @@ struct opts {
 
 static void help(mode* m, const opts* self, const char* para) {
   (void)m; (void)para;
-  printf("usage: %s [options] file\n", "tic");
+  printf("usage: %s [options] file\n", "otic");
   printf("options:\n");
   while(self->name) {
     printf("  %s", self->name);

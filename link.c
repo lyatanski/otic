@@ -23,10 +23,10 @@ u64i  tidy(char* path, u64i size) {
   return n;
 }
 
-// the file name with end e (".c", ".o", or ".a" as libname.a) in dir, or
+// the file name with end e (".ot", ".o", or ".a" as libname.a) in dir, or
 // beside this source when dir is NULL, joined as a unit: 0 when it is not there
 static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
-  static char* const ends[] = {".c", ".o", ".a"};
+  static char* const ends[] = {".ot", ".o", ".a"};
   const char* at = dir? dir: home(self)->path;
   u32i  d = 0, n = quote(s, NULL) - 1, b = 0, lib = e == 2? 3: 0;
   if(dir) d = (u32i)slen(dir);
@@ -40,8 +40,9 @@ static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
     for(u32i i = n; i-- > b; ) p[i + 3] = p[i];
     copy(p + b, "lib", 3);
   }
-  copy(p + n + lib, ends[e], 3);
-  if(land(self, path, d + n + lib + 2, NULL, (byte)(un_code + e))) return 1;
+  u32i w = e? 2: 3; // the length of the end
+  copy(p + n + lib, ends[e], w + 1);
+  if(land(self, path, d + n + lib + w, NULL, (byte)(un_code + e))) return 1;
   self->heap(path, 0);
   return 0;
 }
@@ -53,8 +54,8 @@ static bool  shared(mode* self, item* s) {
   return 1;
 }
 
-// link "name": the first of name.c, name.o and libname.a beside this source,
-// then name.c and name.o in the library directories (mode.dirs), each in
+// link "name": the first of name.ot, name.o and libname.a beside this source,
+// then name.ot and name.o in the library directories (mode.dirs), each in
 // order, then the host's shared library name, as load "name" takes it, and
 // libname.a in the library directories: the archive first when writing a
 // file, as a C library linked in cannot run in memory. Code in a directory
