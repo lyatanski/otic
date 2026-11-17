@@ -27,7 +27,10 @@ void chop(mode* self) {
   pass: switch(*(home(self)->code->body = c)) {
     case '\n': home(self)->line++; // fallthrough
     case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
-    case '#': case ',': case ';': case ':': case '?': case '~': case '@':
+    case '#': // #! on the first line of a file is a comment: a script
+      if(c[1] == '!' && c == home(self)->code->head) { while(*c && *c != '\n') c++; goto pass; }
+      kind = tok1(c); break;
+    case ',': case ';': case ':': case '?': case '~': case '@':
     case '(': case ')': case '[': case ']': case '{': case '}':
       kind = tok1(c); break;
     case '=': case '!': case '*': case '%': case '^':

@@ -407,6 +407,12 @@ spec(TAG) {
       expect(97, "int main() { char c = 'a'; return c; }\n");
     it("reads escaped characters")
       expect(149, "int main() { return '\\n' + '\\t' + '\\'' + '\\\\' + '\\0' - 1; }\n");
+    it("skips a #! line at the start of the file")
+      expect(7, "#!/usr/bin/env tic\nint main() { return 7; }\n");
+    it("rejects a #! line after the first")
+      expect(bad, "\n#!/usr/bin/env tic\nint main() { return 7; }\n");
+    it("rejects a #! line after a space")
+      expect(bad, " #!/usr/bin/env tic\nint main() { return 7; }\n");
     it("rejects an empty character")
       expect(bad, "int main() { return ''; }\n");
     it("rejects two characters in quotes")

@@ -94,6 +94,7 @@ int main() {
   (`'a'`, `'\n'`) are numbers
 - initializers with designators, compound literals, `static`, `extern`
 - `syscall(n, ...)` goes straight to the kernel
+- a `#!` first line is skipped, so a source can be a script: `#!/usr/bin/env tic`
 - `#f(args)` calls `f` while compiling, as host code, and takes its result in
   place of the source: an int, long or real is a constant (an array size, an
   initializer, a condition), a `char*` at the top level is source text,
