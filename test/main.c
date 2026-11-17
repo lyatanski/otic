@@ -388,6 +388,17 @@ static int  captured(const char* cmd, char* out, int cap) {
   return code;
 }
 
+// out with each run of blanks squeezed to one space: readelf pads its columns by
+// version (GNU gives a section index 4, LLVM's 5), so match the fields, not the padding
+static void squeezed(char* out) {
+  char* to = out;
+  for(char* at = out; *at; ++at) {
+    char c = *at == '\t'? ' ': *at;
+    if(c != ' ' || to == out || to[-1] != ' ') *to++ = c;
+  }
+  *to = 0;
+}
+
 // 1 when llvm-dwarfdump and llvm-objdump can read what a program carries, on any host
 static int  llvms(void) {
   static int ok = -1;
@@ -1485,19 +1496,21 @@ spec(TAG) {
       check(debugged("dbg-arm", DBG_NODES, "arm8", "elfs") == 0);
       captured("llvm-dwarfdump --verify bins/dbg-arm", out, sizeof out);
       check(strstr(out, "No errors"));
-      captured("readelf --debug-dump=frames bins/dbg-arm", out, sizeof out);
-      check(strstr(out, "DW_CFA_def_cfa_register: r29 (x29)"));
+      // llvm-dwarfdump, not readelf: llvm-readelf (Termux's readelf) has no --debug-dump
+      captured("llvm-dwarfdump --debug-frame bins/dbg-arm", out, sizeof out);
+      check(strstr(out, "DW_CFA_def_cfa_register: W29") || strstr(out, "DW_CFA_def_cfa_register: X29"));
       check(debugged("dbg-x86", DBG_NODES, "ia64", "elfs") == 0);
-      captured("readelf --debug-dump=frames bins/dbg-x86", out, sizeof out);
-      check(strstr(out, "DW_CFA_def_cfa_register: r6 (rbp)"));
+      captured("llvm-dwarfdump --debug-frame bins/dbg-x86", out, sizeof out);
+      check(strstr(out, "DW_CFA_def_cfa_register: RBP"));
     }
     it("names its functions and globals in a symbol table", dwarfs()) {
       char out[1 << 14];
       check(debugged("dbg-sym", DBG_NODES, pick("ia64", "arm8"), "elfs") == 0);
       captured("readelf -s bins/dbg-sym", out, sizeof out);
-      check(strstr(out, " FUNC    GLOBAL DEFAULT    5 sum"));
-      check(strstr(out, " FUNC    LOCAL  DEFAULT    5 twice"));
-      check(strstr(out, " OBJECT  GLOBAL DEFAULT    8 big"));
+      squeezed(out);
+      check(strstr(out, " FUNC GLOBAL DEFAULT 5 sum"));
+      check(strstr(out, " FUNC LOCAL DEFAULT 5 twice"));
+      check(strstr(out, " OBJECT GLOBAL DEFAULT 8 big"));
     }
     it("stops in gdb at a line, with its locals and its callers", gdbs()) {
       char out[4096];
