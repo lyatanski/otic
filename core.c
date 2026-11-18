@@ -12,13 +12,15 @@ enum { tend, ttag, tnum, treal };
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
 // a string literal in the table of the unit being parsed
 #define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
-// what the type name k means in the unit being parsed, as a declaration sees it
-#define tget(self, k) find(self, (self)->unit, sget(self, k))
+// the builtin type k (void, bool, byte, char, nu16, int, long, real), whatever a
+// source declares by its name
+#define tget(self, k) ((self)->b##k)
 
 // the character an escape \v stands for: \n, \t, \r, \0, else v itself
 char  esc(char v) { return v == 'n'? '\n': v == 't'? '\t': v == 'r'? '\r': v == '0'? 0: v; }
 
-void chop(mode* self) {
+// the next token of the unit being parsed, from its source
+static void lex(mode* self) {
   s64i  ival = 0;
   u64i  fval = 0;
   u32i  kind = tend;
@@ -132,9 +134,38 @@ void chop(mode* self) {
   home(self)->code->body = c;
 }
 
-#define same(self, name) (\
+// the token sift lexed from at, NULL when none starts there: the tokens are
+// in source order
+static lexed* relex(mode* self, const byte* at) {
+  u32i lo = 0, hi = self->lexn;
+  while(lo < hi) {
+    u32i m = lo + (hi - lo) / 2;
+    if(self->lexes[m].from < at) lo = m + 1; else hi = m;
+  }
+  return lo < self->lexn && self->lexes[lo].from == at? self->lexes + lo: NULL;
+}
+
+// the next token: in a function body, as sift lexed it, also when a
+// lookahead put the source back; else lexed
+void chop(mode* self) {
+  unit* u = home(self);
+  if(self->lexn && self->unit == self->lexu) {
+    lexed* t = self->lexi < self->lexn && self->lexes[self->lexi].from == u->code->body?
+               self->lexes + self->lexi: relex(self, u->code->body);
+    if(t) {
+      u->code->body = t->to, u->line = t->line, u->talk = t->talk;
+      self->lexi = (u32i)(t - self->lexes) + 1;
+      return;
+    }
+  }
+  lex(self);
+}
+
+// the token is the name k, a string literal: its spelling compared, not looked up
+#define same(self, k) (\
   home(self)->talk.kind == ttag &&\
-  home(self)->talk.hash == sget((self), (name)))
+  home(self)->talk.hash->size == sizeof(k) - 1 &&\
+  alike(home(self)->talk.hash->name, (k), sizeof(k) - 1))
 
 bool  twin(mode* self, u32i  kind) {
   return (home(self)->talk.kind == kind)? chop(self), 1 : 0;
@@ -225,7 +256,7 @@ meta* elem(const meta* t) { return t && (t->kind == refs || t->kind == many)? t-
 u32i  wide(const meta* t) { return elem(t) || ((t->kind == base || t->kind == bitf) && t->size == 8)? WIDE: 0; }
 u32i  span(const meta* t) { return t->size; }
 // the type real
-#define flot(self, t) ((t) == tget(self, "real"))
+#define flot(self, t) ((t) == tget(self, real))
 u32i  lean(meta* t) { return t->kind == many? lean(t->type): t->kind == list? (u32i)t->slot: t->size; }
 
 // deferred operand: code is emitted only when the value must be in acc
@@ -235,7 +266,7 @@ typedef enum { vacc, vnum, vloc, vglo, vmem, vcmp, vreg, vflo } vkind;
 // flags, for a branch on it; vflo: a real constant, its bits in fval, which
 // shares its place with ival
 typedef struct { vkind kind; union { s32i ival; u64i fval; }; meta* type; } oper;
-#define cnst(self, n) ((oper){.kind = vnum, .ival = (n), .type = tget(self, "int")})
+#define cnst(self, n) ((oper){.kind = vnum, .ival = (n), .type = tget(self, int)})
 #define acc(t)  ((oper){.kind = vacc, .type = (t)})
 
 // size bytes of data, or of bss when zero: their offset. Data may move: keep
@@ -351,14 +382,14 @@ double  sum(oper x) {
 
 // a real constant of value v
 oper  flo(mode* self, double v) {
-  oper x = {.kind = vflo, .type = tget(self, "real")};
+  oper x = {.kind = vflo, .type = tget(self, real)};
   copy((byte*)&x.fval, &v, sizeof v);
   return x;
 }
 
 oper  load(mode* self, oper x) {
   meta* t = x.type;
-  if(x.kind == vcmp) { emit(self, flag, x.ival); return acc(tget(self, "int")); }
+  if(x.kind == vcmp) { emit(self, flag, x.ival); return acc(tget(self, int)); }
   if(x.kind == vflo) { // 0.0 is a move, another one is read from data
     if(!x.fval) { emit(self, move, 0); return acc(t); }
     u32i off = lay(self, 8, 0, 8);
@@ -518,7 +549,7 @@ oper  bend(mode* self, oper x, meta* t) {
   if(x.kind == vflo && sum(x) > -2147483649.0 && sum(x) < 2147483648.0) return cnst(self, (s32i)sum(x));
   x = load(self, x);
   emit(self, turn, to, wide(x.type) != 0);
-  if(to) return acc(tget(self, "real"));
+  if(to) return acc(tget(self, real));
   if(!wide(t)) emit(self, cast, 0);
   return acc(t->kind == bitf? t->type: t);
 }
@@ -532,7 +563,7 @@ oper  truth(mode* self, oper x) {
   emit(self, swap);
   emit(self, move, 0);
   emit(self, flop, op | TEST);
-  return (oper){.kind = vcmp, .ival = (s32i)op, .type = tget(self, "int")};
+  return (oper){.kind = vcmp, .ival = (s32i)op, .type = tget(self, int)};
 }
 
 // the argument i of a function, or of a pointer to one, of type f, made the
@@ -540,8 +571,8 @@ oper  truth(mode* self, oper x) {
 // when it is one then
 oper  suit(mode* self, const meta* f, u32i i, oper x, u32i* real) {
   bool  known = f && i < 6 && (f->kind == proc? f->slot >= 0 && i < (u32i)f->slot: f->size != VARY && i < f->size);
-  if(known && f->reals >> i & 1) x = bend(self, x, tget(self, "real"));
-  else if(known && flot(self, x.type)) x = bend(self, x, f->longs >> i & 1? tget(self, "long"): tget(self, "int"));
+  if(known && f->reals >> i & 1) x = bend(self, x, tget(self, real));
+  else if(known && flot(self, x.type)) x = bend(self, x, f->longs >> i & 1? tget(self, long): tget(self, int));
   if(flot(self, x.type)) *real |= 1u << i;
   return x;
 }
@@ -578,7 +609,7 @@ oper  dial(mode* self, item* name) {
   if(trap) {
     if(!argc) flaw(self, "syscall without a number\n");
     emit(self, trap, argc);
-    return acc(tget(self, "int"));
+    return acc(tget(self, int));
   }
   if(ffi) return cabi(self, name, func, argc, real);
   if(last >= 0) emit(self, pass, last);
@@ -591,7 +622,7 @@ oper  dial(mode* self, item* name) {
   emit(self, dial);
   if(func) bind(self, at, name, func, argc, 0);
   else post(self, name, at, argc, 0);
-  return acc(func? func->type: tget(self, "int"));
+  return acc(func? func->type: tget(self, int));
 }
 
 s32i  room(mode* self, u32i size);
@@ -718,7 +749,7 @@ yield sharp(mode* self) {
   if(self->frame != ~0u && func == self->func)
     flaw(self, "'%.*s' is being compiled, define it before running it\n", nick(name));
   meta* t = func->type;
-  bool  text = t->kind == refs && t->type == tget(self, "char"), real = flot(self, t);
+  bool  text = t->kind == refs && t->type == tget(self, char), real = flot(self, t);
   if(!text && t->kind != base) flaw(self, "'%.*s' gives a result that cannot be used at compile time\n", nick(name));
   chop(self);
   if(!twin(self, '(')) flaw(self, "expected ( after '%.*s': only a call runs at compile time\n", nick(name));
@@ -791,13 +822,13 @@ oper  atom(mode* self) {
   oper x;
   switch(op) {
     case tnum: x = cnst(self, (s32i)home(self)->talk.ival); chop(self); return x;
-    case treal: x = (oper){.kind = vflo, .fval = home(self)->talk.fval, .type = tget(self, "real")}; chop(self); return x;
+    case treal: x = (oper){.kind = vflo, .fval = home(self)->talk.fval, .type = tget(self, real)}; chop(self); return x;
     case '"': {
       u32i off = lay(self, (u32i)(home(self)->talk.hash->size - 1), 0, 8);
       quote(home(self)->talk.hash, self->data->head + off);
       chop(self);
       spot(self, off);
-      x = acc(href(self, tget(self, "char")));
+      x = acc(href(self, tget(self, char)));
       break;
     }
     case ttag: {
@@ -808,7 +839,7 @@ oper  atom(mode* self) {
       bool  value = var && (var->kind == data || var->kind == glob); // a pointer called below
       if(!value && twin(self, '(')) { x = dial(self, name); break; }
       if(var && var->kind == call) { x = hand(self, name, var); break; }
-      if(var && var->kind == pend) { x = (oper){.kind = vglo, .ival = WANT | ask(self, var), .type = tget(self, "int")}; break; }
+      if(var && var->kind == pend) { x = (oper){.kind = vglo, .ival = WANT | ask(self, var), .type = tget(self, int)}; break; }
       if(!var || (var->kind != data && var->kind != glob))
         flaw(self, "no variable '%.*s'\n", nick(name));
       x = (oper){.kind = var->kind != data? vglo: var->slot < 0? vloc: vreg, .ival = var->slot, .type = var->type};
@@ -825,7 +856,7 @@ oper  atom(mode* self) {
       if(v == (s32i)v) return cnst(self, (s32i)v);
       u32i  off = lay(self, 8, 0, 8); // a long that is no int: read from data
       copy(self->data->head + off, &v, 8);
-      return (oper){.kind = vglo, .ival = (s32i)off, .type = tget(self, "long")};
+      return (oper){.kind = vglo, .ival = (s32i)off, .type = tget(self, long)};
     }
     case '(':
       chop(self);
@@ -860,7 +891,7 @@ oper  atom(mode* self) {
         if(op == '-') load(self, flo(self, -0.0));
         else emit(self, move, 0);
         emit(self, flop, (op == '-'? '-': tokd('=', '=')) | WIDE | REAL);
-        return acc(op == '-'? tget(self, "real"): tget(self, "int"));
+        return acc(op == '-'? tget(self, real): tget(self, int));
       }
       if(x.kind == vnum)
         return cnst(self, op == '-'? (s32i)(0 - (u32i)x.ival): op == '!'? !x.ival: ~x.ival);
@@ -868,7 +899,7 @@ oper  atom(mode* self) {
       u32i w = wide(x.type);
       if(op == '-') { emit(self, swap); emit(self, move, 0); emit(self, calc, '-' | w, 0, 0); }
       else emit(self, calc, (op == '!'? tokd('=', '='): '^') | w, 1, op == '!'? 0: -1);
-      return acc(op == '!' || !w? tget(self, "int"): x.type);
+      return acc(op == '!' || !w? tget(self, int): x.type);
     }
     default:
       flaw(self, "expected expression, got %x\n", op);
@@ -903,7 +934,7 @@ oper  both(mode* self, u32i op, oper x, int r) {
     if(y.kind == vcmp) return load(self, y);
     y = load(self, y);
     emit(self, calc, tokd('!', '=') | wide(y.type), 1, 0);
-    return acc(tget(self, "int"));
+    return acc(tget(self, int));
   }
   if(x.kind == vcmp) emit(self, cond, x.ival, any);
   else { load(self, x); emit(self, when, any); }
@@ -916,7 +947,7 @@ oper  both(mode* self, u32i op, oper x, int r) {
   mark = self->text->body;
   emit(self, move, any);
   emit(self, back, mark);
-  return acc(tget(self, "int"));
+  return acc(tget(self, int));
 }
 
 // the integer x, loaded in acc, on 64 bits for a WIDE op, times scale
@@ -971,8 +1002,8 @@ oper  rpair(mode* self, u32i op, oper x, oper y, kept mark) {
   x = rest(self, x, k, mark);
   if(!flot(self, x.type)) emit(self, turn, 1, wide(x.type) != 0);
   emit(self, flop, op | WIDE | REAL | (test? TEST: 0));
-  if(test) return (oper){.kind = vcmp, .ival = (s32i)(op | WIDE | REAL), .type = tget(self, "int")};
-  return acc(tget(self, "real"));
+  if(test) return (oper){.kind = vcmp, .ival = (s32i)(op | WIDE | REAL), .type = tget(self, int)};
+  return acc(tget(self, real));
 }
 
 // x op y, y parsed after mark; x was kept there when it was in acc: in a
@@ -980,7 +1011,7 @@ oper  rpair(mode* self, u32i op, oper x, oper y, kept mark) {
 // flags. pointer + n moves n elements, pointer - pointer counts them; void* by bytes
 oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
   if(flot(self, x.type) || flot(self, y.type)) return rpair(self, op, x, y, mark);
-  meta *ex = elem(x.type), *ey = elem(y.type), *t = tget(self, "int"); // t: type of the result
+  meta *ex = elem(x.type), *ey = elem(y.type), *t = tget(self, int); // t: type of the result
   s32i  sx = 1, sy = 1;
   u32i  w = wide(x.type) | wide(y.type), r = rank(op);
   bool  test = r == 6 || r == 7;
@@ -1043,7 +1074,7 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
       emit(self, calc, c, 0, 0);
     }
   }
-  if(test) return (oper){.kind = vcmp, .ival = op | w, .type = tget(self, "int")};
+  if(test) return (oper){.kind = vcmp, .ival = op | w, .type = tget(self, int)};
   if(ex && ey && op == '-' && ex->size > 1) emit(self, calc, '/', 1, ex->size);
   return acc(t);
 }
@@ -1139,7 +1170,7 @@ void  gate(mode* self) {
   skip(self, ')');
   if(x.kind == vreg) { // compared with 0 where it is
     emit(self, rop, tokd('!', '=') | TEST | wide(x.type), x.ival, NUM, 0);
-    x = (oper){.kind = vcmp, .ival = tokd('!', '='), .type = tget(self, "int")};
+    x = (oper){.kind = vcmp, .ival = tokd('!', '='), .type = tget(self, int)};
   }
   if(x.kind == vcmp) emit(self, cond, x.ival, 0);
   else { load(self, x); emit(self, when, 0); }
@@ -1153,8 +1184,10 @@ void  gate(mode* self) {
   x.name->data = y; \
   *y = x; }
 
-#define crux(self, str, ...) \
-  seed((self), .kind = base, .name = sget((self), (str)), __VA_ARGS__)
+// the builtin type k, also kept in mode.b<k> for tget
+#define crux(self, k, ...) {\
+  seed((self), .kind = base, .name = sget((self), #k), __VA_ARGS__) \
+  (self)->b##k = pin((self)->pile, (self)->top - 1); }
 
 // leave a scope: the names declared since top mean what they did before
 void  bury(mode* self, u32i top) {
@@ -1550,8 +1583,8 @@ static u32i  sown(item** c, u32i* n, item* name) {
 }
 
 // the prescan of a function at the { of its body, its parameters in scope
-// from top: the tokens up to the matching } are walked, not parsed, and the
-// lexer put back. It follows the names of the numbers and pointers declared
+// from top: the tokens up to the matching } are lexed once and walked, not
+// parsed, and the lexer put back: chop replays them (mode.lexes). It follows the names of the numbers and pointers declared
 // (the parameters; a name after a type that starts a statement and its *s,
 // and after a , of that statement): each use counts, 8 times per loop
 // around it, and the most used names, of 3 uses at least, get a register
@@ -1565,6 +1598,7 @@ void  sift(mode* self, u32i top) {
   u64i  line = u->line;
   word  talk = u->talk;
   item* c[SIFT];
+  self->lexn = 0;
   item *loop = sget(self, "while"), *when = sget(self, "when"), *tag = sget(self, "struct");
   item *ret = sget(self, "return"), *alt = sget(self, "else"), *len = sget(self, "sizeof");
   item *last = NULL, *decl = NULL; // the name before, when the token was one; the name just declared
@@ -1614,9 +1648,13 @@ void  sift(mode* self, u32i top) {
     else if(amp && k == '(') deep = 1;
     amp = k == '&' && !val;
     if(it != tag || !it) { p = shut? ';': k; last = it; } // struct name is a type as name is
-    chop(self);
+    byte* from = u->code->body;
+    lex(self);
+    self->lexes = swell(self, self->lexes, self->lexn, &self->lexc, sizeof(lexed), 256);
+    self->lexes[self->lexn++] = (lexed){from, u->code->body, u->line, u->talk};
   } while(depth && u->talk.kind);
   u->code->body = at, u->line = line, u->talk = talk;
+  self->lexi = 0, self->lexu = self->unit; // chop replays the tokens
 
   while(ok && self->regn < self->arch.regs) {
     u32i b = n;
@@ -1840,6 +1878,7 @@ void  decl(mode* self) {
       if(span(p->type) < 4) emit(self, rop, '&', p->slot, NUM, (1 << span(p->type) * 8) - 1); // as a slot would hold it
     }
     stmt(self);
+    self->lexn = 0; // the body is parsed: its tokens can go
     emit(self, move, 0); fini(self); // implicit return 0
     emit(self, size, func->addr, (self->deep + 15) & -16);
     dwarf_func(self, func, born, func->addr);
@@ -1948,14 +1987,14 @@ meta* build(mode* self) {
   emit(self, boot);
 
   self->units[0].path = self->name; // the root, made by main
-  crux(self, "void", .size=0);
-  crux(self, "bool", .size=1);
-  crux(self, "byte", .size=1);
-  crux(self, "char", .size=1);
-  crux(self, "nu16", .size=2);
-  crux(self, "int",  .size=4);
-  crux(self, "long", .size=8);
-  crux(self, "real", .size=8);
+  crux(self, void, .size=0);
+  crux(self, bool, .size=1);
+  crux(self, byte, .size=1);
+  crux(self, char, .size=1);
+  crux(self, nu16, .size=2);
+  crux(self, int,  .size=4);
+  crux(self, long, .size=8);
+  crux(self, real, .size=8);
 
   lead(self, self->name, NULL, un_code);
   reel(self);
@@ -2002,7 +2041,7 @@ void  make(mode* self) {
       if(self->clib == cl_bionic) libc = find(self, 0, start);
       if(!libc || libc->kind != call || !libc->lib)
         libc = mint(self, (meta){.name = start, .kind = call, .ext = 1,
-                                 .type = tget(self, "int"),
+                                 .type = tget(self, int),
                                  .lib = rack(self, sget(self, "\"c\""))});
       self->boot = self->text->body;
       spot(self, port(self, libc));

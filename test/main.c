@@ -1622,6 +1622,8 @@ spec(TAG) {
       expect(84, "int main() { real a = 1.5, b = 2.25; int i = 4; long l = 10;\n"
                  "  real c = a * b + i - a / b * l;\n" // 3.375 + 4 - 6.67
                  "  int k = c * 100; return k + 14; }\n");
+    it("computes reals when a global is named real") // the builtin type, not the global
+      expect(6, "int real = 5;\nint main() { int x = 3; return (x * 2.5 > 7.0) + real; }\n");
     it("truncates a negative real toward zero, and a real past 32 bits into a long")
       expect(3, "int main() { real a = -7, big = 1e12; int k = a / 2; long b = big;\n"
                 "  return -k * (b / 1000000 == 1000000); }\n");

@@ -75,6 +75,9 @@ typedef struct {
   };
 } word;
 
+// a token as sift lexed it: the source before it, after it, the line there
+typedef struct { byte *from, *to; u64i line; word talk; } lexed;
+
 // each file in the pass, and the builtins (the root, unit 0): its path and
 // its own symbol table. A name is looked up in the unit being parsed, then in
 // the others in join order (find). Kinds: the root, a source, an object, an
@@ -363,6 +366,8 @@ struct mode {
   u32i  unit; // the unit being parsed
   u32i  unitn, unitc;
   unit* units; // in join order, the root first
+  meta  *bvoid, *bbool, *bbyte, *bchar, *bnu16, *bint, *blong, *breal; // builtin types, for tget:
+                   // a source may reuse their names
   unit  names; // each spelling in any unit's table: the first of its items
                // in join order, the others after it (item.next)
   emit  arch;
@@ -416,6 +421,8 @@ struct mode {
   u32i  regn;      // registers the function keeps locals in, saved in its first slots
   u32i  busy;      // bit r: register r holds a local in scope
   item* pick[16];  // the names of the locals they go to
+  lexed* lexes;    // the tokens of the body being compiled, lexed by sift: chop replays them
+  u32i  lexn, lexc, lexi, lexu; // their count and room, the next one, their unit
   meta* func;      // the function being compiled
   byte* cont;      // continue target, NULL outside loops
   u32i  ends, endc;
