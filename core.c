@@ -919,11 +919,26 @@ oper  both(mode* self, u32i op, oper x, int r) {
   return acc(tget(self, "int"));
 }
 
-// the int x, loaded in acc, on 64 bits for a WIDE op, times scale
+// the integer x, loaded in acc, on 64 bits for a WIDE op, times scale
 void  grow(mode* self, oper x, s32i scale, u32i w) {
-  if(!w || wide(x.type)) return;
-  sext(self, x);
+  if(!w) return;
+  if(!wide(x.type)) sext(self, x);
   if(scale != 1) emit(self, calc, '*' | WIDE, 1, scale);
+}
+
+// a scale that step takes
+#define steps(n) ((n) == 1 || (n) == 2 || (n) == 4 || (n) == 8)
+
+// y in acc moved to tmp and the left operand x of a pair back in acc: from
+// scratch k when it was kept there, else from the stack, else loaded
+oper  rest(mode* self, oper x, u32i k, kept mark) {
+  if(x.kind == vacc && k < HELD && self->dials == mark.dials) {
+    emit(self, lift, mark.at, k);
+    emit(self, take, k);
+  }
+  else if(x.kind == vacc) emit(self, pull);
+  else { emit(self, swap); x = load(self, x); }
+  return x;
 }
 
 // x op y as pair does it, one of them a real, the other made one: + - * /,
@@ -953,12 +968,7 @@ oper  rpair(mode* self, u32i op, oper x, oper y, kept mark) {
   if(x.kind == vnum) x = flo(self, x.ival);
   y = load(self, y);
   if(!flot(self, y.type)) emit(self, turn, 1, wide(y.type) != 0);
-  if(x.kind == vacc && k < HELD && self->dials == mark.dials) {
-    emit(self, lift, mark.at, k);
-    emit(self, take, k);
-  }
-  else if(x.kind == vacc) emit(self, pull);
-  else { emit(self, swap); x = load(self, x); }
+  x = rest(self, x, k, mark);
   if(!flot(self, x.type)) emit(self, turn, 1, wide(x.type) != 0);
   emit(self, flop, op | WIDE | REAL | (test? TEST: 0));
   if(test) return (oper){.kind = vcmp, .ival = (s32i)(op | WIDE | REAL), .type = tget(self, "int")};
@@ -995,7 +1005,21 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
   u32i  c = op | w | (test? TEST: 0);
 
   bool  slot = y.kind == vloc && (y.type->kind == base || y.type->kind == refs); // not a compound literal
-  if(y.kind == vnum || ((slot || y.kind == vreg) && (!w || wide(y.type)) && self->text->body == mark.past)) {
+  if(op == '+' && ex && !ey && y.kind != vnum && steps(sy)) { // pointer + n: n extended and scaled as it is added
+    if((slot || y.kind == vreg) && self->text->body == mark.past) {
+      self->text->body = mark.at; // y emitted nothing: drop the keep
+      load(self, x);
+      if(slot) emit(self, peek, y.ival, span(y.type));
+    }
+    else {
+      y = load(self, y);
+      rest(self, x, k, mark);
+      slot = 1; // n is in tmp
+    }
+    emit(self, step, slot? TMP: y.ival, sy, wide(y.type) != 0);
+    return acc(t);
+  }
+  if(y.kind == vnum || ((slot || y.kind == vreg) && (!w || wide(y.type)) && sy == 1 && self->text->body == mark.past)) {
     self->text->body = mark.at; // y emitted nothing: drop the keep
     if(test && x.kind == vreg && !slot && (!w || wide(x.type))) // a register is compared where it is
       emit(self, rop, c, x.ival, y.kind == vnum? NUM: y.ival, y.ival);
@@ -1014,12 +1038,7 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
     if(x.kind == vreg && sx == 1 && (!w || wide(x.type)) && (op == '+' || (r >= 3 && r <= 6)))
       emit(self, rop, c, ACC, x.ival, 0); // the same either way round: the register is the right operand
     else {
-      if(x.kind == vacc && k < HELD && self->dials == mark.dials) {
-        emit(self, lift, mark.at, k);
-        emit(self, take, k);
-      }
-      else if(x.kind == vacc) emit(self, pull);
-      else { emit(self, swap); load(self, x); }
+      rest(self, x, k, mark);
       grow(self, x, sx, w);
       emit(self, calc, c, 0, 0);
     }

@@ -50,6 +50,12 @@ spec("arm8") {
       check(emits("00 00 14 0b", e.rop(t, '+', ACC, 1, 0)));                  // add w0, w0, w20
       check(emits("7f 02 14 6b", e.rop(t, '<' | TEST, 0, 1, 0)));             // cmp w19, w20
     }
+    it("adds an index to acc, sign extended and scaled") {
+      check(emits("00 c8 33 8b", e.step(t, 0, 4, 0)));                // add x0, x0, w19, sxtw #2
+      check(emits("00 6c 34 8b", e.step(t, 1, 8, 1)));                // add x0, x0, x20, uxtx #3
+      check(emits("00 c0 21 8b", e.step(t, TMP, 1, 0)));              // add x0, x0, w1, sxtw
+      check(emits("00 64 3c 8b", e.step(t, 9, 2, 1)));                // add x0, x0, x28, uxtx #1
+    }
   }
 
   context("values") {

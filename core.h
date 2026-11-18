@@ -170,6 +170,9 @@ typedef struct {
   // acc = the integer in acc (on 64 bits when wide) as a real, when real;
   // else the real in acc truncated to a 64-bit integer
   void (*turn)(file*, bool real, bool wide);
+  // acc += by * scale, by a register of a local or tmp, sign extended from 32
+  // bits unless wide; scale 1, 2, 4 or 8. tmp may change
+  void (*step)(file*, s32i by, u32i scale, bool wide);
   chip  cpu;  // target, each form maps it to its own machine id
   u32i  regs; // registers for locals, kept by the functions called
 } emit;

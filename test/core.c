@@ -30,7 +30,7 @@ static u64i  laid; // data bytes when shown: make frees data after show
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
   X(loop) X(open) X(size) X(parm) X(args) X(dial) X(trap) X(done) X(boot)       \
   X(link) X(ffi) X(crt) X(flag) X(cond) X(keep) X(lift) X(take) X(pass)       \
-  X(rop) X(stow) X(flop) X(turn)
+  X(rop) X(stow) X(flop) X(turn) X(step)
 #define TAG(x) op_##x,
 #define NAME(x) #x,
 enum { OPS(TAG) };
@@ -131,6 +131,10 @@ static void mock_flop(file* t, u32i op) {
   note(t, op_flop, "%s %s", op & TEST? ".t": "", mock_op(op, o));
 }
 static void mock_turn(file* t, bool real, bool wide)  { note(t, op_turn, real? wide? " real long": " real int": " long"); }
+static void mock_step(file* t, s32i by, u32i scale, bool wide) {
+  char b[16];
+  note(t, op_step, "%s %s * %u", wide? ".w": "", mock_reg(by, 0, b), scale);
+}
 
 static u32i regs; // registers for locals the next make_ has, reset after each
 
@@ -140,7 +144,7 @@ static const emit mock = {
   mock_when, mock_jump, mock_back, mock_loop, mock_open, mock_size, mock_parm,
   mock_args, mock_dial, mock_trap, mock_done, mock_boot, mock_link, mock_ffi,
   mock_crt, mock_flag, mock_cond, mock_keep, mock_lift, mock_tmpk, mock_pass,
-  mock_hail, mock_rop, mock_stow, mock_flop, mock_turn, cpu_ia64, 0,
+  mock_hail, mock_rop, mock_stow, mock_flop, mock_turn, mock_step, cpu_ia64, 0,
 };
 
 static file* mock_pack(mode* m)          { packs++; (void)m; return NULL; }
@@ -546,9 +550,22 @@ spec("core") {
     it("stores a register or a constant through a pointer without a push") {
       regs = 2;
       check(compiles("int main() { int a[4]; int i = 0; while(i < 4) { a[i] = i; i += 1; } return a[2]; }"));
-      check(has("calc.w +, push, rop tmp = r0, fill 4, rop r0 + 1") && left(op_push) == 0);
+      check(has("addr -24, step r0 * 4, push, rop tmp = r0, fill 4, rop r0 + 1") && left(op_push) == 0);
       check(compiles("int g; int main() { int* p = &g; *p = 5; return 0; }"));
       check(has("load -8:8, push, rop tmp = 5, fill 4, move 0") && left(op_push) == 0);
+    }
+    it("adds an index to a pointer extended and scaled in one step") {
+      regs = 2;
+      check(compiles("long g[4]; int main() { int i = 1; i += 1; long k = 2; k += 1; return g[i] + g[k]; }"));
+      check(has("glob, step r0 * 8, read 8, keep, glob, step.w r1 * 8, read 8,") && !strstr(trace, "cast long"));
+      check(compiles("int main() { int a[4]; int i = 1; char* p = 0; return a[i] + p[i]; }"));
+      check(has("addr -16, peek -24:4, step tmp * 4, read 4, keep, load -32:8, peek -24:4, step tmp * 1, read 1"));
+      check(compiles("int main() { int a[4]; int i = 1; return a[i + 1]; }"));
+      check(has("load -24:4, calc + 1, swap, addr -16, step tmp * 4, read 4") && calls[op_calc] == 1);
+    }
+    it("scales a long index that step does not take") {
+      check(compiles("struct s { int a; int b; int c; }; s v[3]; int main() { long k = 2; return v[k].c; }"));
+      check(has("load -8:8, calc.w * 12, swap, glob, calc.w +, calc.w + 8, read 4") && !strstr(trace, "cast long"));
     }
     it("takes a & after a condition or a keyword as an address") {
       regs = 2;

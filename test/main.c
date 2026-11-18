@@ -889,6 +889,14 @@ spec(TAG) {
     it("indexes with a variable through a pointer")
       expect(41, "int main() {\n  long t[4];\n  long* p = t;\n  int i = 3;\n  p[i] = 40;\n"
                  "  p += 1; i -= 1;\n  return p[i] + (&t[3] - p) - 1;\n}\n");
+    it("indexes with a negative int, in a register or in the frame")
+      expect(42, "int g[4];\nint main() {\n  int* p = &g[3];\n  int i = -3, j = -1;\n  int* k = &j;\n"
+                 "  i += 0; i += 0; g[0] = 30; g[2] = 10;\n  nu16 h[3];\n  h[2] = 2;\n"
+                 "  return p[i] + p[j] + h[i + 5];\n}\n");
+    it("indexes with a long, scaled by the element")
+      expect(15, "struct s { int a; int b; int c; };\nlong b[4];\ns v[3];\n"
+                 "int main() {\n  long k = 2, m = 1;\n  b[k] = 5;\n  long* p = b;\n  v[m].c = 7;\n"
+                 "  return (b[2] == 5) + 2 * (v[1].c == 7) + 4 * (*(p + k) == 5) + 8 * (*(k + p) == 5);\n}\n");
     it("compares pointers")
       expect(5, "int main() {\n  int a[2];\n  int* p = a;\n  int* q = &a[1];\n"
                 "  return (p < q) + (p == q) * 2 + (q != 0) * 4 + !p * 8;\n}\n");

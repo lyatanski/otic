@@ -462,6 +462,16 @@ void ia64_rop(file* text, u32i op, s32i to, s32i by, s32i n) {
   }
 }
 
+// movsxd rcx, by unless wide, then add rax, by or lea rax, [rax+by*scale]
+void ia64_step(file* text, s32i by, u32i scale, bool wide) {
+  byte i = ia64_reg(by);
+  if(!wide) { ib(text, rex(.w=1, .b=i > 7)); ib(text, 0x63); ib(text, modrm(.mod=3, .reg=ecx.reg.enc, .rm=i & 7)); i = ecx.reg.enc; }
+  ib(text, rex(.w=1, .r=scale == 1 && i > 7, .x=scale != 1 && i > 7));
+  if(scale == 1) { ib(text, 0x01); ib(text, modrm(.mod=3, .reg=i & 7, .rm=eax.reg.enc)); return; }
+  ib(text, 0x8d); ib(text, modrm(.rm=4));                       // SIB, no displacement
+  ib(text, sib(.ss=scale == 2? 1: scale == 4? 2: 3, .idx=i & 7, .base=eax.reg.enc));
+}
+
 void ia64_stow(file* text, u32i r, s32i slot, bool back) {
   ia64_disp(text, !back, 8, ia64_kept[r], 5, slot);
 }
@@ -650,6 +660,7 @@ const emit ia64 = {
   .stow = ia64_stow,
   .flop = ia64_flop,
   .turn = ia64_turn,
+  .step = ia64_step,
   .cpu  = cpu_ia64,
   .regs = sizeof ia64_kept,
 };

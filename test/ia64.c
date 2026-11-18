@@ -65,6 +65,14 @@ spec("ia64") {
       check(emits("48 83 fb 00", e.rop(t, tokd('!', '=') | TEST | WIDE, 0, NUM, 0)));     // cmp rbx, 0
       check(emits("41 81 ff 00 09 3d 00", e.rop(t, tokd('<', '=') | TEST, 4, NUM, 4000000))); // cmp r15d, 4000000
     }
+    it("adds an index to acc, sign extended and scaled") {
+      check(emits("48 63 cb 48 8d 04 88", e.step(t, 0, 4, 0)));       // movsxd rcx, ebx; lea rax, [rax+rcx*4]
+      check(emits("49 63 cc 48 01 c8", e.step(t, 1, 1, 0)));          // movsxd rcx, r12d; add rax, rcx
+      check(emits("4a 8d 04 e8", e.step(t, 2, 8, 1)));                // lea rax, [rax+r13*8]
+      check(emits("4c 01 f0", e.step(t, 3, 1, 1)));                   // add rax, r14
+      check(emits("48 63 c9 48 8d 04 48", e.step(t, TMP, 2, 0)));     // movsxd rcx, ecx; lea rax, [rax+rcx*2]
+      check(emits("4a 8d 04 60", e.step(t, 1, 2, 1)));                // lea rax, [rax+r12*2]
+    }
   }
 
   context("stack") {

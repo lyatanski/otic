@@ -395,6 +395,12 @@ void arm8_rop(file* data, u32i op, s32i to, s32i by, s32i n) {
   arm8_put(data, w | i | s << 16 | (o == '='? 31: d) << 5 | (test? 31: d)); // mov is orr with the zero register
 }
 
+// add x0, x0, by, sxtw #log2 scale, or uxtx (lsl) when wide
+void arm8_step(file* data, s32i by, u32i scale, bool wide) {
+  u32i s = scale == 1? 0: scale == 2? 1: scale == 4? 2: 3;
+  arm8_put(data, 0x8b200000 | arm8_reg(by) << 16 | (wide? 3u: 6u) << 13 | s << 10); // rd = rn = x0
+}
+
 void arm8_stow(file* data, u32i r, s32i slot, bool back) {
   arm8_slot(data, back? I3312_LDRW: I3312_STRW, 8, r19 + r, slot);
 }
@@ -658,6 +664,7 @@ const emit arm8 = {
   .stow = arm8_stow,
   .flop = arm8_flop,
   .turn = arm8_turn,
+  .step = arm8_step,
   .cpu  = cpu_arm8,
   .regs = 10,
 };
