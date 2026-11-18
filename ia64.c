@@ -247,8 +247,23 @@ void ia64_cond(file* text, u32i op, bool hold) {
   id(text, 0);
 }
 
+// eax = eax / 2^k or eax % 2^k (rax when w), rounded toward zero: edx is
+// 2^k - 1 when eax < 0, else 0, added before the shift, and x % 2^k is
+// ((x + edx) & 2^k - 1) - edx
+static void ia64_pow2(file* text, bool rem, bool w, s32i k) {
+#define W if(w) ib(text, rex(.w=1))
+  if(!k) { if(rem) ia64_xor(text, eax, eax); return; }                // x / 1, x % 1
+  W; ib(text, 0x99);                                                   // cdq, cqo
+  W; ia64_shft(text, shr, edx, (para){imm, .imm8 = (w? 64: 32) - k}); // shr edx, 32 - k
+  W; ia64_add(text, eax, edx);                                         // add eax, edx
+  if(!rem) { W; ia64_shft(text, sar, eax, (para){imm, .imm8 = k}); return; } // sar eax, k
+  W; ia64_and(text, eax, (para){imm, .imm8 = ((s64i)1 << k) - 1});    // and eax, 2^k - 1
+  W; ia64_sub(text, eax, edx);                                         // sub eax, edx
+#undef  W
+}
+
 // eax = eax op (cnst? val: ecx), comparisons give 0 or 1; rax, rcx when WIDE.
-// A constant keeps ecx unless op divides.
+// A constant keeps ecx unless op divides by one that is not a power of 2.
 void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
   bool w = op & WIDE;
   para src = cnst? (para){imm, .imm8 = val}: ecx;
@@ -264,6 +279,7 @@ void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
       else { iw(text, 0xaf0f); ib(text, modrm(.mod=3, .reg=eax.reg.enc, .rm=ecx.reg.enc)); }
       break;
     case '/': case '%':
+      if(cnst && ilog(val) >= 0) { ia64_pow2(text, (op & ~WIDE) == '%', w, ilog(val)); break; }
       if(cnst) { W; ib(text, 0xc7); ib(text, modrm(.mod=3, .rm=ecx.reg.enc)); id(text, val); }
       W; ib(text, 0x99);             // cdq, cqo
       W; ia64_aext(text, sdiv, ecx); // idiv ecx

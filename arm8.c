@@ -452,9 +452,26 @@ void arm8_bcnd(file* data, u32i op, bool hold) {
   arm8_put(data, NOP);
 }
 
+// w0 = w0 / 2^k or w0 % 2^k (x0 when w), rounded toward zero: w16 is all
+// ones when w0 < 0, its top k bits (2^k - 1) added before the shift, and
+// x % 2^k is x - (x + 2^k - 1 >> k << k)
+static void arm8_pow2(file* data, bool rem, bool w, s32i k) {
+  u32i x = w? X: 0, n = w? 64: 32, sbfm = w? 0x93400000: 0x13000000; // asr is sbfm #k, #n - 1
+  if(!k) { if(rem) arm8_imm(data, r0, 0); return; }                 // x / 1, x % 1
+  arm8_put(data, sbfm | (n - 1) << 16 | (n - 1) << 10 | r0 << 5 | r16);    // asr w16, w0, #n - 1
+  u32i to = rem? r16: r0;
+  arm8_put(data, I3502_ADD | x | 1 << 22 | r16 << 16 | (n - k) << 10 | r0 << 5 | to); // add to, w0, w16, lsr #n - k
+  arm8_put(data, sbfm | (u32i)k << 16 | (n - 1) << 10 | to << 5 | to);      // asr to, to, #k
+  if(rem) arm8_put(data, I3502_SUB | x | r16 << 16 | (u32i)k << 10 | r0 << 5 | r0); // sub w0, w0, w16, lsl #k
+}
+
 // w0 = w0 op (cnst? num: w1), comparisons give 0 or 1; x0, x1 when WIDE.
 // A constant goes through x16 and keeps x1.
 void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
+  if(cnst && ((op & ~WIDE) == '/' || (op & ~WIDE) == '%') && ilog(num) >= 0) {
+    arm8_pow2(data, (op & ~WIDE) == '%', op & WIDE, ilog(num));
+    return;
+  }
   int rm = cnst? r16: r1;
   uint32_t w1 = (op & WIDE? X: 0) | rm << 16;                      // rd = rn = w0
   if(cnst) arm8_imm(data, rm, num);

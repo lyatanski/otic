@@ -126,6 +126,20 @@ spec("arm8") {
       check(emits("00 0c c1 1a", e.calc(t, '/', 0, 0)));  // sdiv w0, w0, w1
       check(emits("02 0c c1 1a 40 80 01 1b", e.calc(t, '%', 0, 0))); // sdiv w2, w0, w1; msub w0, w2, w1, w0
     }
+    it("divides by a power of 2 with shifts, rounding toward zero") {
+      // asr w16, w0, #31; add w0, w0, w16, lsr #30; asr w0, w0, #2
+      check(emits("10 7c 1f 13 00 78 50 0b 00 7c 02 13", e.calc(t, '/', 1, 4)));
+      // asr w16, w0, #31; add w16, w0, w16, lsr #30; asr w16, w16, #2; sub w0, w0, w16, lsl #2
+      check(emits("10 7c 1f 13 10 78 50 0b 10 7e 02 13 00 08 10 4b", e.calc(t, '%', 1, 4)));
+      // asr x16, x0, #63; add x0, x0, x16, lsr #63; asr x0, x0, #1
+      check(emits("10 fc 7f 93 00 fc 50 8b 00 fc 41 93", e.calc(t, '/' | WIDE, 1, 2)));
+      // asr x16, x0, #63; add x16, x0, x16, lsr #56; asr x16, x16, #8; sub x0, x0, x16, lsl #8
+      check(emits("10 fc 7f 93 10 e0 50 8b 10 fe 48 93 00 20 10 cb", e.calc(t, '%' | WIDE, 1, 256)));
+    }
+    it("divides by 1 with nothing, takes the remainder as 0") {
+      check(emits("", e.calc(t, '/', 1, 1)));
+      check(emits("00 00 80 52", e.calc(t, '%', 1, 1)));  // mov w0, #0
+    }
     it("shifts by tmp") {
       check(emits("00 20 c1 1a", e.calc(t, tokd('<', '<'), 0, 0)));  // lsl w0, w0, w1
     }

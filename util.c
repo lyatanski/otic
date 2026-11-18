@@ -13,6 +13,13 @@ u64i  slen(const char* s) {
   return n;
 }
 
+s32i  ilog(s64i n) {
+  if(n <= 0 || (n & (n - 1))) return -1;
+  s32i k = 0;
+  while(n >>= 1) k++;
+  return k;
+}
+
 void* swell(const mode* self, void* p, u32i n, u32i* cap, u64i size, u32i least) {
   if(n < *cap) return p;
   *cap = *cap * 2 + least;

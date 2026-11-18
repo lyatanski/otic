@@ -25,6 +25,7 @@ typedef  uint8_t byte;
 
 byte* copy(byte* dst, const void* src, u64i size); // returns dst + size
 u64i  slen(const char* s); // bytes before the NUL
+s32i  ilog(s64i n); // k when n is 2^k and positive, else -1
 
 // the symbol tables
 typedef struct unit unit;

@@ -109,6 +109,24 @@ spec("ia64") {
       check(emits("99 f7 f9", e.calc(t, '/', 0, 0)));          // cdq; idiv ecx
       check(emits("99 f7 f9 89 d0", e.calc(t, '%', 0, 0)));    // cdq; idiv ecx; mov eax, edx
     }
+    it("divides by a power of 2 with shifts, rounding toward zero") {
+      // cdq; shr edx, 30; add eax, edx; sar eax, 2
+      check(emits("99 c1 ea 1e 01 d0 c1 f8 02", e.calc(t, '/', 1, 4)));
+      // cdq; shr edx, 30; add eax, edx; and eax, 3; sub eax, edx
+      check(emits("99 c1 ea 1e 01 d0 83 e0 03 29 d0", e.calc(t, '%', 1, 4)));
+      // cqo; shr rdx, 63; add rax, rdx; sar rax, 1
+      check(emits("48 99 48 c1 ea 3f 48 01 d0 48 d1 f8", e.calc(t, '/' | WIDE, 1, 2)));
+      // cqo; shr rdx, 56; add rax, rdx; and rax, 255; sub rax, rdx
+      check(emits("48 99 48 c1 ea 38 48 01 d0 48 81 e0 ff 00 00 00 48 29 d0", e.calc(t, '%' | WIDE, 1, 256)));
+    }
+    it("divides by 1 with nothing, takes the remainder as 0") {
+      check(emits("", e.calc(t, '/', 1, 1)));
+      check(emits("31 c0", e.calc(t, '%', 1, 1)));             // xor eax, eax
+    }
+    it("divides by other constants through ecx") {
+      check(emits("c7 c1 06 00 00 00 99 f7 f9", e.calc(t, '/', 1, 6)));   // mov ecx, 6; cdq; idiv ecx
+      check(emits("c7 c1 fc ff ff ff 99 f7 f9", e.calc(t, '/', 1, -4)));  // mov ecx, -4; cdq; idiv ecx
+    }
     it("shifts by tmp") {
       check(emits("d3 e0", e.calc(t, tokd('<', '<'), 0, 0)));  // shl eax, cl
     }

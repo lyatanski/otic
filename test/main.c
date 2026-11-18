@@ -619,6 +619,17 @@ spec(TAG) {
     it("truncates division toward zero")
       expect(8, "int main() { int a = 17, m = -7, two = 2;"
                 " return a % 5 + m / two + 10 + m % 3; }\n");
+    it("divides by a power of 2 toward zero, on 32 and 64 bits") // the count of checks that hold
+      expect(16, "int main() {\n"
+                 "  int m = -7, p = 7, n = -8, q = -13, c = 0;\n"
+                 "  long l = 1; l = -(l << 40);\n"
+                 "  c += m / 2 == -3; c += m % 2 == -1; c += m / 4 == -1; c += m % 4 == -3;\n"
+                 "  c += p / 4 == 1; c += p % 4 == 3; c += n / 8 == -1; c += n % 8 == 0;\n"
+                 "  c += m / 1 == -7; c += m % 1 == 0; c += m / -4 == 1;\n"
+                 "  q /= 4; q %= 2; c += q == -1;\n"
+                 "  c += l / 1024 == -1073741824; c += (l + 1) % 1024 == -1023;\n"
+                 "  c += (l - 1) / 2 == l / 2; c += -l / 65536 == 16777216;\n"
+                 "  return c;\n}\n");
     it("encodes wide immediates")
       expect(10, "int main() { int a = 100000; return a * 3 - 299990; }\n");
     it("computes bitwise operators and shifts")
