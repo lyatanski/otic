@@ -99,7 +99,7 @@ spec("mach") {
     it("docks once, data on the page after the code") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
       check(packed(mach));
-      check(docked.calls == 1 && docked.at == PAGE - TOP && docked.org == 0);
+      check(docked.calls == 1 && docked.at == PAGE - TOP && docked.org == 0x100000000 + TOP);
     }
     it("puts data and bss in __DATA") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
@@ -150,6 +150,26 @@ spec("mach") {
       check(bytes(b, "51 11 40 5f 70 75 74 73 00 72 78 90 12 40 5f 63 72 63 33 32 00 72 80 01 90"));
       check(bytes(b + 25, "13 40 5f 71 00 72 88 01 90 11 40 5f 65 6e 76 69 72 6f 6e 00 72 90 01 90 00"));
       check(info->nbind == 50 && ((mach_blob*)cmd_(out, lc_signature))->off == ((info->bind + 50 + 15) & -16));
+    }
+    it("rebases each address in data, without imports too, a weak name nothing defines left 0") {
+      start(cpu_ia64, CODE, 12, "abcdefghijklmnop", 16, 6);
+      cord_((cord){.site = {NULL, 8}, .aim = {NULL, 0}, .kind = cd_wide});
+      cord_((cord){.site = {NULL, 0}, .name = named("w"), .kind = cd_wide, .weak = 1});
+      check((out = packed(mach)) && (h = (mach_head*)out->head) && h->mh.ncmds == 11 + 1);
+      mach_info* info = cmd_(out, lc_dyld_info);
+      check(info && info->rebase == h->link.off && info->nrebase == 5 && !info->bind && !info->nbind);
+      check(bytes(out->head + info->rebase, "11 22 08 51 00")); // pointers: __DATA at 8, once
+      check(((mach_blob*)cmd_(out, lc_signature))->off == ((info->rebase + 8 + 15) & -16));
+    }
+    it("puts the rebases before the binds") {
+      start(cpu_ia64, CODE, 12, "abcdefghijklmnop", 16, 6);
+      ours.imps[0] = &(meta){.name = named("puts"), .kind = call, .lib = &(meta){.name = named("\"c\"")}};
+      ours.impn = 1;
+      cord_((cord){.site = {NULL, 0x88}, .aim = {NULL, 0}, .kind = cd_wide});
+      check((out = packed(mach)) && (h = (mach_head*)out->head));
+      mach_info* info = cmd_(out, lc_dyld_info);
+      check(info->rebase == h->link.off && info->bind == info->rebase + 8);
+      check(bytes(out->head + info->rebase, "11 22 88 01 51 00") && bytes(out->head + info->bind, "51 11 40"));
     }
   }
 
@@ -209,6 +229,22 @@ spec("mach") {
       check(sec_(seg, 1)->nrel == 1 && rel_is(rel_(out, sec_(seg, 1), 0), 16, 3, 0, 3, 1, x64_unsigned));
       check(!strcmp(name_(out, sym_(out, 3)), "_puts") && sym_(out, 3)->type == n_ext);
     }
+    it("relocates an address in data by its section or its name, the address or addend in place") {
+      library(cpu_ia64, lb_relo);
+      import("puts");
+      cord_((cord){.site = {NULL, 0}, .aim = {NULL, 8 | ZERO}, .add = 2, .kind = cd_wide});
+      cord_((cord){.site = {NULL, 8}, .name = named("ext"), .add = 3, .kind = cd_wide});
+      check((out = packed(mach)) && (seg = cmd_(out, lc_segment)) && !sec_(seg, 0)->nrel);
+      sec64* d = sec_(seg, 1);
+      check(d->nrel == 3 && rel_is(rel_(out, d, 0), 0, 3, 0, 3, 0, x64_unsigned));
+      check(rel_is(rel_(out, d, 1), 8, 4, 0, 3, 1, x64_unsigned)); // after puts
+      check(rel_is(rel_(out, d, 2), 16, 3, 0, 3, 1, x64_unsigned)); // the slot
+      check(bytes(out->head + d->off, "4a 00 00 00 00 00 00 00 03 00")); // bss past the slot at 64, + 8 + 2
+      library(cpu_ia64, lb_relo);
+      cord_((cord){.site = {NULL, 8}, .aim = {ours.text->head + 6, 0}, .kind = cd_wide});
+      check((out = packed(mach)) && (seg = cmd_(out, lc_segment)) && (d = sec_(seg, 1)));
+      check(d->nrel == 1 && rel_is(rel_(out, d, 0), 8, 1, 0, 3, 0, x64_unsigned) && bytes(out->head + d->off + 8, "06 00"));
+    }
   }
 
   context("dylib") { // segments __TEXT, __DATA, __LINKEDIT
@@ -229,6 +265,14 @@ spec("mach") {
       library(cpu_ia64, lb_dyno);
       check((out = packed(mach)) && (seg = cmd_(out, lc_segment)));
       check(docked.calls == 1 && docked.org == sec_(seg, 0)->addr && docked.at == PAGE - docked.org);
+    }
+    it("rebases each address in data, __DATA its second segment") {
+      library(cpu_ia64, lb_dyno);
+      cord_((cord){.site = {NULL, 8}, .aim = {NULL, 0}, .kind = cd_wide});
+      mach_info* info;
+      check((out = packed(mach)) && (info = cmd_(out, (u32i)lc_dyld_info)));
+      check(info->nrebase == 5 && bytes(out->head + info->rebase, "11 21 08 51 00"));
+      check(!info->nbind && info->trie == info->rebase + 8);
     }
     it("names itself @rpath/ and its file name") {
       library(cpu_ia64, lb_dyno);

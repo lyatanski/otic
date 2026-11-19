@@ -82,7 +82,7 @@ spec("pe32") {
     it("docks once, data after the imports") {
       start(cpu_ia64, CODE, 12, "", 0, 6);
       check(packed(pe32));
-      check(docked.calls == 1 && docked.at == DRVA + IDAT - TRVA && docked.org == 0);
+      check(docked.calls == 1 && docked.at == DRVA + IDAT - TRVA && docked.org == 0x140000000 + TRVA);
     }
     it("puts data and bss in .data after the slots") {
       start(cpu_ia64, CODE, 12, "abcd", 4, 6);
@@ -143,6 +143,22 @@ spec("pe32") {
       u32i ldr = 0xf9400210 | ((iat + 8) & 0xfff) >> 3 << 10;
       check(bytes(out->head + HEAD + 16, "ff 03 01 d1") && !memcmp(out->head + HEAD + 16 + 32, &ldr, 4));
       check(bytes(out->head + HEAD + 16 + 48, "f2 ff ff 97")); // bl main: (0x1008 - 0x1040) >> 2
+    }
+    it("relocates each address in data by the load address, a block per page") {
+      start(cpu_ia64, CODE, 12, "abcdefghijklmnop", 16, 6);
+      knits[cordn++] = (cord){.site = {NULL, 0x1008}, .aim = {NULL, 0}, .kind = cd_wide};
+      knits[cordn++] = (cord){.site = {NULL, 8}, .aim = {NULL, 0}, .kind = cd_wide};
+      knits[cordn++] = (cord){.site = {NULL, 0}, .aim = {NULL, 0}, .kind = cd_wide};
+      knits[cordn++] = (cord){.site = {NULL, 0}, .name = named("w"), .kind = cd_wide, .weak = 1}; // stays 0
+      ours.data->body = ours.data->head + 0x1010;
+      check((out = packed(pe32)) && (h = (pe32_head*)out->head) && h->coff.nsec == 3);
+      pe32_sect* r = (pe32_sect*)(h + 1);
+      check(!strcmp(r->name, ".reloc") && r->addr == DRVA + 0x2000 && r->off == h->data.off + h->data.fsz);
+      check(h->opt.dir[5].addr == r->addr && h->opt.dir[5].size == 12 + 12 && r->vmsz == 24);
+      check(h->opt.size == r->addr + 0x1000 && r->flags == 0x42000040);
+      byte* b = out->head + r->off; // pages 0x2000 (IDAT, IDAT + 8) and 0x3000 (IDAT + 8 - 0x1000 past it)
+      check(bytes(b, "00 20 00 00 0c 00 00 00") && bytes(b + 8, "60 a0 68 a0"));
+      check(bytes(b + 12, "00 30 00 00 0c 00 00 00") && bytes(b + 20, "68 a0 00 00"));
     }
     it("refuses a library, so far") {
       start(cpu_ia64, CODE, 12, "", 0, 6);

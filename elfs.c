@@ -395,7 +395,10 @@ static file* elfs_relo(mode* self) {
       RELA(ss, so + 8, R_AARCH64_MOVW_PREL_G1_NC, sym, to + 8);
     }
     else if(c->kind == cd_glob) RELA(ss, so + 3, R_X86_64_PC32, sym, to - 4);
-    else if(c->kind == cd_wide) RELA(ss, so, R_X86_64_64, sym, to + c->add);
+    else if(c->kind == cd_wide) { // the addend holds it all: no address of a # run stays
+      copy(at, &(u64i){0}, 8);
+      RELA(ss, so, arm? R_AARCH64_ABS64: R_X86_64_64, sym, to + c->add);
+    }
     else if(ts == ss) { // within a section: the distance is known
       s64i d = (s64i)to + c->add - (s64i)so;
       s32i r = (s32i)d;

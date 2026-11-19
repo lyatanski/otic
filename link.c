@@ -259,21 +259,30 @@ u32i  sign(mode* self, meta*** out) {
   return n;
 }
 
+// the name of a global asked from an archive (aim), when nothing defines it,
+// else NULL and aim is where the definition is
+static item* want(mode* self, seat* aim) {
+  if(aim->at || !(aim->off & WANT) || aim->off & (SLOT | ZERO)) return NULL;
+  item* name = self->asks[aim->off & ~WANT];
+  const meta* m = find(self, 0, name);
+  if(!real(m, 0)) return name;
+  *aim = (seat){NULL, m->slot};
+  return NULL;
+}
+
 // the references of the image, left for the linker of a library object: the
-// globals of the source (mode.aims), then those of object code (mode.hooks).
-// A name nothing defines stays a name
+// globals of the source (mode.aims), then those of object code and the
+// addresses that start globals (mode.hooks). A name nothing defines stays a name
 u32i  knit(mode* self, cord** out) {
   cord* all = self->heap(NULL, (self->seats + self->hookn) * sizeof(cord) + 1), *c = all;
   for(seat* s = self->aims; s < self->aims + self->seats; s++, c++) {
     *c = (cord){.site = {s->at, 0}, .aim = {NULL, s->off}, .kind = cd_glob};
-    if(!(s->off & WANT) || s->off & (SLOT | ZERO)) continue;
-    const meta* m = find(self, 0, c->name = self->asks[s->off & ~WANT]);
-    if(real(m, 0)) { c->aim = (seat){NULL, m->slot}; c->name = NULL; }
+    c->name = want(self, &c->aim);
   }
   for(hook* h = self->hooks; h < self->hooks + self->hookn; h++, c++) {
     *c = (cord){.site = h->site, .aim = h->aim, .add = h->add,
                 .kind = h->wide? cd_wide: cd_rel, .weak = h->weak, .got = h->got};
-    if(!h->name) continue;
+    if(!h->name) { c->name = want(self, &c->aim); continue; }
     meta* m = find(self, h->unit, h->name);
     if(!real(m, 1)) c->name = h->name;
     else c->aim = m->kind == call? (seat){m->addr, 0}: (seat){NULL, m->slot};

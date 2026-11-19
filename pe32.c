@@ -5,7 +5,9 @@
 // the code exits through a DLL. Without imports, kernel32's ExitProcess:
 // exit(main()). With them, msvcrt starts it as a C program: __getmainargs
 // gives main its argc and argv, and msvcrt's exit flushes stdio. The image has
-// no absolute addresses and needs no relocations. The writable section holds
+// no absolute address in code: the addresses that start globals, in data,
+// are moved with the image by the base relocations of .reloc. The writable
+// section holds
 // the import table, the import slots, then data and bss: the slots are the
 // import address table, in the file, each holding its lookup entry until the
 // loader binds it (Windows skips a table whose first entry is 0).
@@ -130,6 +132,25 @@ static u32i pe32_boot(byte* at, chip cpu, u32i rva, u32i main, u32i iat, bool cr
   return sizeof(code);
 }
 
+// the base relocations of the image, each 8-byte address at an rva of
+// at[n], sorted: a block per 4 KB page, its entries padded to 4 bytes. Into
+// out when given: their size
+static u32i pe32_base(const u32i* at, u32i n, byte* out) {
+  u32i size = 0;
+  for(u32i i = 0, k; i < n; i = k) {
+    const u32i page = at[i] & ~0xfffu;
+    for(k = i; k < n && (at[k] & ~0xfffu) == page; k++);
+    const u32i block = 8 + 2 * ((k - i + 1) & ~1u);
+    if(out) {
+      byte* b = out + size;
+      copy(copy(b, &page, 4), &block, 4);
+      for(u32i j = i; j < k; j++) copy(b + 8 + 2 * (j - i), &(u16i){(u16i)(0xa000 | (at[j] & 0xfff))}, 2); // dir64
+    }
+    size += block;
+  }
+  return size;
+}
+
 // the COFF symbols of a program with debug information, one of 18 bytes for
 // each function and global the pass recorded, into rec when given: a name of
 // more than 8 bytes goes into str, which is at at in the string table. The
@@ -200,15 +221,29 @@ file* pe32_pack(mode* self) {
   const u32i boot = up(code, 16); // the stub after the code
   const u32i text = boot + pe32_boot(NULL, cpu, 0, 0, 0, crt);
   const u32i ndbg = self->debug? 5: 0; // sections of debug information: .debug_info .debug_abbrev .debug_line .debug_aranges .eh_frame
-  const u32i head = up(sizeof(pe32_head) + ndbg * sizeof(pe32_sect), falign);
+  // the addresses in data, by their offset there (a weak name nothing defines is 0)
+  cord* cords;
+  u32i  ncord = self->core.knit(self, &cords), nbase = 0;
+  u32i* base = self->heap(NULL, ncord * sizeof(u32i) + 1);
+  for(const cord* c = cords; c < cords + ncord; c++)
+    if(c->kind == cd_wide && !c->name) base[nbase++] = c->site.off;
+  self->heap(cords, 0);
+  const u32i nrel = nbase? 1: 0; // .reloc
+  const u32i head = up(sizeof(pe32_head) + (nrel + ndbg) * sizeof(pe32_sect), falign);
   const u32i trva = salign, drva = trva + up(text, salign); // section addresses
   const u32i toff = head, doff = toff + up(text, falign);   // and file offsets
   const u32i size = (u32i)(self->data->body - self->data->head);
   const u32i iat  = drva + slot;
   const u32i fsz = up(idat + size, falign), vmsz = idat + up(size, step) + (u32i)self->zero;
-  const u32i all = doff + fsz;
+  for(u32i i = 0; i < nbase; i++) { // by rva
+    u32i a = drva + idat + base[i], j = i;
+    for(; j && base[j - 1] > a; j--) base[j] = base[j - 1];
+    base[j] = a;
+  }
+  const u32i rrva = drva + up(vmsz, salign), roff = doff + fsz, rsz = pe32_base(base, nbase, NULL);
+  const u32i rfsz = up(rsz, falign), all = roff + rfsz;
   self->fore = idat - slot; // dock places the slots there
-  self->core.dock(self, drva + idat - trva, 0);
+  self->core.dock(self, drva + idat - trva, org + trva);
 
   // debug information (-g) after the data: sections the loader may drop, whose
   // names are in the string table after the symbols' table, which a COFF file
@@ -218,7 +253,7 @@ file* pe32_pack(mode* self) {
   pe32_sect dsec[5] = {{.vmsz = 0}};
   const u32i dbss = idat + up(size, step); // bss, in .data
   const blob* blobs[5] = {&dw.info, &dw.abbr, &dw.line, &dw.ranges, &dw.frame};
-  u32i  fend = doff + fsz, vend = drva + up(vmsz, salign), nsym = 0, symoff = 0, strsz = 4, symstr = 0;
+  u32i  fend = all, vend = rrva + up(rsz, salign), nsym = 0, symoff = 0, strsz = 4, symstr = 0;
   if(self->debug) {
     self->core.dbug(self, org + trva, org + drva + idat, org + drva + dbss, &dw);
     u32i nm = 4;
@@ -244,12 +279,12 @@ file* pe32_pack(mode* self) {
   pe32_head h = {
     .dos  = {.magic = 0x5a4d, .next = offs(pe32_head, seal)}, // "MZ"
     .seal = 0x4550, // "PE\0\0"
-    .coff = {pe32_cpu[cpu].arch, (u16i)(2 + ndbg), .symoff = symoff, .nsym = nsym, .opsize = sizeof(h.opt),
+    .coff = {pe32_cpu[cpu].arch, (u16i)(2 + nrel + ndbg), .symoff = symoff, .nsym = nsym, .opsize = sizeof(h.opt),
              .flags = 0x22}, // executable, large address aware
     .opt  = {
       .magic  = 0x20b, // PE32+
       .code   = up(text, falign),
-      .data   = fsz,
+      .data   = fsz + rfsz,
       .entry  = trva + boot,
       .base   = trva,
       .org    = org,
@@ -264,6 +299,7 @@ file* pe32_pack(mode* self) {
       .stack  = 0x100000, .stuck = 0x1000, .heap = 0x100000, .heaped = 0x1000,
       .ndir   = 16,
       .dir    = {[1] = {drva, ndesc * sizeof(pe32_desc)}, // imports
+                 [5] = {nbase? rrva: 0, rsz},              // base relocations
                  [12] = {iat, 8 * nimp}},                 // import addresses
     },
     .text = {".text", text, trva, up(text, falign), toff,
@@ -277,8 +313,14 @@ file* pe32_pack(mode* self) {
   out->body = out->head + fin;
   out->tail = out->head + fin;
   copy(out->head, &h, sizeof(h));
+  if(nrel) {
+    pe32_sect r = {".reloc", rsz, rrva, rfsz, roff, .flags = 0x42000040}; // initialized data, discardable, read
+    copy(out->head + sizeof(h), &r, sizeof(r));
+    pe32_base(base, nbase, out->head + roff);
+  }
+  self->heap(base, 0);
   if(self->debug) {
-    copy(out->head + sizeof(h), dsec, sizeof dsec);
+    copy(out->head + sizeof(h) + nrel * sizeof(pe32_sect), dsec, sizeof dsec);
     for(u32i i = 0; i < 5; i++) {
       copy(out->head + dsec[i].off, blobs[i]->p, blobs[i]->n);
       self->heap(blobs[i]->p, 0);

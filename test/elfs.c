@@ -411,6 +411,13 @@ spec("elfs") {
       check((out = packed(elfs)) && SECT(out)[7].size == sizeof(rela64));
       check(rela_(rel_(out, 7, 0), 8, R_X86_64_64, 1, 8));
     }
+    it("relocates an address in data on arm8, its place left 0 for the addend") {
+      library(cpu_arm8, lb_relo);
+      copy(ours.data->head + 8, "\xff\xff\xff\xff\xff\xff\xff\xff", 8); // a # run's address
+      cord_((cord){.site = {NULL, 8}, .aim = {NULL, 4}, .kind = cd_wide});
+      check((out = packed(elfs)) && rela_(rel_(out, 7, 0), 8, R_AARCH64_ABS64, 2, 4));
+      check(bytes(out->head + SECT(out)[2].offset + 8, "00 00 00 00 00 00 00 00"));
+    }
     it("puts the import slots after data, each relocated by its name") {
       library(cpu_ia64, lb_relo);
       ours.imps[0] = &(meta){.name = named("puts"), .kind = call};

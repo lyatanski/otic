@@ -249,9 +249,32 @@ static void  mach_dsym(mode* self, const mach_geo* g, const byte* uuid) {
   self->sides = 2;
 }
 
+// the rebases of an image, from mode.heap, their size in *n: each address in
+// data (one that starts a global) is moved by dyld with the image. Data
+// starts segment seg (__DATA). A weak name nothing defines stays 0
+static byte* mach_rebase(mode* self, u32i seg, u64i* n) {
+  cord* cords;
+  u32i  ncord = self->core.knit(self, &cords), k = 0;
+  for(const cord* c = cords; c < cords + ncord; c++) k += c->kind == cd_wide && !c->name;
+  byte* reb = self->heap(NULL, 2 + 12 * k), *b = reb;
+  if(k) {
+    *b++ = 0x11; // type: pointer
+    for(const cord* c = cords; c < cords + ncord; c++) {
+      if(c->kind != cd_wide || c->name) continue;
+      *b++ = 0x20 | (byte)seg; // the segment and the offset there
+      b = uleb(b, c->site.off);
+      *b++ = 0x51; // rebase once
+    }
+    *b++ = 0;
+  }
+  self->heap(cords, 0);
+  *n = b - reb;
+  return reb;
+}
+
 // an executable: its imports are bound by dyld through their slots, after
 // bss in __DATA, each to the library of its load (its ordinal, libSystem
-// first), the binds in __LINKEDIT before the signature
+// first), the rebases then the binds in __LINKEDIT before the signature
 static file* mach_exec(mode* self) {
   const u64i org = 0x100000000, page = 0x4000; // arm64 pages are 16 KB
   const u64i step = self->core.gap(self);
@@ -269,7 +292,10 @@ static file* mach_exec(mode* self) {
     if(k == nneed) { need[nneed++] = l; dylibs += (24 + n + 1 + 7) & -8; }
     ord[i] = 2 + k;
   }
-  const u64i info = self->impn? sizeof(mach_info): 0;
+  u64i  nreb;
+  byte* reb = mach_rebase(self, 2, &nreb);
+  const u64i rebs = (nreb + 7) & -8;
+  const u64i info = self->impn || nreb? sizeof(mach_info): 0;
   const u64i top  = sizeof(mach_head) + info + dylibs + sizeof(mach_blob) + (self->debug? 24: 0);
   const u64i code = self->text->body - self->text->head;
   const u64i text = (top + code + page - 1) & ~(page - 1); // __TEXT, __DATA, the signature
@@ -279,7 +305,7 @@ static file* mach_exec(mode* self) {
   const u64i vmsz = ((end? end: 1) + page - 1) & ~(page - 1);
   const u64i link = text + ((size + page - 1) & ~(page - 1));
   const u32i lg = mach_log(step);
-  self->core.dock(self, text - top, 0);
+  self->core.dock(self, text - top, org + top);
   byte uuid[16];
   if(self->debug) {
     mach_uuid(self, uuid);
@@ -304,7 +330,7 @@ static file* mach_exec(mode* self) {
     }
     *b++ = 0;
   }
-  const u64i nbind = b - bind, sig = (link + nbind + 15) & -16;
+  const u64i nbind = b - bind, sig = (link + rebs + nbind + 15) & -16;
   const u32i sign = mach_sigsz(sig);
   const u64i all = sig + sign;
 
@@ -329,7 +355,8 @@ static file* mach_exec(mode* self) {
     .build = {lc_build, sizeof(h.build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
     .libs = {lc_dylib, sizeof(h.libs), 24, 2, 0x10000, 0x10000, "/usr/lib/libSystem.B.dylib"},
   };
-  mach_info  binfo = {(u32i)lc_dyld_info, sizeof binfo, .bind = (u32i)link, .nbind = (u32i)nbind};
+  mach_info  binfo = {(u32i)lc_dyld_info, sizeof binfo, .rebase = nreb? (u32i)link: 0, .nrebase = (u32i)nreb,
+                      .bind = nbind? (u32i)(link + rebs): 0, .nbind = (u32i)nbind};
   mach_blob  seal  = {lc_signature, sizeof seal, (u32i)sig, sign};
 
   file* out = zero(self, sizeof(file) + all);
@@ -346,8 +373,10 @@ static file* mach_exec(mode* self) {
   if(self->debug) c = mach_uuid_cmd(c, uuid);
   copy(copy(c, &seal, sizeof seal), self->text->head, code);
   copy(o + text, self->data->head, size);
-  copy(o + link, bind, nbind);
+  copy(o + link, reb, nreb);
+  copy(o + link + rebs, bind, nbind);
   mach_seal(o, sig, text, 1);
+  self->heap(reb, 0);
   self->heap(bind, 0);
   self->heap(ord, 0);
   self->heap(need, 0);
@@ -436,8 +465,9 @@ static u32i  mach_part(const mode* self, seat s, u64i data, u64i slots, u64i bss
 // (then the import slots) and bss at their addresses in one segment, laid out
 // in the file as in memory. The form takes no objects, so every reference is
 // a global of the source: a lea in text, relocated to its section or to the
-// name nothing defines, and the slots are relocated by their names. arm64
-// objects have no relocation for its globals (movz and movk) in this form
+// name nothing defines, or an address in data that starts a global, and the
+// slots are relocated by their names. arm64 objects have no relocation for
+// its globals (movz and movk) in this form
 static file* mach_relo(mode* self) {
   if(self->arch.cpu != cpu_ia64) fail("an arm64 object is not supported in this form yet\n");
   const u64i step = self->core.gap(self);
@@ -449,15 +479,18 @@ static file* mach_relo(mode* self) {
   mach_sign(self, &t);
   cord* cords;
   u32i  ncord = self->core.knit(self, &cords);
-  for(cord* c = cords; c < cords + ncord; c++)
+  u32i  nwide = 0; // in data, the others in text
+  for(cord* c = cords; c < cords + ncord; c++) {
     if(c->name) mach_need(self, &t, c->name, c->weak);
-  const u32i nsym = t.ndef + t.nund;
+    nwide += c->kind == cd_wide;
+  }
+  const u32i nsym = t.ndef + t.nund, ntext = ncord - nwide, ndata = nwide + self->impn;
 
   const u64i top  = sizeof(mach_mh) + sizeof(seg64) + 3 * sizeof(sec64) + sizeof(mach_build)
                   + sizeof(mach_symtab) + sizeof(mach_dysym);
   const u64i base = (top + step - 1) & ~(step - 1); // text, then data, as in memory
-  const u64i rels = (base + data + dsz + 3) & -4, rdat = rels + ncord * sizeof(mrel);
-  const u64i syms = (rdat + self->impn * sizeof(mrel) + 7) & -8, strs = syms + nsym * sizeof(nl64);
+  const u64i rels = (base + data + dsz + 3) & -4, rdat = rels + ntext * sizeof(mrel);
+  const u64i syms = (rdat + ndata * sizeof(mrel) + 7) & -8, strs = syms + nsym * sizeof(nl64);
   const u64i all  = strs + t.strs;
   const u32i lg   = mach_log(step);
   struct {
@@ -467,8 +500,8 @@ static file* mach_relo(mode* self) {
               4, (u32i)(top - sizeof(mach_mh)), 0, 0},
     .seg   = {lc_segment, sizeof(seg64) + 3 * sizeof(sec64), "", 0, bss + self->zero, base,
               data + dsz, 7, 7, 3, 0},
-    .sec   = {{"__text", "__TEXT", 0, code, (u32i)base, lg, (u32i)rels, ncord, (u32i)s_code, {0}},
-              {"__data", "__DATA", data, dsz, (u32i)(base + data), lg, (u32i)rdat, self->impn, 0, {0}},
+    .sec   = {{"__text", "__TEXT", 0, code, (u32i)base, lg, (u32i)rels, ntext, (u32i)s_code, {0}},
+              {"__data", "__DATA", data, dsz, (u32i)(base + data), lg, (u32i)rdat, ndata, 0, {0}},
               {"__bss", "__DATA", bss, self->zero, 0, lg, 0, 0, s_zerofill, {0}}},
     .build = {lc_build, sizeof(mach_build), 1, 0xb0000, 0xb0000, 0}, // macOS 11.0
     .syms  = {lc_symtab, sizeof(mach_symtab), (u32i)syms, nsym, (u32i)strs, (u32i)t.strs},
@@ -481,9 +514,21 @@ static file* mach_relo(mode* self) {
   copy(o, &h, sizeof h);
   copy(o + base, self->text->head, code);
   copy(o + base + data, self->data->head, size);
-  mrel* r = (mrel*)(o + rels);
-  for(cord* c = cords; c < cords + ncord; c++, r++) { // lea rax, [rip+x]: x at 3
-    u64i at = c->site.at - self->text->head + 3, to;
+  mrel* r = (mrel*)(o + rels), *d = (mrel*)(o + rdat);
+  for(cord* c = cords; c < cords + ncord; c++) {
+    u64i to = 0;
+    if(c->kind == cd_wide) { // its address: the name's plus the addend, or one in its section
+      if(c->name)
+        *d++ = (mrel){(s32i)c->site.off, (t.ndef + mach_need(self, &t, c->name, c->weak)) | 3 << 25 | 1 << 27
+                          | x64_unsigned << 28};
+      else
+        *d++ = (mrel){(s32i)c->site.off, mach_part(self, c->aim, data, slots, bss, &to) | 3 << 25
+                          | x64_unsigned << 28};
+      u64i a = to + c->add;
+      copy(o + base + data + c->site.off, &a, sizeof(a));
+      continue;
+    }
+    u64i at = c->site.at - self->text->head + 3; // lea rax, [rip+x]: x at 3
     s32i v = 0;
     if(c->name) // extern: the name, the distance from the lea's end
       *r = (mrel){(s32i)at, (t.ndef + mach_need(self, &t, c->name, c->weak)) | 1 << 24 | 2 << 25 | 1 << 27
@@ -494,9 +539,10 @@ static file* mach_relo(mode* self) {
       *r = (mrel){(s32i)at, sec | 1 << 24 | 2 << 25 | x64_signed << 28};
     }
     copy(o + base + at, &v, sizeof(v));
+    r++;
   }
-  for(u32i i = 0; i < self->impn; i++, r++) // a slot: the address of its name
-    *r = (mrel){(s32i)(slots + 8 * i), (t.ndef + i) | 3 << 25 | 1 << 27 | x64_unsigned << 28};
+  for(u32i i = 0; i < self->impn; i++, d++) // a slot: the address of its name
+    *d = (mrel){(s32i)(slots + 8 * i), (t.ndef + i) | 3 << 25 | 1 << 27 | x64_unsigned << 28};
   mach_put(self, &t, (nl64*)(o + syms), o + strs, 0, data, bss, 0);
   self->heap(cords, 0);
   self->heap(t.defs, 0);
@@ -548,7 +594,8 @@ static byte* mach_trie(const mode* self, byte* at, const nl64* sym, u32i n, byte
 
 // a shared library, position independent: __TEXT from address 0 with the
 // headers and text, __DATA with data, bss and the import slots, __LINKEDIT with
-// the binds of the slots, the export trie, the symbols and the signature. An
+// the rebases of data, the binds of the slots, the export trie, the symbols
+// and the signature. An
 // import is bound to whichever loaded image defines it, as on Linux: the
 // program links its libraries. Its install name is @rpath/ and its file name
 static file* mach_dyno(mode* self) {
@@ -573,7 +620,10 @@ static file* mach_dyno(mode* self) {
   self->core.dock(self, text - top, top);
   byte uuid[16];
 
-  // __LINKEDIT: binds, trie, symbols and their names, made before it is laid out
+  // __LINKEDIT: rebases, binds, trie, symbols and their names, made before it is laid out
+  u64i  nreb;
+  byte* reb = mach_rebase(self, 1, &nreb);
+  const u64i rebs = (nreb + 7) & -8;
   nl64* sym = self->heap(NULL, nsym * sizeof(nl64) + 1);
   byte* str = self->heap(NULL, t.strs);
   mach_put(self, &t, sym, str, top, text, text + bss, n_flat);
@@ -593,7 +643,7 @@ static file* mach_dyno(mode* self) {
   }
   byte* trie = self->heap(NULL, 16 + t.strs + 20 * t.ndef);
   const u64i nbind = b - bind, ntrie = mach_trie(self, trie, sym, t.ndef, str) - trie;
-  const u64i at   = link + ((nbind + 7) & -8);
+  const u64i at   = link + rebs + ((nbind + 7) & -8);
   const u64i syms = at + ((ntrie + 7) & -8), strs = syms + nsym * sizeof(nl64);
   const u64i sig  = (strs + t.strs + 15) & -16, all = sig + mach_sigsz(sig);
 
@@ -613,8 +663,8 @@ static file* mach_dyno(mode* self) {
     {"__data", "__DATA", text, size, (u32i)text, lg, .flags = 0},
     {"__bss", "__DATA", text + bss, end - bss, 0, lg, .flags = s_zerofill},
   };
-  mach_info  info = {(u32i)lc_dyld_info, sizeof info, 0, 0, nbind? (u32i)link: 0, (u32i)nbind, 0, 0, 0, 0,
-                     (u32i)at, (u32i)ntrie};
+  mach_info  info = {(u32i)lc_dyld_info, sizeof info, nreb? (u32i)link: 0, (u32i)nreb,
+                     nbind? (u32i)(link + rebs): 0, (u32i)nbind, 0, 0, 0, 0, (u32i)at, (u32i)ntrie};
   mach_symtab st  = {lc_symtab, sizeof st, (u32i)syms, nsym, (u32i)strs, (u32i)t.strs};
   mach_dysym dsym = {lc_dysymtab, sizeof dsym, .next = t.ndef, .iund = t.ndef, .nund = t.nund};
   mach_dylib id   = {lc_id_dylib, (u32i)idsz, 24, 1, 0x10000, 0x10000, .path = ""};
@@ -642,13 +692,15 @@ static file* mach_dyno(mode* self) {
   c = copy(c, &sign, sizeof sign);
   copy(o + top, self->text->head, code);
   copy(o + text, self->data->head, size);
-  copy(o + link, bind, nbind);
+  copy(o + link, reb, nreb);
+  copy(o + link + rebs, bind, nbind);
   copy(o + at, trie, ntrie);
   copy(o + syms, sym, nsym * sizeof(nl64));
   copy(o + strs, str, t.strs);
   mach_seal(o, sig, text, 0);
   self->heap(sym, 0);
   self->heap(str, 0);
+  self->heap(reb, 0);
   self->heap(bind, 0);
   self->heap(trie, 0);
   self->heap(t.defs, 0);

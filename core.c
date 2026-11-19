@@ -793,19 +793,27 @@ oper  dial(mode* self, item* name) {
 
 s32i  room(mode* self, u32i size);
 
+// where an address of function func, named name, points: its entry for C
+// code, when it has one. It must be defined, and not overloaded
+byte* deed(mode* self, item* name, const meta* func) {
+  if(plural(func, name)) flaw(self, "'%.*s' is overloaded: name one by its symbol to take its address\n", nick(name));
+  const meta* body = func->addr? func: find(self, 0, name); // past a prototype
+  if(!body || body->kind != call || !body->addr)
+    flaw(self, "'%.*s' is not defined yet: define or link it before taking its address\n", nick(name));
+  return body->hail? body->hail: body->addr;
+}
+
 // the address of function func, named name: a pointer to its type, called
 // the C way (ring). That of an import is read from its slot, one in text is
-// pc-relative: an otic function's entry for C code, when it has one
+// pc-relative
 oper  hand(mode* self, item* name, meta* func) {
   if(plural(func, name)) flaw(self, "'%.*s' is overloaded: name one by its symbol to take its address\n", nick(name));
   meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->reals, func->more));
   if(func->lib) { spot(self, port(self, func)); emit(self, read, 8); return acc(t); }
-  const meta* body = func->addr? func: find(self, 0, name); // past a prototype
-  if(!body || body->kind != call || !body->addr)
-    flaw(self, "'%.*s' is not defined yet: define or link it before taking its address\n", nick(name));
   byte* at = self->text->body;
+  byte* to = deed(self, name, func);
   emit(self, glob);
-  emit(self, site, at, (body->hail? body->hail: body->addr) - at);
+  emit(self, site, at, to - at);
   return acc(t);
 }
 
@@ -1554,6 +1562,54 @@ void  aim(mode* self, tier* n) {
   n->i = i.ival;
 }
 
+// the address a global pointer at data offset slot starts with, when its
+// initializer is one: &x of a global x (a member or an element of one too), a
+// global array, a string or a function, plus or minus constants. It goes in
+// data as an address in a library object does (a hook, which dock patches and
+// a form relocates where the image is loaded). 0, nothing parsed, when the
+// initializer is no address
+bool  cite(mode* self, s32i slot) {
+  bool  amp = twin(self, '&');
+  u32i  c = home(self)->talk.kind;
+  item* name = c == ttag? home(self)->talk.hash: NULL;
+  meta* m = name? find(self, self->unit, name): NULL;
+  seat  aim;
+  u32i  size = 1; // the bytes a constant added steps over, 0 for a function
+  if(m && m->ext && m->kind != call && m->kind != pend)
+    flaw(self, "the address of an import cannot start a global\n");
+  if(!amp && c == '"') {
+    aim = (seat){NULL, lay(self, (u32i)(name = home(self)->talk.hash)->size - 1, 0, 8)};
+    quote(name, self->data->head + aim.off);
+    chop(self);
+  }
+  else if(m && m->kind == call) {
+    chop(self);
+    if(home(self)->talk.kind == '(') flaw(self, "expected a constant\n");
+    if(m->lib) flaw(self, "the address of an import cannot start a global\n");
+    aim = (seat){deed(self, name, m), 0};
+    size = 0;
+  }
+  else if(amp || (m && m->kind == glob && m->type->kind == many)) {
+    oper x = atom(self); // a global, and its members and elements, is no code
+    if(x.kind != vglo || x.type->kind == bitf || (!amp && x.type->kind != many))
+      flaw(self, "expected a constant\n");
+    aim  = (seat){NULL, (u32i)x.ival};
+    size = amp? x.type->size: x.type->type->size;
+  }
+  else return 0;
+  s64i  add = 0;
+  for(u32i op; (op = home(self)->talk.kind) == '+' || op == '-'; ) {
+    chop(self);
+    oper k = expr(self, rank('+') + 1);
+    if(k.kind != vnum || !size) flaw(self, "expected a constant\n");
+    add += (op == '+'? 1: -1) * (s64i)k.ival * size;
+  }
+  self->hooks = swell(self, self->hooks, self->hookn, &self->hookc, sizeof(hook), 256);
+  self->hooks[self->hookn++] = (hook){.site = {NULL, (u32i)slot}, .aim = aim, .add = add,
+                                      .unit = self->unit, .wide = 1};
+  return 1;
+}
+
 // the initializer of type: { a list }, the rest zero, a string for a char
 // array, or a value; a global's (glob) is a constant written to data at
 // offset slot, a local's is stored to frame slot, or to register slot when
@@ -1618,6 +1674,7 @@ void  seal(mode* self, meta* type, bool glob, s32i slot) {
     }
     chop(self);
   }
+  else if(glob && type->kind == refs && cite(self, slot)) return;
   else if(glob) {
     oper x = expr(self, 1);
     if(x.kind == vnum || x.kind == vflo) x = bend(self, x, type);

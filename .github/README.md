@@ -90,8 +90,12 @@ int main() {
   `int (*ops[4])(int)`; a function's name (or `&name`) is its address. Calls
   through a pointer follow the C ABI, so imports and C callbacks (`qsort`)
   work both ways (an otic function's address is a small entry for C code on
-  Windows x86-64, or when it takes or gives a real); a global can't be
-  initialized with one yet
+  Windows x86-64, or when it takes or gives a real)
+- a global pointer, or a `static` local one, may start with an address: of a
+  global (`&g`, `&t[2]`, `&p.y`), an array (`t + 1`), a string or a function
+  defined before it, plus or minus constants. The loader moves it with the
+  image (a relocation in ELF, a rebase in Mach-O, `.reloc` in PE); an
+  import's address can't start one
 - overloads: functions, and imports, may share a name when their parameters
   differ in count or in kind: int (32 bits or narrower), long (`long`, a
   pointer, an array) or real. A call picks the one its arguments fit best

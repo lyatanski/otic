@@ -1176,6 +1176,22 @@ spec(TAG) {
     it("initializes char array members with strings")
       expect(205, "struct s { char n[4]; int v; };\ns t[2] = {{\"ab\", 1}, {.v = 9}};\n"
                   "int main() { s x = {\"ab\", 1}; return x.n[0] + x.n[1] + x.n[3] + t[1].v + t[1].n[0] + t[0].v; }\n");
+    it("starts a pointer with the address of a global, a member, an element, a string or a function")
+      expect(53, "struct pt { int x; int y; };\nint g = 7;\npt q = {1, 2};\nint t[3] = {10, 20, 30};\n"
+                 "int add(int a, int b) { return a + b; }\n"
+                 "int* p = &g;\nint* y = &q.y;\nint* e = &t[1];\nchar* s = \"hi\";\nint (*f)(int, int) = &add;\n"
+                 "int main() { int a = 3; return *p + *y + *e + (s[1] == 'i') + f(a, 20); }\n");
+    it("starts a pointer with an array, past or before an element by constants")
+      expect(64, "int t[4] = {1, 2, 3, 4};\nint z[3];\nint* a = t;\nint* b = t + 3;\nint* c = &t[3] - 2 + 0;\nint* d = &z[2];\n"
+                 "int main() { z[2] = 50; return *a + *b * 2 + *c + *d + (b - a) * 2 - 3; }\n");
+    it("starts the pointers of arrays, structs and static locals")
+      expect(47, "int add(int a, int b) { return a + b; }\nint mul(int a, int b) { return a * b; }\n"
+                 "char* names[2] = {\"ab\", \"cde\"};\nstruct op { char* name; int (*f)(int, int); };\n"
+                 "op ops[2] = {{\"add\", add}, {.f = mul, .name = \"mul\"}};\n"
+                 "int n() { static int c = 4; static int* p = &c; *p += 1; return c; }\n"
+                 "int main() { int x = 3; n(); return names[1][2] - 'e' + ops[1].f(x, 4) + ops[0].f(x, 4) + (ops[1].name[0] == 'm') + n() * 4 + 3; }\n");
+    it("starts a pointer that a global points to")
+      expect(9, "int g = 9;\nint* p = &g;\nint** pp = &p;\nint main() { return **pp; }\n");
   }
 
   context("function pointers") {
@@ -1514,6 +1530,15 @@ spec(TAG) {
         "int main(int c, char** v) { void* h = dlopen(v[1], RTLD_NOW); if(!h) return 99;\n"
         "  int (*f)(void) = (int (*)(void))dlsym(h, \"seven\"); return f? f(): 98; }\n") == 7);
     }
+    elfs_it("relocates the addresses that start its globals") {
+      char* src = "int g = 7;\nint t[3] = {1, 2, 3};\nint z[2];\nint add(int a, int b) { return a + b; }\n"
+                  "int* p = &g;\nint* e = t + 2;\nint* w = &z[1];\nchar* s = \"hey\";\nint (*fn)(int, int) = add;\n"
+                  "static int* hid = &t[1];\nint sum() { z[1] = 9; return *p + *e + *w + s[1] + fn(1, 2) + *hid; }\n";
+      char* drv = "extern int g, *p; extern char* s; extern int (*fn)(int, int); int add(int, int); int sum(void);\n"
+                  "int main() { return (sum() == 7 + 3 + 9 + 'e' + 3 + 2) + 2 * (p == &g) + 4 * (fn == add) + 8 * (*s == 'h'); }\n";
+      check(library("lb-ad", src, 0, "-fPIC", drv) == 15);
+      check(library("lb-ado", src, 1, "", drv) == 15);
+    }
     elfs_it("keeps one copy of a global of a shared library") {
       // a program built without -fPIC copies a global out of the library: protected, it may not
       char* src = "int count = 5;\nint bump() { count += 1; return count; }\n";
@@ -1575,6 +1600,15 @@ spec(TAG) {
       check(machlib("lb-mim", src, 0, "ia64", drv) == 0);
       check(machlib("lb-mimo", src, 1, "ia64", drv) == 0);
       check(machlib("lb-mima", src, 0, "arm8", drv) == 0);
+    }
+    it("links one with addresses that start its globals", apple()) {
+      char* src = "int g = 7;\nint t[3];\nint add(int a, int b) { return a + b; }\n"
+                  "int* p = &g;\nint* e = t + 2;\nchar* s = \"hey\";\nint (*fn)(int, int) = add;\n";
+      char* drv = "extern int g, *p, *e; extern char* s; extern int (*fn)(int, int);\n"
+                  "int main() { return *p + *e + *s + fn(1, 2); }\n";
+      check(machlib("lb-mad", src, 0, "ia64", drv) == 0);
+      check(machlib("lb-mado", src, 1, "ia64", drv) == 0);
+      check(machlib("lb-mada", src, 0, "arm8", drv) == 0);
     }
     it("fails to link what the library does not export", apple()) {
       check(machlib("lb-mno", "static int hidden() { return 1; }\nint shown() { return hidden(); }\n", 0, "ia64",
@@ -1832,6 +1866,9 @@ spec(TAG) {
     it("starts a global with its initial value")
       expect(72, "int count = 5;\nint next() { count += 1; return count; }\n"
                  "int main() { int a = #next(); int b = #next(); return a * 10 + b + count; }\n");
+    it("reads a global pointer that its address started")
+      expect(96, "int g = 3;\nint* p = &g;\nint rd() { return *p; }\nint n = #rd();\nint* q = &n;\nint m = #rd();\n"
+                  "int main() { return *p + n * 10 + *q * 20 + m; }\n");
     it("calls C code")
       here(9, "load \"c\";\nint abs(int a);\nint main() { return #abs(0 - 9); }\n");
     it("reads a string argument")
@@ -1988,6 +2025,18 @@ spec(TAG) {
       expect(bad, "int main() { struct nope v; return 0; }\n");
     it("rejects a cast")
       expect(bad, "int main() { long x = 3; return (int)x; }\n");
+    it("rejects an address plus what is no constant")
+      expect(bad, "int g;\nint* p = &g + g;\nint main() { return 0; }\n");
+    it("rejects a function's address plus a constant")
+      expect(bad, "int f() { return 0; }\nint (*p)() = f + 1;\nint main() { return 0; }\n");
+    it("rejects an element's value for a pointer global")
+      expect(bad, "int t[2];\nint* p = t[1];\nint main() { return 0; }\n");
+    it("rejects the address of a local for a static local")
+      expect(bad, "int main() { int x; static int* p = &x; return 0; }\n");
+    it("rejects the address of a bit-field for a global")
+      expect(bad, "struct s { int a : 3; };\ns v;\nint* p = &v.a;\nint main() { return 0; }\n");
+    it("rejects the address of an import for a global")
+      expect(bad, "load \"c\";\nlong labs(long n);\nlong (*f)(long) = labs;\nint main() { return 0; }\n");
     it("rejects a compound literal in a global initializer")
       expect(bad, "struct p { int a; };\np g = (p){1};\nint main() { return 0; }\n");
     it("rejects a non-constant global member")

@@ -592,5 +592,21 @@ spec("link") {
       check(!c[2].name && c[2].aim.off == 4 && c[2].site.at == text->head + 90);
       free(c);
     }
+    it("knits an address in data of a global asked from an archive the same way") {
+      start("main.ot");
+      meta g = {.kind = glob, .slot = 24}, h = PEND;
+      say(1, "g", &g);
+      say(1, "h", &h);
+      ask(&self, &g);
+      ask(&self, &h);
+      self.hooks = malloc(2 * sizeof(hook));
+      self.hooks[self.hookn++] = (hook){.site = {NULL, 0}, .aim = {NULL, WANT | 0}, .add = 4, .wide = 1};
+      self.hooks[self.hookn++] = (hook){.site = {NULL, 8}, .aim = {NULL, WANT | 1}, .wide = 1};
+      cord* c;
+      u32i  n = knit(&self, &c);
+      check(n == 2 && c[0].kind == cd_wide && !c[0].name && c[0].aim.off == 24 && c[0].add == 4);
+      check(c[1].name == say(1, "h", NULL) && c[1].site.off == 8);
+      free(c);
+    }
   }
 }
