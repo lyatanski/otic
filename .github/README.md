@@ -90,6 +90,15 @@ int main() {
   work both ways (an otic function's address is a small entry for C code on
   Windows x86-64, or when it takes or gives a real); a global can't be
   initialized with one yet
+- overloads: functions, and imports, may share a name when their parameters
+  differ in count or in kind: int (32 bits or narrower), long (`long`, a
+  pointer, an array) or real. A call picks the one its arguments fit best
+  (the same kind, then an int for a long, then any other conversion), and
+  must come after its definition; two that fit alike are an error. Each
+  overload is named for the linker by its parameter types: `aton(int)` is
+  `aton_int`, `put(char*, int)` is `put_charp_int`, `f(void)` is `f_void`,
+  which C calls and otic code may name to call one or take its address; a
+  name defined once keeps its plain symbol
 - statements: `when`/`else`, `while`, `break`, `skip`, `return`
 - `sizeof` of a type name or an operand (not computed); character literals
   (`'a'`, `'\n'`) are numbers
@@ -98,7 +107,8 @@ int main() {
   in place: `&(vec){3, 4}`
 - `static` and `extern` at the top level: a `static` name stays in its
   source file; an `extern` global lives in a loaded library and has no
-  storage of its own
+  storage of its own. A `static` local is a global that only its block
+  sees: it keeps its value between calls, set once by constants
 - `syscall(n, ...)` goes straight to the kernel
 - a `#!` first line is skipped, so a source can be a script: `#!/usr/bin/env otic`
 - `#f(args)` calls `f` while compiling, as host code, and takes its result in
@@ -116,10 +126,9 @@ int sprintf(char* out, char* fmt, ...);
 
 int sq(int x) { return x * x; }
 
-char text[256];
-
 // returns "int get_<name>() { return <value>; }"
 char* getter(char* name, int value) {
+  static char text[256];     // outlives the call, as the result must
   sprintf(text, "int get_%s() { return %d; }", name, value);
   return text;
 }

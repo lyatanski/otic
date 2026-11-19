@@ -846,6 +846,105 @@ spec(TAG) {
                 "int main() { long x = f(); return (x < 0) + !g() * 2; }\n");
   }
 
+  context("overloads") { // one name, parameters of other counts or kinds (int, long, real)
+    #define OV2 "int f(int a) { return 1; }\nint f(real a) { return 2; }\n"
+    it("picks an overload by the kind of each argument")
+      expect(213, "int f(int a) { return 1; }\nint f(long a) { return 2; }\nint f(real a) { return 3; }\n"
+                  "int main() { long l = 5; char c = 1; real r = 0.5; return f(l) * 100 + f(c) * 10 + f(r); }\n");
+    it("picks an overload by the count of the arguments")
+      expect(239, "int f(int a) { return 1; }\nint f(int a, int b) { return a + b; }\nint f(void) { return 7; }\n"
+                  "int main() { return f(0) + f(2, 3) * 10 + f() * 100 - 512; }\n");
+    it("takes an int for a long before a real")
+      expect(2, "int f(long a) { return 2; }\nint f(real a) { return 3; }\nint main() { int i = 1; return f(i); }\n");
+    it("converts the arguments to the overload it picks")
+      expect(33, "int f(long a) { return (a < 0) + 2; }\nint f(int a, long b) { return 0; }\nint f(real a) { return a * 10; }\n"
+                 "int main() { int n = -1; return f(n) * 10 + f(n); }\n");
+    it("nests overloaded calls in the arguments of one")
+      expect(120, OV2 "int g(int a) { return a * 10; }\nint g(long a) { return a * 100; }\n"
+                  "int main() { long l = 1; return g(f(1.0)) + g(l); }\n");
+    it("recurses into an overload")
+      expect(110, "int fib(int n) { when(n < 2) return n; return fib(n - 1) + fib(n - 2); }\n"
+                  "real fib(real n) { when(n < 2.0) return n; return fib(n - 1.0) + fib(n - 2.0); }\n"
+                  "int main() { return fib(10) + fib(10.0); }\n");
+    it("types a string and a compound literal in the arguments, its data and frame laid once")
+      expect(121, "struct v { int x; };\n" OV2 "int g(char* s, int n) { return s[n]; }\nint g(real a) { return 0; }\n"
+                  "int main() { return f((v){3}.x) + f(1.5) * 10 + (g(\"abc\", 1) == 98) * 100; }\n");
+    it("overloads the functions of linked units, as each unit sees them") {
+      module("ov-a", "int conv(int x) { return 1; }\n");
+      module("ov-b", "link \"ov-a\";\nint conv(real x) { return 2; }\nint b() { return conv(1) * 10 + conv(1.0); }\n");
+      expect(123, "link \"ov-b\";\nint conv(long x) { return 3; }\n"
+                  "int main() { long l = 1; return conv(1) * 100 + conv(1.0) * 10 + conv(l) + b() - 12; }\n");
+    }
+    it("keeps static overloads in their module") {
+      module("ov-s", "static int f(int a) { return 3; }\nstatic int f(real a) { return 4; }\n"
+                     "int other() { return f(1) + f(1.0) * 10; }\n");
+      expect(64, "link \"ov-s\";\nstatic int f(int a) { return 1; }\nstatic int f(real a) { return 2; }\n"
+                 "int main() { return f(1) + f(1.0) * 10 + other(); }\n");
+    }
+    it("calls an overload by its symbol, and takes its address so")
+      expect(24, OV2 "int main() { int (*p)(int) = f_int; int (*q)(real) = &f_real; return f_int(0) + p(0) + q(0) * 10 + f_real(0); }\n");
+    it("runs a # in the arguments of an overloaded call once")
+      expect(12, "int c = 0;\nint bump() { c += 1; return c; }\n" OV2
+                 "int main() { return f(#bump()) * 10 + c + #bump(); }\n");
+    it("runs an overload at compile time")
+      expect(25, "int sq(int x) { return x * x; }\nreal sq(real x) { return x * x; }\nint t[#sq(4)];\n"
+                 "int main() { return sizeof t / 4 + #sq(1.5) * 4; }\n");
+    it("builds what writing the constants would, for the host's other target")
+      twins("int k() { return 3; }\n" OV2 "int main() { return f(#k()) + f(#k() + 0.5); }\n",
+            "int k() { return 3; }\n" OV2 "int main() { return f(3) + f(3.5); }\n", pick("arm8", "ia64"), "elfs");
+    elfs_it("names each overload of a library by its parameters, as C calls it") {
+      char* src = "int aton(int x) { return x + 1; }\nint aton(real x) { return x * 10; }\n"
+                  "int put(char* s, int n) { return n; }\nint put(long v) { return 9; }\nint f(void) { return 1; }\n"
+                  "int f(int a) { return 2; }\nint one(int a) { return a; }\n"
+                  "static int s(int a) { return 1; }\nstatic int s(real a) { return 2; }\nint use() { return s(1) + s(1.0); }\n";
+      char* drv = "int aton_int(int); int aton_real(double); int put_charp_int(char*, int); int put_long(long);\n"
+                  "int f_void(void); int f_int(int); int one(int); int use(void);\n"
+                  "int main() { return aton_int(1) + aton_real(2.5) + put_charp_int(\"\", 3) + put_long(0)\n"
+                  "  + f_void() + f_int(0) + one(4) + use(); }\n";
+      check(library("ov-lib", src, 0, "", drv) == 49);
+      check(library("ov-lib", src, 1, "", drv) == 49);
+    }
+    elfs_it("takes overloaded imports from a library built by otic, by the same prototypes") {
+      check(library("ov-imp", "int aton(int x) { return x + 1; }\nint aton(real x) { return x * 10; }\n", 0, "",
+                    "int main() { return 0; }\n") == 0);
+      here(27, "load \"bins/libov-imp.so\";\nint aton(int x);\nint aton(real);\n"
+               "int main() { return aton(1) + aton(2.5); }\n");
+    }
+    it("stops in each overload at break name in gdb, named by its symbol in the symbol table", gdbs()) {
+      char out[4096];
+      check(debugged("dbg-ov", OV2 "int main() { return f(1) + f(1.0); }\n", pick("ia64", "arm8"), "elfs") == 0);
+      chmod("bins/dbg-ov", 0755);
+      captured("gdb -q -batch -ex 'set debuginfod enabled off' -ex 'break f' -ex run -ex c bins/dbg-ov", out, sizeof out);
+      check(strstr(out, "(2 locations)") && strstr(out, "Breakpoint 1.1, ") && strstr(out, "Breakpoint 1.2, "));
+      captured("readelf -s bins/dbg-ov", out, sizeof out);
+      squeezed(out);
+      check(strstr(out, " FUNC GLOBAL DEFAULT 5 f_int") && strstr(out, " FUNC GLOBAL DEFAULT 5 f_real"));
+    }
+    it("rejects a call that fits two overloads alike")
+      expect(bad, "int f(int a, long b) { return 2; }\nint f(long a, int b) { return 3; }\nint main() { return f(1, 1); }\n");
+    it("rejects a call that fits no overload")
+      expect(bad, "int f(char* a) { return 1; }\nint f(char* a, int b) { return 2; }\nint main() { return f(1.5); }\n");
+    it("rejects an int for a pointer as good as for a real")
+      expect(bad, "struct v { int x; };\nint f(v* p) { return p->x; }\nint f(real a) { return 2; }\nint main() { return f(3); }\n");
+    it("rejects overloads that differ only in their result")
+      expect(bad, "int f(int a) { return 2; }\nlong f(int b) { return 3; }\nint main() { return 0; }\n");
+    it("rejects overloads of the same kinds")
+      expect(bad, "int f(int a) { return 2; }\nint f(byte b) { return 3; }\nint main() { return 0; }\n");
+    it("rejects a forward call to an overloaded name")
+      expect(bad, "int main() { return f(1); }\n" OV2);
+    it("rejects an overload of a function a forward call was bound to") {
+      module("ov-fw", "int fa() { return fw(1); }\nint fw(int a) { return 1; }\n");
+      expect(bad, "link \"ov-fw\";\nint fw(real a) { return 2; }\nint main() { return fa(); }\n");
+    }
+    it("rejects the address of an overloaded name")
+      expect(bad, OV2 "int main() { int (*p)(int) = f; return p(1); }\n");
+    it("rejects a symbol that another name has")
+      expect(bad, OV2 "int f_int(int x) { return 9; }\nint main() { return 0; }\n");
+    it("rejects an overload whose symbol another name has")
+      expect(bad, "int f_int(int x) { return 9; }\n" OV2 "int main() { return 0; }\n");
+    #undef OV2
+  }
+
   context("loops") {
     it("runs while")
       expect(55, "int main() {\n  int s = 0;\n  int i = 1;\n"
@@ -883,6 +982,23 @@ spec(TAG) {
       expect(7, "char big[1000000];\nint main() { big[999999] = 7; return big[999999] + big[0]; }\n");
     it("declares several in one statement")
       expect(9, "int a = 2, *p, b[2] = {3, 4};\nint main() { p = &a; return *p + b[0] + b[1]; }\n");
+    it("keeps a static local between calls")
+      expect(3, "int count() { static int n; n += 1; return n; }\nint main() { count(); count(); return count(); }\n");
+    it("initializes a static local once")
+      expect(12, "int f() { static int n = 10; n += 1; return n; }\nint main() { f(); return f(); }\n");
+    it("gives each function its own static local")
+      expect(23, "int f() { static int n = 1; n += 1; return n; }\nint g() { static int n = 10; n += 10; return n; }\n"
+                 "int main() { f(); g(); return f() + g() - 10; }\n");
+    it("ends a static local's scope with its block")
+      expect(7, "int main() {\n  int n = 1;\n  { static int n = 5; n += 1; }\n  { static int n = 3; n += 3; return n + 1; }\n}\n");
+    it("initializes a static local array and struct, the rest is zero")
+      expect(16, "struct v { int x; int y; };\n"
+                 "int f() { static int t[3] = {[1] = 4}; static v p = {.y = 2}; t[1] += 1; p.y += 1; return t[0] + t[1] + t[2] + p.x + p.y; }\n"
+                 "int main() { f(); return f() + 6; }\n");
+    it("keeps a static local in memory through a loop")
+      expect(90, "int f() { static int s; int i = 0; while(i < 10) { s += i; i += 1; } return s; }\nint main() { f(); return f(); }\n");
+    it("gives the address of a static local")
+      expect(5, "int* cell() { static int c; return &c; }\nint main() { *cell() = 4; return *cell() + 1; }\n");
   }
 
   context("pointers") {
@@ -1698,6 +1814,9 @@ spec(TAG) {
       expect(200, "char c() { return 456; }\nint main() { return #c(); }\n");
     it("gives 0 for a void function")
       expect(0, "int n;\nvoid bump() { n += 1; }\nint main() { #bump(); #bump(); return n; }\n");
+    it("gives a constant for a static local")
+      expect(11, "int sq(int x) { return x * x; }\nint f() { static long t[2] = {#sq(3)}; t[0] += 1; return t[0]; }\n"
+                 "int main() { f(); return f(); }\n");
     it("computes inside an expression with kept operands")
       expect(60, "int twice(int x) { return x * 2; }\nint main() {\n  int a = 5, b = 7;\n"
                  "  return a + #twice(3) * b + (a < #twice(3)) + #twice(6 + 0);\n}\n");
@@ -1769,6 +1888,10 @@ spec(TAG) {
   }
 
   context("errors") {
+    it("rejects a static local set by a non-constant")
+      expect(bad, "int f(int a) { static int n = a; return n; }\nint main() { return f(1); }\n");
+    it("rejects a static local out of its block")
+      expect(bad, "int main() { { static int n; } return n; }\n");
     it("rejects an unknown character")
       expect(bad, "int main() { return $; }\n");
     it("rejects an unterminated comment")
@@ -1927,8 +2050,10 @@ spec(TAG) {
       expect(bad, "int main() { return puts(\"x\"); }\nload \"c\";\nint puts(char*);\n");
     it("rejects an import from two libraries")
       expect(bad, "load \"c\";\nint f();\nload \"m\";\nint f();\nint main() { return 0; }\n");
-    it("rejects an import with another argument count")
-      expect(bad, "load \"c\";\nint f(int);\nint f(int, int);\nint main() { return 0; }\n");
+    it("takes an import with another argument count for an overload") // f_int and f_int_int, not in libc
+      lost("load \"c\";\nint f(int);\nint f(int, int);\nint main() { return f(1); }\n");
+    it("rejects an import that differs only in its result")
+      expect(bad, "load \"c\";\nint f(int);\nlong f(int);\nint main() { return 0; }\n");
     it("rejects a body for an import")
       expect(bad, "load \"c\";\nint f();\nint f() { return 1; }\nint main() { return f(); }\n");
     it("rejects an import of c and of another library") {

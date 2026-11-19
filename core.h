@@ -226,10 +226,13 @@ struct meta {
   bool  weak; // defined by an object as weak: a strong definition replaces it
   bool  ext;  // a function from an object, or an import
   bool  more; // variadic: arguments may follow the size named ones
+  bool  lots; // a function of the source or an import that shares its name with others (overloads)
+  bool  fore; // a function a forward call was bound to, by its name
   byte  longs; // a function of the source: bit i when parameter i is 64 bits
   byte  reals; // a function or a function type: bit i when parameter i is a real
   u32i  unit; // the unit that defines it
   u32i  die;  // a type: its number in the debug information (-g), 0 until it has one
+  meta** args; // a function of the source or an import: the types of its size parameters
 };
 
 // metas in chunks of PART that never move, as names and types point at them:
@@ -324,7 +327,7 @@ typedef struct { u32i lo, hi, up; } dwblk;          // a block: its code, and th
 typedef struct { item* name; u32i type, unit, line, block; s32i slot; bool parm; } dwvar; // a local, at slot from rbp or x29
 typedef struct { u32i lo, hi; } dwend;              // an epilogue: its code
 typedef struct {
-  item* name; u32i type, unit, line, lo, hi; bool own;
+  item* name; const meta* func; u32i type, unit, line, lo, hi; bool own; // func->name: its symbol, which an overload's is not name
   u32i  vars, nvars, blks, nblks, ends, nends;      // its locals, blocks and epilogues, in the arrays
 } dwfun;
 typedef struct { item* name; u32i type, unit, line, slot, size; bool own; } dwglb; // a global: its data offset (| ZERO)
@@ -407,6 +410,7 @@ struct mode {
   bool  shaded;    // the tape is the mirror's
   bool  hidden;    // the locals of the function are out of scope for a #
   u32i  layers;    // sources a # generated, one inside another
+  u32i  dry;       // the arguments of an overloaded call compiled for their types only, one inside another: a # in them is not run
   u32i  ripe;      // bytes of data that finished declarations have laid
   u64i  bssat, slotat; // set while docking an image: where bss and the import slots are
 
@@ -469,6 +473,9 @@ u32i  lay(mode*, u32i size, bool zero, u32i align);
 #define nick(x) (int)(x)->size, (x)->name
 
 // core.c, for link.c
+// a call by the name call, for which function fn was found, picks an
+// overload: fn is one, and call is not its symbol (dub), which calls it alone
+#define plural(fn, call) ((fn)->lots && ((fn)->name->unit || !akin((fn)->name, call)))
 meta* mint(mode*, meta x);
 u32i  wide(const meta*);
 u32i  quote(const item* s, byte* out);

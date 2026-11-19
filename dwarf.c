@@ -42,7 +42,9 @@ enum { // call frames
 
 // the abbreviations, numbered from 1 in this order. A function is a_func plus
 // 1 when it is external, 2 when it has a type and 4 when it has nothing inside,
-// a global a_glob plus 1 when it is external
+// a global a_glob plus 1 when it is external. An overload is named as written,
+// not by its symbol (no DW_AT_linkage_name): gdb takes that for a C function's
+// name, so that break name would miss the overloads
 enum {
   a_unit = 1, a_base, a_ptr, a_ptrv, a_struct, a_anon, a_memb, a_bitf, a_array, a_range, a_proc, a_procv,
   a_func, a_glob = a_func + 8, a_local = a_glob + 2, a_parm, a_block,
@@ -284,7 +286,7 @@ void  dwarf_func(mode* self, const meta* func, u64i line, const byte* lo) {
   dbg* d = dw_note(self);
   if(!d) return;
   d->funs = swell(self, d->funs, d->nfun, &d->cfun, sizeof(dwfun), 64);
-  d->funs[d->nfun++] = (dwfun){func->name, dw_tyid(self, func->type), self->unit, (u32i)line,
+  d->funs[d->nfun++] = (dwfun){func->name, func, dw_tyid(self, func->type), self->unit, (u32i)line,
     (u32i)(lo - self->text->head), dw_here(self), func->own,
     d->vars0, d->nvar - d->vars0, d->blks0, d->nblk - d->blks0, d->ends0, d->nend - d->ends0};
 }

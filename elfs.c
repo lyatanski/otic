@@ -499,7 +499,7 @@ static void  elfs_dsize(const mode* self, u32i* nsym, u32i* locals, u64i* strs) 
   *nsym = 1 + d->nfun + d->nglb;
   *locals = 1;
   *strs = 1;
-  for(u32i i = 0; i < d->nfun; i++) *locals += d->funs[i].own, *strs += d->funs[i].name->size + 1;
+  for(u32i i = 0; i < d->nfun; i++) *locals += d->funs[i].own, *strs += d->funs[i].func->name->size + 1;
   for(u32i i = 0; i < d->nglb; i++) *locals += d->glbs[i].own, *strs += d->glbs[i].name->size + 1;
 }
 
@@ -513,7 +513,7 @@ static void  elfs_dput(const mode* self, sym64* sym, byte* str, u64i text, u64i 
     for(u32i i = 0; i < d->nfun; i++) {
       const dwfun* f = d->funs + i;
       if(f->own != !pass) continue;
-      *sym++ = (sym64){.name = elfs_word(str, &at, f->name), .type = STT_FUNC,
+      *sym++ = (sym64){.name = elfs_word(str, &at, f->func->name), .type = STT_FUNC,
                        .bind = pass? STB_GLOBAL: STB_LOCAL, .shidx = tsec, .value = text + f->lo, .size = f->hi - f->lo};
     }
     for(u32i i = 0; i < d->nglb; i++) {

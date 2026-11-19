@@ -577,6 +577,171 @@ oper  suit(mode* self, const meta* f, u32i i, oper x, u32i* real) {
   return x;
 }
 
+// Overloads: functions of the source and imports that share a name, told
+// apart by the count and the kinds of their parameters: int (32 bits or
+// narrower), long (64 bits: long, a pointer, an array) or real. C code of an
+// object has none. A call of the name picks one (elect), and each is named for
+// the linker by its parameters (dub)
+#define KIN   32   // overloads of a name at most
+#define SPELL 1024 // bytes of a symbol or of a message on overloads
+#define ours(m) ((m) && (m)->kind == call && !((m)->ext && !(m)->lib))
+
+// the same count and kinds of parameters
+static bool  peer(const meta* f, const meta* g) {
+  return f->size == g->size && f->longs == g->longs && f->reals == g->reals;
+}
+
+// the kind of a parameter or an argument of type t: 0 int, 1 long, 2 real
+static u32i  sort3(const mode* self, const meta* t) { return flot(self, t)? 2: wide(t)? 1: 0; }
+
+// the overloads of name that unit at sees, but skip: its own functions and
+// imports of the name, the latest first, then the public ones of the other
+// units in join order; of those with the same parameters, the first. Their
+// count, into out
+static u32i  kin(mode* self, u32i at, const item* name, meta** out, const meta* skip) {
+  u32i  n = 0;
+  item* first = hsee(&self->names, name->name, name->size, clue(name->name, name->size));
+  for(u32i pass = 0; pass < 2; pass++)
+    for(const item* s = first; s; s = s->next) {
+      if(!s->unit || (s->unit == at) == pass) continue;
+      for(meta* m = s->data; m; m = m->hide) {
+        if(m == skip || !ours(m) || (pass && !heft(m))) continue;
+        u32i i = 0;
+        while(i < n && !peer(out[i], m)) i++;
+        if(i < n) continue;
+        if(n == KIN) flaw(self, "more than %d overloads of '%.*s'\n", KIN, nick(name));
+        out[n++] = m;
+      }
+    }
+  return n;
+}
+
+// size bytes of s into b at n: the new n
+static u32i  utter(const mode* self, char* b, u32i n, const char* s, u64i size) {
+  if(n + size >= SPELL) flaw(self, "a name or message too long for an overload\n");
+  copy((byte*)b + n, s, size);
+  b[n + size] = 0;
+  return n + (u32i)size;
+}
+
+// type t as written into b at n, a pointer (or an array, as an argument is)
+// with star after what it points to, a function type as its result and fn:
+// the new n
+static u32i  scribe(const mode* self, const meta* t, char* b, u32i n, char star) {
+  if(t->kind == refs || t->kind == many) return utter(self, b, scribe(self, t->type, b, n, star), &star, 1);
+  if(t->kind == bitf) return scribe(self, t->type, b, n, star);
+  if(t->kind == proc) return utter(self, b, scribe(self, t->type, b, n, star), "fn", 2);
+  return t->name? utter(self, b, n, t->name->name, t->name->size): utter(self, b, n, "struct", 6);
+}
+
+// overload f, called name, as a call takes it into b at n, name(int, real),
+// after a ", " unless n is 0: the new n
+static u32i  style(const mode* self, const meta* f, const item* name, char* b, u32i n) {
+  if(n) n = utter(self, b, n, ", ", 2);
+  n = utter(self, b, utter(self, b, n, name->name, name->size), "(", 1);
+  for(u32i i = 0; i < f->size; i++) n = scribe(self, f->args[i], b, i? utter(self, b, n, ", ", 2): n, '*');
+  if(f->more) n = utter(self, b, n, f->size? ", ...": "...", f->size? 5: 3);
+  return utter(self, b, n, ")", 1);
+}
+
+// the symbol of overload f, once: its name, then _ and the type of each
+// parameter as written, * as p (f_void without any). A public one is bound to
+// it in the root's table, where nothing else may be: already defined. was is
+// an import that f declares again, which has it
+void  dub(mode* self, meta* f, const meta* was) {
+  if(!f->name->unit) return;
+  char  b[SPELL];
+  u32i  n = utter(self, b, 0, f->name->name, f->name->size);
+  if(!f->size) n = utter(self, b, n, "_void", 5);
+  for(u32i i = 0; i < f->size; i++) n = scribe(self, f->args[i], b, utter(self, b, n, "_", 1), 'p');
+  item* s = hget(self, 0, b, n);
+  if(!f->own) {
+    const meta* m = find(self, 0, s);
+    if(m && m != was && (m->kind == call || m->kind == glob)) flaw(self, "'%.*s' is already defined\n", nick(s));
+    s->data = f;
+  }
+  f->name = s;
+}
+
+// func overloads the n functions c, and was, an import it declares again
+// (NULL when none): each is marked, and named but func, whose body may
+// follow. A forward call bound to one by its name would now be ambiguous
+void  crowd(mode* self, meta* func, meta** c, u32i n, meta* was) {
+  for(u32i i = 0; i <= n; i++) {
+    const meta* m = i < n? c[i]: was;
+    if(m && m->fore) flaw(self, "'%.*s' is called before its definition, it cannot be overloaded\n", nick(func->name));
+  }
+  func->lots = 1;
+  for(u32i i = 0; i < n; i++) { c[i]->lots = 1; dub(self, c[i], NULL); }
+  if(was) { was->lots = 1; dub(self, was, NULL); }
+}
+
+// the overload of name that the arguments at hand fit best, after its (:
+// they are compiled once for their types (mode.dry), their code dropped and
+// their tokens put back. Per argument the same kind fits best, then an int for
+// a long, then the rest: an int for a pointer, a real for an integer or back
+// (not for a pointer, nor a pointer for a real); a variadic one takes more.
+// The best is the one no other beats on any argument: none, or more than one,
+// fails
+meta* elect(mode* self, item* name) {
+  meta* c[KIN], *t[6];
+  u32i  n = kin(self, self->unit, name, c, NULL), argc = 0, dials = self->dials;
+  u32i  size = (u32i)(self->data->body - self->data->head);
+  s32i  slot = self->slot, lits = self->lits;
+  byte* at = home(self)->code->body, *mark = self->text->body;
+  u64i  line = home(self)->line;
+  word  talk = home(self)->talk;
+  if(n == 1) return c[0];
+  self->dry++;
+  for(; !twin(self, ')'); argc++) {
+    if(argc) skip(self, ',');
+    if(argc == 6) flaw(self, "more than 6 arguments\n");
+    t[argc] = expr(self, 1).type;
+  }
+  self->dry--;
+  trim(self, mark);
+  file* d = self->data;
+  for(u32i i = size; d->head + i < d->body; i++) d->head[i] = 0;
+  d->body = d->head + size;
+  self->dials = dials, self->slot = slot, self->lits = lits;
+  home(self)->code->body = at, home(self)->line = line, home(self)->talk = talk;
+
+  byte  cost[KIN][6];
+  bool  fit[KIN], top[KIN];
+  u32i  fits = 0, tops = 0, best = 0;
+  for(u32i j = 0; j < n; j++) {
+    const meta* f = c[j];
+    fit[j] = argc == f->size || (f->more && argc > f->size);
+    for(u32i i = 0; fit[j] && i < argc; i++) {
+      const meta* p = i < f->size? f->args[i]: t[i];
+      u32i  a = sort3(self, t[i]), k = sort3(self, p);
+      cost[j][i] = a == k? 0: !a && k == 1 && digit(p)? 1: 2;
+      if(a != k && (a == 2 || k == 2) && !(digit(t[i]) && digit(p))) fit[j] = 0;
+    }
+    fits += fit[j];
+  }
+  for(u32i j = 0; j < n; j++) {
+    top[j] = fit[j];
+    for(u32i k = 0; top[j] && k < n; k++)
+      for(u32i i = 0; fit[k] && k != j && i < argc; i++) if(cost[j][i] > cost[k][i]) top[j] = 0;
+    if(top[j]) tops++, best = j;
+  }
+  if(tops == 1) return c[best];
+  char  b[SPELL];
+  u32i  m = 0;
+  if(!fits) {
+    m = utter(self, b, m, "(", 1);
+    for(u32i i = 0; i < argc; i++) m = scribe(self, t[i], b, i? utter(self, b, m, ", ", 2): m, '*');
+    m = utter(self, b, m, ")", 1);
+    char  w[SPELL];
+    u32i  k = 0;
+    for(u32i j = 0; j < n; j++) k = style(self, c[j], name, w, k);
+    flaw(self, "no overload of '%.*s' takes %.*s: %.*s\n", nick(name), (int)m, b, (int)k, w);
+  }
+  for(u32i j = 0; j < n; j++) if(tops? top[j]: fit[j]) m = style(self, c[j], name, b, m);
+  flaw(self, "the call of '%.*s' fits more than one overload: %.*s\n", nick(name), (int)m, b);
+}
+
 // name(args): each argument is pushed on 64 bits, then popped into its
 // register, the last one moved there from acc. A constant, or a local in a
 // register, waits (late) and is moved to its register once the others are
@@ -585,6 +750,7 @@ oper  suit(mode* self, const meta* f, u32i i, oper x, u32i* real) {
 oper  dial(mode* self, item* name) {
   bool  trap = name == sget(self, "syscall");
   meta* func = find(self, self->unit, name);
+  if(func && plural(func, name)) func = elect(self, name);
   bool  ffi = func && (func->kind == pend || (func->kind == call && func->ext));
   u32i  argc = 0, late = 0, real = 0;
   s32i  last = -1; // the argument in acc
@@ -631,6 +797,7 @@ s32i  room(mode* self, u32i size);
 // the C way (ring). That of an import is read from its slot, one in text is
 // pc-relative: an otic function's entry for C code, when it has one
 oper  hand(mode* self, item* name, meta* func) {
+  if(plural(func, name)) flaw(self, "'%.*s' is overloaded: name one by its symbol to take its address\n", nick(name));
   meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->reals, func->more));
   if(func->lib) { spot(self, port(self, func)); emit(self, read, 8); return acc(t); }
   const meta* body = func->addr? func: find(self, 0, name); // past a prototype
@@ -746,13 +913,22 @@ yield sharp(mode* self) {
   item* name = home(self)->talk.hash;
   meta* func = find(self, self->unit, name);
   if(!func || func->kind != call) flaw(self, "no function '%.*s'\n", nick(name));
+  chop(self);
+  if(!twin(self, '(')) flaw(self, "expected ( after '%.*s': only a call runs at compile time\n", nick(name));
+  if(plural(func, name) && !self->dry) func = elect(self, name);
   if(self->frame != ~0u && func == self->func)
     flaw(self, "'%.*s' is being compiled, define it before running it\n", nick(name));
   meta* t = func->type;
   bool  text = t->kind == refs && t->type == tget(self, char), real = flot(self, t);
   if(!text && t->kind != base) flaw(self, "'%.*s' gives a result that cannot be used at compile time\n", nick(name));
-  chop(self);
-  if(!twin(self, '(')) flaw(self, "expected ( after '%.*s': only a call runs at compile time\n", nick(name));
+  if(self->dry) { // the arguments of an overloaded call are typed: not run, its type is its result's
+    for(u32i d = 1; d; chop(self)) {
+      u32i k = home(self)->talk.kind;
+      if(!k) flaw(self, "expected )\n");
+      d += (k == '(') - (k == ')');
+    }
+    return (yield){.type = t, .text = text? (char*)"": NULL};
+  }
 
   struct { s32i slot, deep, lits; u32i busy, regn, held, dials; } was =
     {self->slot, self->deep, self->lits, self->busy, self->regn, self->held, self->dials};
@@ -851,6 +1027,7 @@ oper  atom(mode* self) {
       yield y = sharp(self);
       if(y.text) flaw(self, "source text from # goes where a declaration does, not in an expression\n");
       if(flot(self, y.type)) { double v; copy((byte*)&v, &y.bits, sizeof v); return flo(self, v); }
+      if(self->dry && span(y.type) == 8) return (oper){.kind = vnum, .type = tget(self, long)};
       s64i  v = (s64i)y.bits;
       switch(span(y.type)) { case 0: v = 0; break; case 1: v = (byte)v; break; case 2: v = (u16i)v; break; case 4: v = (s32i)v; }
       if(v == (s32i)v) return cnst(self, (s32i)v);
@@ -1475,14 +1652,24 @@ oper  lit(mode* self) {
   return (oper){.kind = vloc, .ival = slot, .type = type};
 }
 
-// type declarator (= init)? (, declarator (= init)?)* ;
+// static? type declarator (= init)? (, declarator (= init)?)* ; static: a
+// global of the source that only the block sees, set once by constants
 void  vars(mode* self) {
   u64i  line = home(self)->line;
+  bool  own  = same(self, "static");
+  if(own) chop(self);
   meta* base = sort(self);
   if(twin(self, ';')) return; // a struct, defined
   do {
     item* name;
     meta* type = noun(self, base, &name);
+    if(own) {
+      u32i off = lay(self, type->size, home(self)->talk.kind != '=', 8);
+      if(twin(self, '=')) seal(self, type, 1, (s32i)off);
+      seed(self, .name=name, .type=type, .kind=glob, .slot=off, .own=1);
+      dwarf_glob(self, name, type, off, 1, line);
+      continue;
+    }
     s32i  slot = stay(self, name, type, type->size);
     seed(self, .name=name, .type=type, .kind=data, .slot=slot);
     dwarf_var(self, name, type, slot, 0, line);
@@ -1699,7 +1886,7 @@ void  stmt(mode* self) {
   }
   else if(twin(self, ';')) {
   }
-  else if(type(self)) {
+  else if(type(self) || same(self, "static")) {
     vars(self);
     return; // the names stay in the enclosing scope
   }
@@ -1758,16 +1945,17 @@ void  stmt(mode* self) {
 // x, declared without a body or as extern, is an import from the library of
 // the last load, or of "c". prev, what the name meant before, may be the same
 // import, which keeps its slot, or C code of an object or an archive, which x
-// gives a prototype: the calls go to the definition (cabi)
-void  hire(mode* self, meta* x, const meta* prev) {
+// gives a prototype: the calls go to the definition (cabi). An overload (lots)
+// with nothing before it of its parameters is checked by its symbol (dub)
+void  hire(mode* self, meta* x, const meta* prev, bool lots) {
   x->ext = 1;
   if(x->kind == call && prev && (prev->kind == pend || (prev->kind == call && prev->ext && !prev->lib)))
     return;
   x->lib = home(self)->from? home(self)->from: rack(self, sget(self, "\"c\""));
-  if(!prev || !prev->ext || prev->addr || prev->kind != x->kind || prev->lib != x->lib
-     || prev->type != x->type || prev->size != x->size || prev->more != x->more)
-    once(self, prev, x->name, x->own);
-  else x->slot = prev->slot;
+  if(prev && prev->ext && !prev->addr && prev->kind == x->kind && prev->lib == x->lib
+     && prev->type == x->type && prev->size == x->size && prev->more == x->more)
+    x->slot = prev->slot;
+  else if(prev || !lots) once(self, prev, x->name, x->own);
 }
 
 // the string after link or load
@@ -1838,24 +2026,40 @@ void  decl(mode* self) {
     meta* func = self->func = pin(self->pile, self->top - 1);
     u32i  top  = self->top;
     bool  anon = 0;
+    meta* args[6];
     self->slot = self->deep = self->lits = self->busy = 0;
     for(; !twin(self, ')'); func->size++, twin(self, ',')) {
       if(twin(self, tokd('.', '.', '.'))) { func->more = 1; skip(self, ')'); break; }
       item* n;
       meta* of = coil(self, sort(self), &n);
       if(!n && !of->size && !func->size && twin(self, ')')) break; // (void)
-      if(!n) { anon = 1; continue; } // an import may leave it out
+      if(func->size < 6) args[func->size] = of;
       if(wide(of)) func->longs |= 1 << func->size;
       if(flot(self, of)) func->reals |= 1 << func->size;
+      if(!n) { anon = 1; continue; } // an import may leave it out
       seed(self, .name=n, .type=of, .kind=data, .slot=-1); // placed once the body is sifted
     }
     if(func->size > 6) flaw(self, "more than 6 parameters\n");
+    if(func->size) {
+      func->args = self->heap(NULL, func->size * sizeof(meta*));
+      copy((byte*)func->args, args, func->size * sizeof(meta*));
+    }
+    // after a function of the name: the overloads of the name, one of which
+    // func may declare again (prev), the others (c, lots of them) it overloads
+    meta* c[KIN];
+    u32i  n = ours(prev)? kin(self, self->unit, name, c, func): 0, lots = 0;
+    if(n) {
+      prev = NULL;
+      for(u32i i = 0; i < n; i++) if(peer(c[i], func)) prev = c[i]; else c[lots++] = c[i];
+    }
     if(twin(self, ';')) {
-      hire(self, func, prev);
+      hire(self, func, prev, lots);
+      if(lots) { crowd(self, func, c, lots, (meta*)prev); dub(self, func, prev); }
       bury(self, top);
       return;
     }
-    once(self, prev, name, own);
+    if(prev || !lots) once(self, prev, name, own);
+    if(lots) crowd(self, func, c, lots, NULL);
     if(anon) flaw(self, "a parameter without a name\n");
     if(func->more) flaw(self, "only an import can be variadic\n");
     if(home(self)->talk.kind != '{') flaw(self, "expected function body\n");
@@ -1882,6 +2086,7 @@ void  decl(mode* self) {
     emit(self, move, 0); fini(self); // implicit return 0
     emit(self, size, func->addr, (self->deep + 15) & -16);
     dwarf_func(self, func, born, func->addr);
+    if(lots) dub(self, func, NULL);
     bury(self, top);
     self->frame = ~0u;
     while(self->regn) self->pick[--self->regn]->pick = 0;
@@ -1894,7 +2099,7 @@ void  decl(mode* self) {
     if(ext) {
       const meta* prev = find(self, self->unit, name);
       seed(self, .name=name, .type=type, .kind=glob, .own=own);
-      hire(self, pin(self->pile, self->top - 1), prev);
+      hire(self, pin(self->pile, self->top - 1), prev, 0);
       if(!twin(self, ',')) break;
       continue;
     }

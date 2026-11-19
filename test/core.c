@@ -642,6 +642,31 @@ spec("core") {
       check(rejects("link \"none\"; int main() { }", "cannot find \"none\""));
     }
   }
+  context("overloads") {
+    #define OV2 "int f(int a) { return 1; }\nint f(real a) { return 2; }\n"
+    it("compiles the arguments that pick an overload twice, the first code dropped") {
+      check(compiles(OV2 "int main() { real r = 1.5; return f(r * r); }"));
+      check(calls[op_flop] == 2 && left(op_flop) == 1 && calls[op_dial] == 1);
+    }
+    it("names the overloads a call fits alike") {
+      check(rejects("int f(int a, long b) { return 2; }\nint f(long a, int b) { return 3; }\nint main() { return f(1, 1); }",
+                    "the call of 'f' fits more than one overload: f(long, int), f(int, long)"));
+    }
+    it("names the overloads and the arguments when none fits") {
+      check(rejects("int f(char* a) { return 1; }\nint f(char* a, int b) { return 2; }\nint main() { return f(1.5); }",
+                    "no overload of 'f' takes (real): f(char*, int), f(char*)"));
+    }
+    it("rejects a forward call, an address and a symbol taken") {
+      check(rejects("int main() { return f(1); }\n" OV2, "'f' is overloaded, define it before the call"));
+      check(rejects(OV2 "int main() { long p = f; return 0; }", "'f' is overloaded"));
+      check(rejects(OV2 "int f_real(int x) { return 0; }", "'f_real' is already defined"));
+    }
+    it("rejects a forward call to a name overloaded later in its unit") {
+      check(rejects("int g() { return f(1); }\nint f(int a) { return 1; }\nint h() { return 0; }\nint main() { return g(); }\n"
+                    "int f(real a) { return 2; }", "'f' is overloaded, define it before the call"));
+    }
+    #undef OV2
+  }
   context("library") {
     meta** defs;
     cord*  cords;
@@ -656,6 +681,19 @@ spec("core") {
       }
       free(defs);
       check(n == 2 && fs == 1 && gs == 1);
+    }
+    it("signs each overload by its symbol, a static one not at all") {
+      libs = lb_relo;
+      check(compiles("struct pt { int x; };\nint f(int a) { return 1; }\nint f(real a, pt* p) { return 2; }\n"
+                     "int f() { return 3; }\nint g(int a) { return 4; }\n"
+                     "static int s(int a) { return 5; }\nstatic int s(long a) { return 6; }\n"));
+      u32i n = self.core.sign(&self, &defs), hit = 0;
+      static const char* const want[] = {"f_int", "f_real_ptp", "f_void", "g"};
+      for(u32i i = 0; i < n; i++)
+        for(u32i k = 0; k < 4; k++)
+          hit += defs[i]->name->size == strlen(want[k]) && !memcmp(defs[i]->name->name, want[k], strlen(want[k]));
+      free(defs);
+      check(n == 4 && hit == 4);
     }
     it("knits the references of the source to its globals at each glob") {
       libs = lb_relo;

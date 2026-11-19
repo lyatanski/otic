@@ -141,7 +141,7 @@ static u32i pe32_dsyms(const mode* self, byte* rec, byte* str, u32i at, u32i ida
   for(u32i i = 0; i < d->nfun + d->nglb; i++) {
     const bool f = i < d->nfun;
     const dwglb* g = f? NULL: d->glbs + i - d->nfun;
-    const item* name = f? d->funs[i].name: g->name;
+    const item* name = f? d->funs[i].func->name: g->name; // a function by its symbol
     if(rec) {
       byte* r = rec + 18 * i;
       u32i  value = f? d->funs[i].lo: g->slot & ZERO? bss + (g->slot & ~ZERO): idat + g->slot;

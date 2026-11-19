@@ -164,7 +164,10 @@ u32i  port(mode* self, meta* x) {
 
 // bind the forward calls from fix `from` on whose function is known, as
 // their unit sees it, or, for C code, its definition: the rest stay pending,
-// or fail when all sources are parsed (last)
+// or fail when all sources are parsed (last). An overloaded name fails: a
+// call picks an overload by the types of its arguments, known only where the
+// overloads are. A function bound by its name is marked: it may not be
+// overloaded after
 void  tie(mode* self, u32i from, bool last) {
   u32i keep = from, unit = self->unit;
   u64i line = home(self)->line;
@@ -173,9 +176,12 @@ void  tie(mode* self, u32i from, bool last) {
     if(!last && (!func || func->kind != call || !func->addr)) { self->link[keep++] = *f; continue; }
     self->unit = f->unit;
     home(self)->line = f->line;
+    if(!f->ext && func && func->kind == call && plural(func, f->name))
+      flaw(self, "'%.*s' is overloaded, define it before the call\n", nick(f->name));
     bind(self, f->at, f->name, func, f->argc, f->ext);
     if(!f->ext && wide(func->type)) // its result was taken as an int
       flaw(self, "'%.*s' does not return an int, define it before the call\n", nick(f->name));
+    if(!f->ext && func->name->unit) ((meta*)func)->fore = 1;
   }
   self->fixs = keep;
   self->unit = unit;
@@ -237,14 +243,15 @@ void  dock(mode* self, u64i at, u64i org) {
 
 // the public definitions of the image, for a library's symbol table: what
 // each spelling means to the other units, when it is a function with a body
-// or a global, defined or weak, and not an import
+// or a global, defined or weak, and not an import. An overload is listed by
+// its symbol (dub), not by the name it shares
 u32i  sign(mode* self, meta*** out) {
   meta** all = NULL;
   u32i   n = 0, cap = 0;
   for(u32i i = 0; i < self->names.size; i++) {
     item* s = self->names.pool[i];
     meta* m = s? find(self, 0, s): NULL;
-    if(!real(m, 1) || heft(m) < 3) continue;
+    if(!real(m, 1) || heft(m) < 3 || !akin(m->name, s)) continue;
     all = swell(self, all, n, &cap, sizeof(meta*), 64);
     all[n++] = m;
   }
