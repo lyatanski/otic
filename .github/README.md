@@ -25,6 +25,7 @@ cl /std:clatest /O3 /Feotic main.c
 
 ```sh
 ./otic hello.ot                 # compile and run in memory
+chmod +x hello.ot && ./hello.ot # or run it as a script, through its #! line
 ./otic -e hello hello.ot        # write an executable for the host
 chmod +x hello && ./hello
 ./otic -a arm8 -f mach -e hello hello.ot   # cross-compile
@@ -54,6 +55,7 @@ int dot(vec* a, vec* b) { return a->x * b->x + a->y * b->y; }
 ```
 
 ```c
+#!/usr/bin/env otic
 // hello.ot
 load "c";                    // a shared library: libc
 int printf(char* f, ...);    // its functions, declared after the load
@@ -121,6 +123,7 @@ int main() {
   its results from a host build of the same source
 
 ```c
+#!/usr/bin/env otic
 load "c";
 int sprintf(char* out, char* fmt, ...);
 
