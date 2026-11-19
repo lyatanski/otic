@@ -131,7 +131,7 @@ int main() {
 load "c";
 int sprintf(char* out, char* fmt, ...);
 
-int sq(int x) { return x * x; }
+int fib(int n) { when (n < 2) return n; return fib(n - 1) + fib(n - 2); }
 
 // returns "int get_<name>() { return <value>; }"
 char* getter(char* name, int value) {
@@ -140,11 +140,12 @@ char* getter(char* name, int value) {
   return text;
 }
 
-int table[#sq(4)];          // 16 elements
+int table[#fib(10)];        // 55 elements
 #getter("x", 3)             // declares get_x
-#getter("y", #sq(5))        // declares get_y, returning 25
+#getter("y", #fib(40))      // declares get_y, returning 102334155: its
+                            // 331 million calls are made once, while compiling
 
-int main() { return get_x() + get_y() + sizeof table / 4; }   // 44
+int main() { return get_x() + sizeof table / 4 + get_y() % 100; }   // 113
 ```
 
 ## Tests
