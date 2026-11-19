@@ -108,6 +108,7 @@ typedef enum { cl_glibc, cl_musl, cl_bionic } clib;
 #define REAL (1 << 26) // flop op flag: a comparison of reals, for flag and cond
 #define RETS 6         // ffi and hail: bit RETS of real when the result is a real
 #define HELD 4         // scratch registers: kept left operands past these are on the stack
+#define SIFT 64        // names sift follows in a function
 // operands of rop that are no register of a local: acc, tmp, the constant n,
 // argument register i (ARG - i)
 enum { ACC = -1, TMP = -2, NUM = -3, ARG = -4 };
@@ -154,7 +155,8 @@ typedef struct {
   void (*flag)(file*, u32i op);                    // acc = 1 when the comparison op of a TEST calc held, else 0
   void (*cond)(file*, u32i op, bool hold);         // branch when it held (hold) or failed, patched by back
   // a left operand in acc kept while the right one is computed: pushed, with
-  // room for lift to make it a move to scratch k when no call came between
+  // room for lift to make it a move to scratch k when no call came between,
+  // or, k from HELD up, to the register of locals k - HELD across calls
   void (*keep)(file*);
   void (*lift)(const file*, byte* keep, u32i k);
   void (*take)(file*, u32i k);                     // tmp = acc, acc = scratch k
@@ -423,8 +425,10 @@ struct mode {
   s32i  deep;      // frame bytes the function needs
   s32i  lits;      // frame bytes the compound literals of the block keep
   u32i  regn;      // registers the function keeps locals in, saved in its first slots
+  u32i  lend;      // the first of them lent to left operands kept across calls, up to regn
   u32i  busy;      // bit r: register r holds a local in scope
-  item* pick[16];  // the names of the locals they go to
+  item* pick[SIFT]; // the names of the locals given a register
+  u32i  picks;
   lexed* lexes;    // the tokens of the body being compiled, lexed by sift: chop replays them
   u32i  lexn, lexc, lexi, lexu; // their count and room, the next one, their unit
   meta* func;      // the function being compiled

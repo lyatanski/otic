@@ -355,22 +355,6 @@ void ia64_pull(file* text) {
   ia64_pop(text, rax);
 }
 
-// scratch k is r8 + k: SysV argument and C call registers, free between calls
-void ia64_keep(file* text) {
-  ia64_push(text, rax);
-  iw(text, 0x9066);                             // xchg ax, ax: room for lift
-}
-
-void ia64_lift(const file* text, byte* keep, u32i k) {
-  (void)text;
-  keep[0] = 0x49; keep[1] = 0x89; keep[2] = modrm(.mod=3, .reg=eax.reg.enc, .rm=k); // mov r8+k, rax
-}
-
-void ia64_take(file* text, u32i k) {
-  ia64_swap(text);
-  ib(text, 0x4c); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=k, .rm=eax.reg.enc)); // mov rax, r8+k
-}
-
 void ia64_when(file* text, bool nz) {
   ib(text, rex(.w=1)); iw(text, 0xc085);      // test rax, rax
   iw(text, 0x840f + (nz << 8));               // je/jne rel32, patched by mend
@@ -450,6 +434,27 @@ void ia64_pass(file* text, u32i i) {
 
 // the registers of locals: kept by a function called, in SysV and Win64
 static const byte ia64_kept[] = { 3, 12, 13, 14, 15 }; // rbx r12 r13 r14 r15
+
+// scratch k is r8 + k: SysV argument and C call registers, free between
+// calls; from HELD up, the register of locals k - HELD, kept by calls
+static byte ia64_held(u32i k) { return k < HELD? 8 + k: ia64_kept[k - HELD]; }
+
+void ia64_keep(file* text) {
+  ia64_push(text, rax);
+  iw(text, 0x9066);                             // xchg ax, ax: room for lift
+}
+
+void ia64_lift(const file* text, byte* keep, u32i k) {
+  (void)text;
+  byte r = ia64_held(k);
+  keep[0] = rex(.w=1, .b=r > 7); keep[1] = 0x89; keep[2] = modrm(.mod=3, .reg=eax.reg.enc, .rm=r & 7); // mov r, rax
+}
+
+void ia64_take(file* text, u32i k) {
+  byte r = ia64_held(k);
+  ia64_swap(text);
+  ib(text, rex(.w=1, .r=r > 7)); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=r & 7, .rm=eax.reg.enc)); // mov rax, r
+}
 
 // the machine register of an operand of rop
 static byte ia64_reg(s32i x) {

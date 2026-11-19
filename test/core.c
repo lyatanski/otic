@@ -107,8 +107,9 @@ static void mock_crt(file* t, const byte* main, const byte* start, clib c) {
 static void mock_flag(file* t, u32i op)                { char o[4]; note(t, op_flag, " %s", mock_op(op, o)); }
 static void mock_cond(file* t, u32i op, bool hold)     { char o[4]; note(t, op_cond, " %s%s", hold? "": "!", mock_op(op, o)); }
 static void mock_keep(file* t)                         { note(t, op_keep, ""); }
-static void mock_lift(const file* t, byte* keep, u32i k) { note(NULL, op_lift, " %s %u", at(t, keep), k); }
-static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, " %u", k); }
+// scratch k, or from HELD up the register of a local r(k - HELD)
+static void mock_lift(const file* t, byte* keep, u32i k) { note(NULL, op_lift, k < HELD? " %s %u": " %s r%u", at(t, keep), k < HELD? k: k - HELD); }
+static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, k < HELD? " %u": " r%u", k < HELD? k: k - HELD); }
 static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
 static void mock_hail(file* t, osys os, u32i argc, u32i real) { (void)t; (void)os; (void)argc; (void)real; }
 
@@ -513,6 +514,55 @@ spec("core") {
       regs = 1;
       check(compiles("int main() { { int a = 1; a += 1; a += 1; } { long a = 5; a += 1; a += 1; } return 0; }"));
       check(has("rop r0 = 1, rop r0 + 1, rop r0 + 1, rop.w r0 = 5, rop.w r0 + 1, rop.w r0 + 1"));
+    }
+    it("shares a register between locals of other names in sibling scopes") {
+      regs = 1;
+      check(compiles("int main() { { int a = 1; a += 1; a += 1; } { int b = 5; b += 1; b += 1; } return 0; }"));
+      check(has("rop r0 = 1, rop r0 + 1, rop r0 + 1, rop r0 = 5, rop r0 + 1, rop r0 + 1") && calls[op_stow] == 3);
+    }
+    it("gives locals in scope together registers of their own") {
+      regs = 2;
+      check(compiles("int main() { int a = 1; a += 1; { int b = 5; b += a; b += 1; a += b; } return a; }"));
+      check(has("rop r0 = 1, rop r0 + 1, rop r1 = 5, rop r1 + r0, rop r1 + 1, rop r0 + r1"));
+      regs = 1;
+      check(compiles("int f(int n) { { int b = 5; b += n; b += 1; n += b; } return n; } int main() { return 0; }"));
+      check(has("rop r0 = a0,") && has("move 5, stor -16:4,"));
+    }
+    it("frees the register of a sibling scope for the next one only") {
+      regs = 2;
+      check(compiles("int main() { int s = 0; s += 1; { int a = 1; a += 1; s += a; } { int b = 2; b += 1; s += b; } return s; }"));
+      check(has("rop r1 = 1, rop r1 + 1, rop r0 + r1, rop r1 = 2, rop r1 + 1, rop r0 + r1") && calls[op_stow] == 6);
+    }
+    it("lends a register left over to a left operand kept across a call in a loop") {
+      regs = 3;
+      check(compiles("int f(int n) { int s = 0; while(n) { s += f(n - 1) * f(n - 2); n -= 1; } return s; } int main() { return 0; }"));
+      check(has("open, stow r0 > -8, stow r1 > -16, stow r2 > -24, rop r0 = a0, rop r1 = 0,"));
+      check(has("link dial open, keep, rop acc = r0, calc - 2") && has("link dial open, lift keep r2, take r2, calc *, rop r1 + acc"));
+      check(calls[op_pull] == 0);
+      check(has("stow r0 < -8, stow r1 < -16, stow r2 < -24, done"));
+    }
+    it("keeps a left operand on the stack across a call out of a loop, or when no register is left") {
+      regs = 2;
+      check(compiles("int fib(int n) { when(n < 2) return n; return fib(n - 1) + fib(n - 2); } int main() { return 0; }"));
+      check(has("link dial open, keep,") && has("link dial open, pull, calc +") && calls[op_lift] == 0);
+      check(calls[op_stow] == 4); // r0 alone
+      regs = 2;
+      check(compiles("int f(int n) { int s = 0; while(n) { s += f(n - 1) * f(n - 2); n -= 1; } return s; } int main() { return 0; }"));
+      check(has("link dial open, pull, calc *") && calls[op_lift] == 0);
+    }
+    it("lends no register to a function without a call after a computed left operand") {
+      regs = 3;
+      check(compiles("int f(int n) { when(n < 1) return 1; return n * f(n - 1) + 1; } int main() { return 0; }"));
+      check(calls[op_stow] == 4); // r0 alone: saved, and restored at each of 3 returns
+      regs = 3;
+      check(compiles("int f(int n) { int a = n + 1; a += 1; a += 1; return f(a) + (a + 2) * 3; } int main() { return 0; }"));
+      check(calls[op_stow] == 3 && calls[op_lift] == 1 && has("lift keep 0, take 0"));
+    }
+    it("lends a register for nesting 0 only, when one is left") {
+      regs = 3;
+      check(compiles("int g(int x) { return x; }\n"
+                     "int f(int n) { while(n) return g(n) + g(n + 1) * g(n + 2); return 0; } int main() { return 0; }"));
+      check(has("lift keep r1, take r1, calc +") && calls[op_pull] == 1 && calls[op_lift] == 1);
     }
     it("compares and computes between registers where they are") {
       regs = 2;

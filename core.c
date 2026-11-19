@@ -938,8 +938,8 @@ yield sharp(mode* self) {
     return (yield){.type = t, .text = text? (char*)"": NULL};
   }
 
-  struct { s32i slot, deep, lits; u32i busy, regn, held, dials; } was =
-    {self->slot, self->deep, self->lits, self->busy, self->regn, self->held, self->dials};
+  struct { s32i slot, deep, lits; u32i busy, regn, lend, held, dials; } was =
+    {self->slot, self->deep, self->lits, self->busy, self->regn, self->lend, self->held, self->dials};
   byte* mark = self->text->body;
   u32i  fixs = self->fixs, imps = self->impn, size = (u32i)(self->data->body - self->data->head);
   u64i  bss  = self->zero;
@@ -949,7 +949,7 @@ yield sharp(mode* self) {
     self->hidden = 1;
   }
   self->slot = self->deep = self->lits = 0;
-  self->busy = self->regn = self->held = 0;
+  self->busy = self->regn = self->lend = self->held = 0;
   emit(self, hail, self->form.os, 0, (u32i)real << RETS);
   byte* addr = self->text->body;
   emit(self, open);
@@ -993,7 +993,7 @@ yield sharp(mode* self) {
   for(u32i i = imps; i < self->impn; i++) self->imps[i]->slot = 0;
   self->impn = imps;
   self->slot = was.slot, self->deep = was.deep, self->lits = was.lits;
-  self->busy = was.busy, self->regn = was.regn, self->held = was.held, self->dials = was.dials;
+  self->busy = was.busy, self->regn = was.regn, self->lend = was.lend, self->held = was.held, self->dials = was.dials;
   if(hide) {
     for(u32i i = self->frame; i < self->top; i++) { meta* x = pin(self->pile, i); x->name->data = x; }
     self->hidden = 0;
@@ -1145,12 +1145,16 @@ void  grow(mode* self, oper x, s32i scale, u32i w) {
 // a scale that step takes
 #define steps(n) ((n) == 1 || (n) == 2 || (n) == 4 || (n) == 8)
 
-// y in acc moved to tmp and the left operand x of a pair back in acc: from
-// scratch k when it was kept there, else from the stack, else loaded
+// y in acc moved to tmp and the left operand x of a pair back in acc, kept
+// at nesting k: from scratch k when no call came between, else from the
+// register of locals lent to that nesting (sift), else from the stack, else
+// loaded
 oper  rest(mode* self, oper x, u32i k, kept mark) {
-  if(x.kind == vacc && k < HELD && self->dials == mark.dials) {
-    emit(self, lift, mark.at, k);
-    emit(self, take, k);
+  bool  calm = self->dials == mark.dials;
+  if(x.kind == vacc && ((calm && k < HELD) || self->lend + k < self->regn)) {
+    u32i s = calm && k < HELD? k: HELD + self->lend + k;
+    emit(self, lift, mark.at, s);
+    emit(self, take, s);
   }
   else if(x.kind == vacc) emit(self, pull);
   else { emit(self, swap); x = load(self, x); }
@@ -1816,8 +1820,9 @@ meta* bulk(mode* self, item* name) {
 
 void  stmt(mode* self);
 
-#define SIFT  64         // names sift follows in a function
 #define NEVER (1u << 31) // item.pick of one of them: its locals stay in the frame
+
+#define NEST  32         // brace depths sift tells apart: deeper ones count as this one
 
 // name among the names sifted: its pick, 1 plus its uses; 0 when there are
 // too many
@@ -1826,15 +1831,37 @@ static u32i  sown(item** c, u32i* n, item* name) {
   return name->pick;
 }
 
+// a local of name c[j] declared at depth d: in scope with every name whose
+// local is (live[i]: those declared at depth i, in scope until its block
+// ends), they cannot share a register (clash)
+static void  meet(item* const* c, u32i n, const item* name, u32i d, u64i* clash, u64i* live) {
+  u32i  j = 0;
+  while(j < n && c[j] != name) j++;
+  if(j == n) return;
+  u64i  in = 0;
+  if(d >= NEST) d = NEST - 1;
+  for(u32i i = 0; i <= d; i++) in |= live[i];
+  in &= ~(1ull << j);
+  clash[j] |= in;
+  for(u32i i = 0; i < n; i++) if(in >> i & 1) clash[i] |= 1ull << j;
+  live[d] |= 1ull << j;
+}
+
 // the prescan of a function at the { of its body, its parameters in scope
 // from top: the tokens up to the matching } are lexed once and walked, not
 // parsed, and the lexer put back: chop replays them (mode.lexes). It follows the names of the numbers and pointers declared
 // (the parameters; a name after a type that starts a statement and its *s,
 // and after a , of that statement): each use counts, 8 times per loop
 // around it, and the most used names, of 3 uses at least, get a register
-// each (item.pick), which the locals so named take (stay). A name whose
-// address is taken anywhere in the body, as &name or within &(...), gets
-// none: a use before the code for it exists is what a single pass cannot see
+// each (item.pick), which the locals so named take (stay). Names whose
+// locals are never in scope together, as in sibling blocks, may share one.
+// A name whose address is taken anywhere in the body, as &name or within
+// &(...), gets none: a use before the code for it exists is what a single
+// pass cannot see. When a call in a loop may come while a computed left
+// operand is kept (s += f(i) + f(i + 1)), a register left over is lent to
+// kept operands (mode.lend), which a call keeps: saved once, it saves a push
+// and a pop each time round. Out of a loop the stack is cheaper: the save
+// is paid on every path, a return before the call too (fib)
 void  sift(mode* self, u32i top) {
   if(!self->arch.regs || self->debug) return; // -g keeps every local in the frame, where a debugger finds it
   unit* u = home(self);
@@ -1850,11 +1877,19 @@ void  sift(mode* self, u32i top) {
   u32i  n = 0, depth = 0, loops = 0, end[8], cond = 0, deep = 0, p = 0; // p: the token before
   s32i  lvl = 0; // brackets open in the declaration
   bool  ok = 1, arm = 0, stars = 0, amp = 0; // arm: a declared name may follow; amp: a unary & came before
+  u64i  clash[SIFT] = {0}, live[NEST] = {0};
+  // in a loop, a left operand computed in the statement is kept for its
+  // right one (hold); prec: the rank of the operator that the operand at
+  // hand ends, NEST above any for a unary one or ->, 0 when it is a lone
+  // name or number
+  u32i  prec = 0;
+  bool  hold = 0, lend = 0; // lend: a call while one is held
   for(u32i i = top; ok && i < self->top; i++) {
     const meta* x = pin(self->pile, i);
     if(!(ok = sown(c, &n, x->name))) break;
     x->name->pick += 1;
     if(!fits(self, x->type)) x->name->pick |= NEVER;
+    meet(c, n, x->name, 0, clash, live); // in scope through the body
   }
   do {
     u32i  k = u->talk.kind, w = 1u << 3 * (loops < 3? loops: 3);
@@ -1866,7 +1901,7 @@ void  sift(mode* self, u32i top) {
     decl = NULL;
     depth += (k == '{') - (k == '}');
     if(cond) { cond += (k == '(') - (k == ')'); if(cond == 1) cond = 0, shut = 1; }
-    else if(it && (it == loop || it == when)) { cond = 1; if(it == loop && loops < 8) end[loops++] = depth; }
+    else if(it && (it == loop || it == when)) { cond = 1; if(it == loop && loops < 8) end[loops++] = depth, hold = 0, prec = 0; }
     else if(k == ';' || k == '}') while(loops && end[loops - 1] == depth) loops--;
 
     const meta* m = it && !it->pick && !cond && it != ret && (p == '{' || p == '}' || p == ';')? find(self, self->unit, it): NULL;
@@ -1875,7 +1910,7 @@ void  sift(mode* self, u32i top) {
       if(arm || amp || deep) { // declared, or its address is taken
         if(!(ok = sown(c, &n, it))) break;
         if(amp || deep || !(stars || fits(self, of))) it->pick |= NEVER;
-        if(arm) decl = it;
+        if(arm) { decl = it; meet(c, n, it, depth, clash, live); }
       }
       if(it->pick && (it->pick & ~NEVER) < 1u << 28) it->pick += w;
       arm = 0;
@@ -1888,9 +1923,32 @@ void  sift(mode* self, u32i top) {
       lvl += (k == '(' || k == '[' || k == '{') - (k == ')' || k == ']' || k == '}');
       arm = 0;
     }
+    if(k == '}' && depth + 1 < NEST) live[depth + 1] = 0; // the locals of the block it ends leave scope
     if(deep) deep += (k == '(') - (k == ')');
     else if(amp && k == '(') deep = 1;
     amp = k == '&' && !val;
+    if(loops) switch(k) {
+      case '(':
+        if(p == ttag && last != loop && last != when && last != len && last != ret) lend |= hold; // a call
+        // fallthrough
+      case '[': prec = 0; break;
+      case ')': if(shut) hold = 0, prec = 0; break;
+      case '#': hold = 0; break; // its call runs while compiling
+      case ';': case '{': case '}': case ',': case '=': case tokd('&', '&'): case tokd('|', '|'):
+      case tokd('+', '='): case tokd('-', '='): case tokd('*', '='): case tokd('/', '='): case tokd('%', '='):
+      case tokd('&', '='): case tokd('|', '='): case tokd('^', '='): case tokd('<', '<', '='): case tokd('>', '>', '='):
+        hold = 0, prec = 0; break;
+      case tokd('-', '>'): case '!': case '~': prec = NEST; break;
+      case '*': case '-': case '&':
+        if(!val) { prec = NEST; break; } // unary
+        // fallthrough
+      case '+': case '/': case '%': case '|': case '^': case tokd('<', '<'): case tokd('>', '>'):
+      case '<': case '>': case tokd('<', '='): case tokd('>', '='): case tokd('=', '='): case tokd('!', '='): {
+        u32i r = (u32i)rank((int)k); // binary: its left operand is computed unless a lone name or number
+        if(p == ')' || p == ']' || prec >= r) hold = 1;
+        prec = r;
+      }
+    }
     if(it != tag || !it) { p = shut? ';': k; last = it; } // struct name is a type as name is
     byte* from = u->code->body;
     lex(self);
@@ -1900,15 +1958,25 @@ void  sift(mode* self, u32i top) {
   u->code->body = at, u->line = line, u->talk = talk;
   self->lexi = 0, self->lexu = self->unit; // chop replays the tokens
 
-  while(ok && self->regn < self->arch.regs) {
-    u32i b = n;
-    for(u32i j = 0; j < n; j++)
-      if(c[j]->pick > 3 && c[j]->pick < NEVER && (b == n || c[j]->pick > c[b]->pick)) b = j;
-    if(b == n) break;
-    (self->pick[self->regn++] = c[b])->pick = 0;
+  // the most used first, each to the lowest register none it clashes with has
+  u64i  has[16] = {0}; // the names given register r
+  u32i  e[SIFT], m = 0;
+  for(u32i j = 0; ok && j < n; j++) if(c[j]->pick > 3 && c[j]->pick < NEVER) e[m++] = j;
+  while(m) {
+    u32i b = 0, r = 0;
+    for(u32i i = 1; i < m; i++) if(c[e[i]]->pick > c[e[b]]->pick) b = i;
+    u32i j = e[b];
+    e[b] = e[--m];
+    while(r < self->arch.regs && clash[j] & has[r]) r++;
+    if(r == self->arch.regs) continue;
+    has[r] |= 1ull << j;
+    if(self->regn <= r) self->regn = r + 1;
   }
-  while(n) c[--n]->pick = 0;
-  for(u32i r = 0; r < self->regn; r++) self->pick[r]->pick = r + 1;
+  for(u32i j = 0; j < n; j++) c[j]->pick = 0;
+  for(u32i r = 0; r < self->regn; r++)
+    for(u32i j = 0; j < n; j++) if(has[r] >> j & 1) (self->pick[self->picks++] = c[j])->pick = r + 1;
+  self->lend = self->regn;
+  if(lend && self->regn < self->arch.regs) self->regn++;
 }
 
 // the registers of locals back as the caller had them, from the slots they
@@ -2146,7 +2214,8 @@ void  decl(mode* self) {
     if(lots) dub(self, func, NULL);
     bury(self, top);
     self->frame = ~0u;
-    while(self->regn) self->pick[--self->regn]->pick = 0;
+    while(self->picks) self->pick[--self->picks]->pick = 0;
+    self->regn = self->lend = 0;
     reel(self); // between functions: members go after text
     return;
   }

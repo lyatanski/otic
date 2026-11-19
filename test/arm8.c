@@ -109,9 +109,15 @@ spec("arm8") {
       check(emits("e9 03 00 aa", k = here, e.keep(t), e.lift(t, k, 0))); // mov x9, x0
       check(emits("ec 03 00 aa", k = here, e.keep(t), e.lift(t, k, 3))); // mov x12, x0
     }
+    it("lifts a keep into a move to a register of locals x19 + k - HELD from HELD up") {
+      byte* k;
+      check(emits("f3 03 00 aa", k = here, e.keep(t), e.lift(t, k, HELD)));     // mov x19, x0
+      check(emits("f4 03 00 aa", k = here, e.keep(t), e.lift(t, k, HELD + 1))); // mov x20, x0
+    }
     it("takes a scratch into acc, its value to tmp") {
       check(emits("e1 03 00 aa e0 03 09 aa", e.take(t, 0))); // mov x1, x0; mov x0, x9
       check(emits("e1 03 00 aa e0 03 0c aa", e.take(t, 3))); // mov x1, x0; mov x0, x12
+      check(emits("e1 03 00 aa e0 03 14 aa", e.take(t, HELD + 1))); // mov x1, x0; mov x0, x20
     }
   }
 

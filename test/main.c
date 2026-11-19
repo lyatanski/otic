@@ -799,6 +799,11 @@ spec(TAG) {
                   "int n = 5; long m = 3; char* p = \"x\";\nwhile(n) { s += 1; n -= 1; }\n"
                   "while(m) { s += 2; m -= 1; }\nwhen(p) s += 1;\np = 0;\nwhen(p) s += 100; else s += 2;\n"
                   "when(!n) s += 4;\nwhen(n || m) s += 100;\nwhen(!n && !m) s += 8;\nreturn s & 127;\n}\n");
+    it("shares registers between the locals of sibling blocks")
+      here(98, "int main() {\nint s = 0, i = 0;\nwhile(i < 4) {\n"
+               "{ int a = i, b = 2, c = 3, d = 1; while(a < 20) { a += b; b += c; d += 1; } s += a + d; }\n"
+               "{ long e = i, f = 1, g = 5, h = 2; while(e < 30) { e += f * g; f += 1; h += e; } s += e + h; }\n"
+               "i += 1;\n}\nreturn s & 127;\n}\n");
     it("keeps its registers across a call into C")
       here(35, "load \"c\";\nlong labs(long n);\nint main() {\nint i = 0; long s = 0;\n"
                "while(i < 10) { s += labs(i - 5); i += 1; }\nreturn s + i;\n}\n");
@@ -826,6 +831,11 @@ spec(TAG) {
     it("keeps partial results across calls")
       expect(37, "int sq(int x) { return x * x; }\n"
                  "int main() { return sq(3) + sq(4) * 2 - sq(2); }\n");
+    it("keeps partial results across calls in a loop in a register of locals, nested ones on the stack")
+      expect(62, "int sq(int x) { return x * x; }\n"
+                  "int f(int n) { int s = 0; while(n) { s += sq(n) + sq(n + 1) * sq(n - 1) - (sq(n) - sq(2)); n -= 1; } return s; }\n"
+                  "int main() { return f(3) - f(2) * 2 + fib(10) / 5; }\n"
+                  "int fib(int n) { when(n < 2) return n; return fib(n - 1) + fib(n - 2); }\n");
     it("nests calls in arguments")
       expect(14, "int sq(int x) { return x * x; }\nint add(int a, int b) { return a + b; }\n"
                  "int main() { return add(sq(2), add(1, sq(3))); }\n");

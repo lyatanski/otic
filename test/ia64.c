@@ -93,9 +93,16 @@ spec("ia64") {
       check(emits("49 89 c0", k = here, e.keep(t), e.lift(t, k, 0))); // mov r8, rax
       check(emits("49 89 c3", k = here, e.keep(t), e.lift(t, k, 3))); // mov r11, rax
     }
+    it("lifts a keep into a move to a register of locals from HELD up") {
+      byte* k;
+      check(emits("48 89 c3", k = here, e.keep(t), e.lift(t, k, HELD)));     // mov rbx, rax
+      check(emits("49 89 c4", k = here, e.keep(t), e.lift(t, k, HELD + 1))); // mov r12, rax
+    }
     it("takes a scratch into acc, its value to tmp") {
       check(emits("48 89 c1 4c 89 c0", e.take(t, 0)));  // mov rcx, rax; mov rax, r8
       check(emits("48 89 c1 4c 89 d8", e.take(t, 3)));  // mov rcx, rax; mov rax, r11
+      check(emits("48 89 c1 48 89 d8", e.take(t, HELD))); // mov rcx, rax; mov rax, rbx
+      check(emits("48 89 c1 4c 89 e0", e.take(t, HELD + 1))); // mov rcx, rax; mov rax, r12
     }
   }
 

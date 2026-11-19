@@ -295,19 +295,22 @@ void arm8_pull(file* data) {
   arm8_put(data, 0xf84107e0);                                       // ldr x0, [sp], #16
 }
 
-// scratch k is x9 + k: temporaries, free between calls
+// scratch k is x9 + k: temporaries, free between calls; from HELD up, the
+// register of locals k - HELD, x19 + k - HELD, kept by calls
+static int arm8_held(u32i k) { return k < HELD? 9 + (int)k: r19 + (int)(k - HELD); }
+
 void arm8_keep(file* data) {
   arm8_save(data);
 }
 
 void arm8_lift(const file* data, byte* keep, u32i k) {
   (void)data;
-  *(uint32_t*)keep = X | I3510_ORR | r0 << 16 | 31 << 5 | (9 + k); // mov x9+k, x0
+  *(uint32_t*)keep = X | I3510_ORR | r0 << 16 | 31 << 5 | arm8_held(k); // mov xk, x0
 }
 
 void arm8_take(file* data, u32i k) {
   arm8_swap(data);
-  arm8_put(data, X | I3510_ORR | (9 + k) << 16 | 31 << 5 | r0);    // mov x0, x9+k
+  arm8_put(data, X | I3510_ORR | arm8_held(k) << 16 | 31 << 5 | r0); // mov x0, xk
 }
 
 void arm8_cast(file* data, bool wide) {
