@@ -278,21 +278,58 @@ spec("arm8") {
   }
 
   context("reals") {
-    it("computes in d0 and d1, back in x0") {
-      // fmov d0, x0; fmov d1, x1; fadd d0, d0, d1; fmov x0, d0
-      check(emits("00 00 67 9e 21 00 67 9e 00 28 61 1e 00 00 66 9e", e.flop(t, '+')));
-      check(emits("00 00 67 9e 21 00 67 9e 00 18 61 1e 00 00 66 9e", e.flop(t, '/'))); // fdiv
+    it("computes in d0, d1 and the registers of real locals, d8 up") {
+      check(emits("60 41 60 1e", e.fop(t, '=', ACC, 3)));         // fmov d0, d11
+      check(emits("2f 40 60 1e", e.fop(t, '=', 7, TMP)));         // fmov d15, d1
+      check(emits("", e.fop(t, '=', 2, 2)));                      // a move to itself is none
+      check(emits("00 28 61 1e", e.fop(t, '+', ACC, TMP)));       // fadd d0, d0, d1
+      check(emits("08 39 60 1e", e.fop(t, '-', 0, ACC)));         // fsub d8, d8, d0
+      check(emits("00 08 6d 1e", e.fop(t, '*', ACC, 5)));         // fmul d0, d0, d13
+      check(emits("ef 19 6f 1e", e.fop(t, '/', 7, 7)));           // fdiv d15, d15, d15
     }
     it("compares with fcmp, < and <= as mi and ls, which a NaN fails") {
-      // ...; fcmp d0, d1; cset w0, ls
-      check(emits("00 00 67 9e 21 00 67 9e 00 20 61 1e e0 87 9f 1a", e.flop(t, tokd('<', '=') | REAL)));
+      check(emits("00 20 6a 1e", e.fop(t, '<' | REAL | TEST, ACC, 2)));                 // fcmp d0, d10
+      check(emits("00 20 61 1e e0 87 9f 1a", e.fop(t, tokd('<', '=') | REAL, ACC, TMP))); // fcmp d0, d1; cset w0, ls
       check(emits("04 00 00 54 1f 20 03 d5", e.cond(t, '<' | REAL, 1)));  // b.mi; nop
       check(emits("05 00 00 54 1f 20 03 d5", e.cond(t, '<' | REAL, 0)));  // b.pl; nop
     }
-    it("turns an int or a long into a real, and a real into a long") {
-      check(emits("00 00 62 1e 00 00 66 9e", e.turn(t, 1, 0)));  // scvtf d0, w0; fmov x0, d0
-      check(emits("00 00 62 9e 00 00 66 9e", e.turn(t, 1, 1)));  // scvtf d0, x0; fmov x0, d0
-      check(emits("00 00 67 9e 00 00 78 9e", e.turn(t, 0, 1)));  // fmov d0, x0; fcvtzs x0, d0
+    it("makes 0.0 with movi, another real through x16") {
+      check(emits("00 e4 00 2f", e.fimm(t, ACC, 0)));             // movi d0, #0
+      check(emits("0c e4 00 2f", e.fimm(t, 4, 0)));               // movi d12, #0
+      check(emits("90 00 e8 d2 01 02 67 9e", e.fimm(t, TMP, 0x4004000000000000ull))); // mov x16, #0x4004 << 48; fmov d1, x16
+      // mov x16, #0x2d18; movk x16, #0x5444, lsl 16; ... #0x21fb, lsl 32; ... #0x4009, lsl 48; fmov d14, x16
+      check(emits("10 a3 85 d2 90 88 aa f2 70 3f c4 f2 30 01 e8 f2 0e 02 67 9e", e.fimm(t, 6, 0x400921fb54442d18ull)));
+    }
+    it("moves a real's bits to and from the integer registers") {
+      check(emits("00 00 67 9e", e.fbit(t, 1, ACC, ACC)));        // fmov d0, x0
+      check(emits("00 00 66 9e", e.fbit(t, 0, ACC, ACC)));        // fmov x0, d0
+      check(emits("0a 00 67 9e", e.fbit(t, 1, 2, ARG)));          // fmov d10, x0
+      check(emits("e4 01 66 9e", e.fbit(t, 0, 7, ARG - 4)));      // fmov x4, d15
+    }
+    it("loads and stores a real in the frame and through x0") {
+      check(emits("a0 83 5f fc", e.fslot(t, 0, ACC, -8)));                 // ldur d0, [x29, #-8]
+      check(emits("ad 03 1f fc", e.fslot(t, 1, 5, -16)));                  // stur d13, [x29, #-16]
+      check(emits("b0 b3 04 d1 00 02 00 fc", e.fslot(t, 1, ACC, -300)));   // sub x16, x29, #300; stur d0, [x16]
+      check(emits("00 00 40 fc", e.fat(t, 0, ACC)));                       // ldur d0, [x0]
+      check(emits("0b 00 00 fc", e.fat(t, 1, 3)));                         // stur d11, [x0]
+    }
+    it("saves the low 8 bytes of the register of a real local, which AAPCS64 keeps") {
+      check(emits("a8 03 1f fc", e.fstow(t, 0, -16, 0, 8)));               // stur d8, [x29, #-16]
+      check(emits("af 03 5e fc", e.fstow(t, 7, -32, 1, 8)));               // ldur d15, [x29, #-32]
+    }
+    it("keeps d0 pushed, lifted to d16 up or to the register of a local") {
+      byte* k;
+      check(emits("e0 0f 1f fc", e.fkeep(t)));                    // str d0, [sp, #-16]!
+      check(emits("13 40 60 1e", k = here, e.fkeep(t), e.flift(t, k, 3)));        // fmov d19, d0
+      check(emits("14 00 66 9e", k = here, e.fkeep(t), e.flift(t, k, HELD + 1))); // fmov x20, d0
+      check(emits("01 40 60 1e 40 42 60 1e", e.ftake(t, 2)));     // fmov d1, d0; fmov d0, d18
+      check(emits("01 40 60 1e 60 02 67 9e", e.ftake(t, HELD)));  // fmov d1, d0; fmov d0, x19
+      check(emits("01 40 60 1e e0 07 41 fc", e.fpull(t)));        // fmov d1, d0; ldr d0, [sp], #16
+    }
+    it("turns an int or a long into a real in d0, and a real into a long") {
+      check(emits("00 00 62 1e", e.turn(t, 1, 0)));  // scvtf d0, w0
+      check(emits("00 00 62 9e", e.turn(t, 1, 1)));  // scvtf d0, x0
+      check(emits("00 00 78 9e", e.turn(t, 0, 1)));  // fcvtzs x0, d0
     }
     it("passes reals in d registers, and takes a real result from d0") {
       // ldr x16, [x0]; ldr x1, [sp], #16; ldr d0, [sp], #16; ldr x0, [sp], #16; blr x16; fmov x0, d0

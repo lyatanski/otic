@@ -143,7 +143,7 @@ spec("mach") {
       d = (mach_dylib*)((byte*)d + d->size);
       check(d->cmd == lc_dylib && !strcmp((char*)d + d->name, "/opt/libq.dylib"));
       check((byte*)d + d->size == out->head + h->code.off - sizeof(mach_blob));
-      mach_info* info = cmd_(out, lc_dyld_info);
+      mach_info* info = cmd_(out, (u32i)lc_dyld_info);
       byte* b = out->head + info->bind;
       check(info && info->bind == h->link.off && !info->rebase && !info->trie);
       // pointers; libSystem _puts at 0x78 (16 + 104), libz _crc32, the third dylib's _q, then _environ
@@ -156,7 +156,7 @@ spec("mach") {
       cord_((cord){.site = {NULL, 8}, .aim = {NULL, 0}, .kind = cd_wide});
       cord_((cord){.site = {NULL, 0}, .name = named("w"), .kind = cd_wide, .weak = 1});
       check((out = packed(mach)) && (h = (mach_head*)out->head) && h->mh.ncmds == 11 + 1);
-      mach_info* info = cmd_(out, lc_dyld_info);
+      mach_info* info = cmd_(out, (u32i)lc_dyld_info);
       check(info && info->rebase == h->link.off && info->nrebase == 5 && !info->bind && !info->nbind);
       check(bytes(out->head + info->rebase, "11 22 08 51 00")); // pointers: __DATA at 8, once
       check(((mach_blob*)cmd_(out, lc_signature))->off == ((info->rebase + 8 + 15) & -16));
@@ -167,7 +167,7 @@ spec("mach") {
       ours.impn = 1;
       cord_((cord){.site = {NULL, 0x88}, .aim = {NULL, 0}, .kind = cd_wide});
       check((out = packed(mach)) && (h = (mach_head*)out->head));
-      mach_info* info = cmd_(out, lc_dyld_info);
+      mach_info* info = cmd_(out, (u32i)lc_dyld_info);
       check(info->rebase == h->link.off && info->bind == info->rebase + 8);
       check(bytes(out->head + info->rebase, "11 22 88 01 51 00") && bytes(out->head + info->bind, "51 11 40"));
     }

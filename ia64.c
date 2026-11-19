@@ -296,26 +296,35 @@ void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
 
 // movq xmm<x>, r64 (in) or movq r64, xmm<x>
 static void ia64_movq(file* text, bool in, byte x, byte r) {
-  ib(text, 0x66); ib(text, rex(.w=1, .b=r > 7)); iw(text, in? 0x6e0f: 0x7e0f);
-  ib(text, modrm(.mod=3, .reg=x, .rm=r & 7));
+  ib(text, 0x66); ib(text, rex(.w=1, .r=x > 7, .b=r > 7)); iw(text, in? 0x6e0f: 0x7e0f);
+  ib(text, modrm(.mod=3, .reg=x & 7, .rm=r & 7));
 }
 
-// xmm0 = rax, xmm1 = rcx, then xmm0 op= xmm1 and rax = xmm0, or a comparison:
-// == and != leave ZF clear when equal and ordered (setnp al, sete cl, and cl, al)
-void ia64_flop(file* text, u32i op) {
+// an SSE instruction on two xmm registers: its prefix (0 for none), the REX
+// they need, 0f code
+static void ia64_sse(file* text, byte pre, byte code, byte reg, byte rm) {
+  if(pre) ib(text, pre);
+  if(reg > 7 || rm > 7) ib(text, rex(.r=reg > 7, .b=rm > 7));
+  ib(text, 0x0f); ib(text, code); ib(text, modrm(.mod=3, .reg=reg & 7, .rm=rm & 7));
+}
+
+// the xmm register of a real operand: facc xmm0, ftmp xmm1, the register of
+// real local r xmm8 + r. Real scratch k is xmm2 + k, which Win64 does not keep
+static byte ia64_xmm(s32i f) { return f >= 0? (byte)(8 + f): f == ACC? 0: 1; }
+
+// to op= by: movapd, addsd subsd mulsd divsd, or ucomisd, which compares <
+// and <= the other way round. == and != leave ZF clear when equal and
+// ordered (setnp al, sete cl, and cl, al)
+void ia64_fop(file* text, u32i op, s32i to, s32i by) {
   u32i o = op & ~(WIDE | TEST | REAL);
-  ia64_movq(text, 1, 0, 0);
-  ia64_movq(text, 1, 1, 1);
+  byte d = ia64_xmm(to), s = ia64_xmm(by);
+  if(o == '=') { if(d != s) ia64_sse(text, 0x66, 0x28, d, s); return; }
   if(o == '+' || o == '-' || o == '*' || o == '/') {
-    ib(text, 0xf2); ib(text, 0x0f);
-    ib(text, o == '+'? 0x58: o == '-'? 0x5c: o == '*'? 0x59: 0x5e);
-    ib(text, modrm(.mod=3, .reg=0, .rm=1));     // addsd/subsd/mulsd/divsd xmm0, xmm1
-    ia64_movq(text, 0, 0, 0);
+    ia64_sse(text, 0xf2, (byte)(o == '+'? 0x58: o == '-'? 0x5c: o == '*'? 0x59: 0x5e), d, s);
     return;
   }
   bool back = o == '<' || o == tokd('<', '=');
-  iw(text, 0x0f66); ib(text, 0x2e);             // ucomisd xmm0, xmm1, or xmm1, xmm0
-  ib(text, back? modrm(.mod=3, .reg=1, .rm=0): modrm(.mod=3, .reg=0, .rm=1));
+  ia64_sse(text, 0x66, 0x2e, back? s: d, back? d: s);
   if(o == tokd('=', '=') || o == tokd('!', '=')) {
     iw(text, 0x9b0f); ib(text, 0xc0);           // setnp al
     iw(text, 0x940f); ib(text, 0xc1);           // sete cl
@@ -324,16 +333,50 @@ void ia64_flop(file* text, u32i op) {
   if(!(op & TEST)) ia64_flag(text, op);
 }
 
-// rax = (double)eax or rax, or (long)rax truncated
+// xorps to, to for 0.0, else mov rax, imm64; movq to, rax
+void ia64_fimm(file* text, s32i to, u64i bits) {
+  byte x = ia64_xmm(to);
+  if(!bits) { ia64_sse(text, 0, 0x57, x, x); return; }
+  ib(text, rex(.w=1)); ib(text, 0xb8); io(text, bits);
+  ia64_movq(text, 1, x, 0);
+}
+
+static byte ia64_reg(s32i x);
+
+void ia64_fbit(file* text, bool in, s32i f, s32i x) {
+  ia64_movq(text, in, ia64_xmm(f), ia64_reg(x));
+}
+
+// movsd xmm, [base+disp] or movsd [base+disp], xmm; base rbp or rax
+static void ia64_fmem(file* text, bool store, byte x, byte base, s32i disp) {
+  bool d8 = (int8_t)disp == disp;
+  byte mod = base == rbp.reg.enc || disp? d8? 1: 2: 0;
+  ib(text, 0xf2);
+  if(x > 7) ib(text, rex(.r=1));
+  iw(text, store? 0x110f: 0x100f);
+  ib(text, modrm(.mod=mod, .reg=x & 7, .rm=base));
+  if(mod == 1) ib(text, disp);
+  if(mod == 2) id(text, disp);
+}
+
+void ia64_fslot(file* text, bool store, s32i f, s32i slot) { ia64_fmem(text, store, ia64_xmm(f), rbp.reg.enc, slot); }
+
+// movsd, or movups for all 16 bytes, which Win64 keeps
+void ia64_fstow(file* text, u32i r, s32i slot, bool back, u32i size) {
+  byte x = ia64_xmm((s32i)r);
+  bool d8 = (int8_t)slot == slot;
+  if(size == 8) { ia64_fmem(text, !back, x, rbp.reg.enc, slot); return; }
+  ib(text, rex(.r=x > 7)); iw(text, back? 0x100f: 0x110f);
+  ib(text, modrm(.mod=d8? 1: 2, .reg=x & 7, .rm=rbp.reg.enc));
+  if(d8) ib(text, slot);
+  else   id(text, slot);
+}
+void ia64_fat(file* text, bool store, s32i f)              { ia64_fmem(text, store, ia64_xmm(f), rax.reg.enc, 0); }
+
+// rax = (double)eax or rax into xmm0, or rax = (long)xmm0 truncated
 void ia64_turn(file* text, bool real, bool wide) {
-  if(real) {
-    ib(text, 0xf2); if(wide) ib(text, rex(.w=1)); iw(text, 0x2a0f); ib(text, 0xc0); // cvtsi2sd xmm0, eax/rax
-    ia64_movq(text, 0, 0, 0);
-  }
-  else {
-    ia64_movq(text, 1, 0, 0);
-    ib(text, 0xf2); ib(text, rex(.w=1)); iw(text, 0x2c0f); ib(text, 0xc0); // cvttsd2si rax, xmm0
-  }
+  if(real) { ib(text, 0xf2); if(wide) ib(text, rex(.w=1)); iw(text, 0x2a0f); ib(text, 0xc0); } // cvtsi2sd xmm0, eax/rax
+  else { ib(text, 0xf2); ib(text, rex(.w=1)); iw(text, 0x2c0f); ib(text, 0xc0); }               // cvttsd2si rax, xmm0
 }
 
 void ia64_cast(file* text, bool wide) {
@@ -437,7 +480,7 @@ static const byte ia64_kept[] = { 3, 12, 13, 14, 15 }; // rbx r12 r13 r14 r15
 
 // scratch k is r8 + k: SysV argument and C call registers, free between
 // calls; from HELD up, the register of locals k - HELD, kept by calls
-static byte ia64_held(u32i k) { return k < HELD? 8 + k: ia64_kept[k - HELD]; }
+static byte ia64_held(u32i k) { return k < HELD? (byte)(8 + k): ia64_kept[k - HELD]; }
 
 void ia64_keep(file* text) {
   ia64_push(text, rax);
@@ -454,6 +497,32 @@ void ia64_take(file* text, u32i k) {
   byte r = ia64_held(k);
   ia64_swap(text);
   ib(text, rex(.w=1, .r=r > 7)); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=r & 7, .rm=eax.reg.enc)); // mov rax, r
+}
+
+// movq rax, xmm0; push rax: 6 bytes, which lift makes movapd xmm2 + k, xmm0
+// and a 2-byte nop, or movq r, xmm0 and a nop
+void ia64_fkeep(file* text) {
+  ia64_movq(text, 0, 0, 0);
+  ia64_push(text, rax);
+}
+
+void ia64_flift(const file* text, byte* keep, u32i k) {
+  file at = {keep, keep + 6, {0}};
+  (void)text;
+  if(k < HELD) { ia64_sse(&at, 0x66, 0x28, (byte)(2 + k), 0); iw(&at, 0x9066); }
+  else { ia64_movq(&at, 0, 0, ia64_held(k)); ib(&at, 0x90); }
+}
+
+void ia64_ftake(file* text, u32i k) {
+  ia64_sse(text, 0x66, 0x28, 1, 0);             // movapd xmm1, xmm0
+  if(k < HELD) ia64_sse(text, 0x66, 0x28, 0, (byte)(2 + k));
+  else ia64_movq(text, 1, 0, ia64_held(k));
+}
+
+void ia64_fpull(file* text) {
+  ia64_sse(text, 0x66, 0x28, 1, 0);             // movapd xmm1, xmm0
+  ia64_pop(text, rax);
+  ia64_movq(text, 1, 0, 0);                     // movq xmm0, rax
 }
 
 // the machine register of an operand of rop
@@ -583,8 +652,8 @@ byte* ia64_ffi(file* text, const byte* func, u32i argc, u32i fixed, u32i real, o
   if(!func) { ib(text, 0x4c); iw(text, 0x188b); } // mov r11, [rax]
   for(u32i i = argc; i--; ) {
     bool f = real >> i & 1;
-    if(os == os_win) { ia64_drop(text, win[i]); if(f && i < 4) ia64_movq(text, 1, i, win[i]); }
-    else if(f) { ia64_drop(text, 0); ia64_movq(text, 1, --flts, 0); } // pop rax, to its vector register
+    if(os == os_win) { ia64_drop(text, win[i]); if(f && i < 4) ia64_movq(text, 1, (byte)i, win[i]); }
+    else if(f) { ia64_drop(text, 0); ia64_movq(text, 1, (byte)--flts, 0); } // pop rax, to its vector register
     else ia64_drop(text, ia64_regs[--ints]);
   }
   ib(text, 0x54);                                 // push rsp
@@ -615,7 +684,7 @@ void ia64_hail(file* text, osys os, u32i argc, u32i real) {
     for(u32i i = 0; i < argc; i++) real >> i & 1? flts++: ints++;
     for(u32i i = argc; i--; ) { // down: a register moves to one past it, not yet read
       byte to = ia64_regs[i];
-      if(real >> i & 1) { ia64_movq(text, 0, --flts, to); continue; }
+      if(real >> i & 1) { ia64_movq(text, 0, (byte)--flts, to); continue; }
       byte by = ia64_regs[--ints];
       if(by == to) continue;
       ib(text, rex(.w=1, .r=by > 7, .b=to > 7)); ib(text, 0x89); ib(text, modrm(.mod=3, .reg=by & 7, .rm=to & 7));
@@ -632,7 +701,7 @@ void ia64_hail(file* text, osys os, u32i argc, u32i real) {
   ib(text, 0x4c); iw(text, 0xc289);               // mov rdx, r8
   ib(text, 0x4c); iw(text, 0xc989);               // mov rcx, r9
   for(u32i i = 0; i < argc && i < 4; i++)
-    if(real >> i & 1) ia64_movq(text, 0, i, ia64_regs[i]); // movq reg, xmm<i>
+    if(real >> i & 1) ia64_movq(text, 0, (byte)i, ia64_regs[i]); // movq reg, xmm<i>
   id(text, 0x24448b4c); ib(text, 56);             // mov r8, [rsp+56]
   id(text, 0x244c8b4c); ib(text, 64);             // mov r9, [rsp+64]
   ib(text, 0xe8); id(text, back? 8: 3);           // call the function, past what follows
@@ -679,10 +748,20 @@ const emit ia64 = {
   .hail = ia64_hail,
   .rop  = ia64_rop,
   .stow = ia64_stow,
-  .flop = ia64_flop,
   .turn = ia64_turn,
   .step = ia64_step,
+  .fop  = ia64_fop,
+  .fimm = ia64_fimm,
+  .fbit = ia64_fbit,
+  .fslot = ia64_fslot,
+  .fstow = ia64_fstow,
+  .fat  = ia64_fat,
+  .fkeep = ia64_fkeep,
+  .flift = ia64_flift,
+  .ftake = ia64_ftake,
+  .fpull = ia64_fpull,
   .cpu  = cpu_ia64,
   .regs = sizeof ia64_kept,
+  .fregs = 8,                                   // xmm8-xmm15
 };
 

@@ -232,28 +232,64 @@ spec("ia64") {
   }
 
   context("reals") {
-    it("computes in xmm0 and xmm1, back in rax") {
-      // movq xmm0, rax; movq xmm1, rcx; addsd xmm0, xmm1; movq rax, xmm0
-      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 f2 0f 58 c1 66 48 0f 7e c0", e.flop(t, '+')));
-      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 f2 0f 5e c1 66 48 0f 7e c0", e.flop(t, '/'))); // divsd
+    it("computes in xmm0, xmm1 and the registers of real locals, xmm8 up") {
+      check(emits("66 41 0f 28 c3", e.fop(t, '=', ACC, 3)));      // movapd xmm0, xmm11
+      check(emits("66 44 0f 28 f9", e.fop(t, '=', 7, TMP)));      // movapd xmm15, xmm1
+      check(emits("", e.fop(t, '=', 2, 2)));                      // a move to itself is none
+      check(emits("f2 0f 58 c1", e.fop(t, '+', ACC, TMP)));       // addsd xmm0, xmm1
+      check(emits("f2 44 0f 5c c0", e.fop(t, '-', 0, ACC)));      // subsd xmm8, xmm0
+      check(emits("f2 41 0f 59 c5", e.fop(t, '*', ACC, 5)));      // mulsd xmm0, xmm13
+      check(emits("f2 45 0f 5e ff", e.fop(t, '/', 7, 7)));        // divsd xmm15, xmm15
     }
     it("compares < the other way round, so a NaN fails it") {
-      // ...; ucomisd xmm1, xmm0; ja, or jbe when it fails
-      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 66 0f 2e c8", e.flop(t, '<' | REAL | TEST)));
-      check(emits("0f 87 00 00 00 00", e.cond(t, '<' | REAL, 1)));
-      check(emits("0f 86 00 00 00 00", e.cond(t, '<' | REAL, 0)));
-      check(emits("0f 83 00 00 00 00", e.cond(t, tokd('>', '=') | REAL, 1))); // jae
+      check(emits("66 44 0f 2e d0", e.fop(t, '<' | REAL | TEST, ACC, 2)));                // ucomisd xmm10, xmm0
+      check(emits("66 44 0f 2e c9", e.fop(t, tokd('>', '=') | REAL | TEST, 1, TMP)));     // ucomisd xmm9, xmm1
+      check(emits("0f 87 00 00 00 00", e.cond(t, '<' | REAL, 1)));                        // ja
+      check(emits("0f 86 00 00 00 00", e.cond(t, '<' | REAL, 0)));                        // jbe
+      check(emits("0f 83 00 00 00 00", e.cond(t, tokd('>', '=') | REAL, 1)));             // jae
     }
     it("compares == as equal and ordered, in ZF") {
-      // ...; ucomisd xmm0, xmm1; setnp al; sete cl; and cl, al; setne al; movzx eax, al
-      check(emits("66 48 0f 6e c0 66 48 0f 6e c9 66 0f 2e c1 0f 9b c0 0f 94 c1 20 c1 0f 95 c0 0f b6 c0",
-                  e.flop(t, tokd('=', '=') | REAL)));
+      // ucomisd xmm0, xmm1; setnp al; sete cl; and cl, al; setne al; movzx eax, al
+      check(emits("66 0f 2e c1 0f 9b c0 0f 94 c1 20 c1 0f 95 c0 0f b6 c0", e.fop(t, tokd('=', '=') | REAL, ACC, TMP)));
       check(emits("0f 84 00 00 00 00", e.cond(t, tokd('!', '=') | REAL, 1))); // je
     }
-    it("turns an int or a long into a real, and a real into a long") {
-      check(emits("f2 0f 2a c0 66 48 0f 7e c0", e.turn(t, 1, 0)));     // cvtsi2sd xmm0, eax; movq rax, xmm0
-      check(emits("f2 48 0f 2a c0 66 48 0f 7e c0", e.turn(t, 1, 1)));  // cvtsi2sd xmm0, rax; ...
-      check(emits("66 48 0f 6e c0 f2 48 0f 2c c0", e.turn(t, 0, 1)));  // movq xmm0, rax; cvttsd2si rax, xmm0
+    it("makes 0.0 with xorps, another real through rax") {
+      check(emits("0f 57 c0", e.fimm(t, ACC, 0)));                // xorps xmm0, xmm0
+      check(emits("45 0f 57 e4", e.fimm(t, 4, 0)));               // xorps xmm12, xmm12
+      // movabs rax, 0x400921fb54442d18; movq xmm14, rax
+      check(emits("48 b8 18 2d 44 54 fb 21 09 40 66 4c 0f 6e f0", e.fimm(t, 6, 0x400921fb54442d18ull)));
+    }
+    it("moves a real's bits to and from the integer registers") {
+      check(emits("66 48 0f 6e c0", e.fbit(t, 1, ACC, ACC)));     // movq xmm0, rax
+      check(emits("66 48 0f 7e c0", e.fbit(t, 0, ACC, ACC)));     // movq rax, xmm0
+      check(emits("66 4c 0f 6e d7", e.fbit(t, 1, 2, ARG)));       // movq xmm10, rdi
+      check(emits("66 4d 0f 7e f8", e.fbit(t, 0, 7, ARG - 4)));   // movq r8, xmm15
+    }
+    it("loads and stores a real in the frame and through rax") {
+      check(emits("f2 0f 10 45 f8", e.fslot(t, 0, ACC, -8)));             // movsd xmm0, [rbp-8]
+      check(emits("f2 44 0f 11 6d f0", e.fslot(t, 1, 5, -16)));          // movsd [rbp-16], xmm13
+      check(emits("f2 0f 10 8d 00 f0 ff ff", e.fslot(t, 0, TMP, -4096))); // movsd xmm1, [rbp-4096]
+      check(emits("f2 0f 10 00", e.fat(t, 0, ACC)));                      // movsd xmm0, [rax]
+      check(emits("f2 44 0f 11 18", e.fat(t, 1, 3)));                     // movsd [rax], xmm11
+    }
+    it("saves the register of a real local, all 16 bytes for Win64") {
+      check(emits("f2 44 0f 11 45 f0", e.fstow(t, 0, -16, 0, 8)));        // movsd [rbp-16], xmm8
+      check(emits("44 0f 11 7d e0", e.fstow(t, 7, -32, 0, 16)));          // movups [rbp-32], xmm15
+      check(emits("44 0f 10 8d 00 ff ff ff", e.fstow(t, 1, -256, 1, 16))); // movups xmm9, [rbp-256]
+    }
+    it("keeps xmm0 pushed, lifted to xmm2 up or to the register of a local") {
+      byte* k;
+      check(emits("66 48 0f 7e c0 50", e.fkeep(t)));              // movq rax, xmm0; push rax
+      check(emits("66 0f 28 e8 66 90", k = here, e.fkeep(t), e.flift(t, k, 3)));       // movapd xmm5, xmm0; xchg ax, ax
+      check(emits("66 49 0f 7e c4 90", k = here, e.fkeep(t), e.flift(t, k, HELD + 1))); // movq r12, xmm0; nop
+      check(emits("66 0f 28 c8 66 0f 28 c4", e.ftake(t, 2)));     // movapd xmm1, xmm0; movapd xmm0, xmm4
+      check(emits("66 0f 28 c8 66 48 0f 6e c3", e.ftake(t, HELD))); // movapd xmm1, xmm0; movq xmm0, rbx
+      check(emits("66 0f 28 c8 58 66 48 0f 6e c0", e.fpull(t)));  // movapd xmm1, xmm0; pop rax; movq xmm0, rax
+    }
+    it("turns an int or a long into a real in xmm0, and a real into a long") {
+      check(emits("f2 0f 2a c0", e.turn(t, 1, 0)));               // cvtsi2sd xmm0, eax
+      check(emits("f2 48 0f 2a c0", e.turn(t, 1, 1)));            // cvtsi2sd xmm0, rax
+      check(emits("f2 48 0f 2c c0", e.turn(t, 0, 1)));            // cvttsd2si rax, xmm0
     }
     it("passes SysV reals in xmm registers, counted in al, and takes a real result from xmm0") {
       // mov r11, [rax]; pop rsi; pop rax; movq xmm0, rax; pop rdi; push rsp; push [rsp];

@@ -170,18 +170,37 @@ typedef struct {
   // comparison, which sets the flags only
   void (*rop)(file*, u32i op, s32i to, s32i by, s32i n);
   void (*stow)(file*, u32i r, s32i slot, bool back); // slot = register r of a local, or back
-  // reals, 64-bit IEEE, held in acc and tmp as their bits: acc = acc op tmp,
-  // op + - * / or a comparison (| REAL), which sets the flags only when TEST
-  void (*flop)(file*, u32i op);
-  // acc = the integer in acc (on 64 bits when wide) as a real, when real;
-  // else the real in acc truncated to a 64-bit integer
+  // facc = the integer in acc (on 64 bits when wide) as a real, when real;
+  // else acc = the real in facc truncated to a 64-bit integer
   void (*turn)(file*, bool real, bool wide);
   // acc += by * scale, by a register of a local or tmp, sign extended from 32
   // bits unless wide; scale 1, 2, 4 or 8. tmp may change
   void (*step)(file*, s32i by, u32i scale, bool wide);
-  chip  cpu;  // target, each form maps it to its own machine id
-  u32i  regs; // registers for locals, kept by the functions called
+  // reals, 64-bit IEEE, in registers of their own: facc and ftmp (ACC and
+  // TMP), and r from 0, the register of a real local r. to op= by: op is =
+  // (a move), + - * /, or a comparison (| REAL | TEST), which sets the flags
+  // only. acc and tmp may change for a comparison
+  void (*fop)(file*, u32i op, s32i to, s32i by);
+  void (*fimm)(file*, s32i to, u64i bits);             // to = the real of these bits, acc may change
+  void (*fbit)(file*, bool in, s32i f, s32i x);        // in: f = the bits of x, an operand of rop, else x = those of f
+  void (*fslot)(file*, bool store, s32i f, s32i slot); // f = slot, or slot = f
+  // slot = the register of real local r, or back, as C code keeps it: size
+  // bytes, 8 or 16
+  void (*fstow)(file*, u32i r, s32i slot, bool back, u32i size);
+  void (*fat)(file*, bool store, s32i f);              // f = [acc], or [acc] = f
+  // facc kept as keep keeps acc, lifted to the real scratch k, or from HELD
+  // up to the register of locals k - HELD; ftake and fpull give it back as
+  // take and pull do, ftmp = facc first. acc may change
+  void (*fkeep)(file*);
+  void (*flift)(const file*, byte* keep, u32i k);
+  void (*ftake)(file*, u32i k);
+  void (*fpull)(file*);
+  chip  cpu;   // target, each form maps it to its own machine id
+  u32i  regs;  // registers for locals, kept by the functions called
+  u32i  fregs; // registers for real locals, kept by otic's functions and by C
+               // code, but on x86-64 outside Windows (core saves them around a call)
 } emit;
+#define FREG 16 // registers of locals from FREG up are those of real locals, r - FREG
 
 // core
 #define VARY (~0u) // meta.size of a function from an object
@@ -425,8 +444,9 @@ struct mode {
   s32i  deep;      // frame bytes the function needs
   s32i  lits;      // frame bytes the compound literals of the block keep
   u32i  regn;      // registers the function keeps locals in, saved in its first slots
+  u32i  fregn;     // registers it keeps real locals in, saved in the slots after those
   u32i  lend;      // the first of them lent to left operands kept across calls, up to regn
-  u32i  busy;      // bit r: register r holds a local in scope
+  u32i  busy;      // bit r: register r holds a local in scope (FREG + r: real register r)
   item* pick[SIFT]; // the names of the locals given a register
   u32i  picks;
   lexed* lexes;    // the tokens of the body being compiled, lexed by sift: chop replays them

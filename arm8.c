@@ -325,7 +325,7 @@ void arm8_disp(file* data, uint32_t inst, u32i size, int rt, int rn, s32i off) {
 // the slot reaches 256 bytes below the frame pointer, further through x16
 void arm8_slot(file* data, uint32_t inst, u32i size, int rt, s32i slot) {
   if(slot >= -256) { arm8_disp(data, inst, size, rt, r29, slot); return; }
-  arm8_less(data, r16, r29, -(u32i)slot);                           // x16 = x29 - -slot
+  arm8_less(data, r16, r29, 0u - (u32i)slot);                           // x16 = x29 - -slot
   arm8_disp(data, inst, size, rt, r16, 0);
 }
 
@@ -340,7 +340,7 @@ void arm8_fill(file* data, u32i size) {
 }
 
 void arm8_addr(file* data, s32i slot) {
-  arm8_less(data, r0, r29, -(u32i)slot);                            // x0 = x29 - -slot
+  arm8_less(data, r0, r29, 0u - (u32i)slot);                           // x0 = x29 - -slot
 }
 
 // x0 = pc + a 32-bit distance, patched by site: a negative distance, to code
@@ -452,7 +452,7 @@ void arm8_flag(file* data, u32i op) {
 // turn it into the opposite one over a b
 void arm8_bcnd(file* data, u32i op, bool hold) {
   arm8_put(data, 0x54000000 | (arm8_cc(op) ^ !hold));              // b.cc, patched by mend
-  arm8_put(data, NOP);
+  arm8_put(data, (u32i)NOP);
 }
 
 // w0 = w0 / 2^k or w0 % 2^k (x0 when w), rounded toward zero: w16 is all
@@ -504,35 +504,84 @@ static void arm8_fmov(file* data, bool in, int d, int x) {
   arm8_put(data, in? 0x9e670000 | x << 5 | d: 0x9e660000 | d << 5 | x);
 }
 
-// d0 = x0, d1 = x1, then d0 = d0 op d1 and x0 = d0, or fcmp d0, d1
-void arm8_flop(file* data, u32i op) {
+// the d register of a real operand: facc d0, ftmp d1, the register of real
+// local r d8 + r, which AAPCS64 keeps. Real scratch k is d16 + k
+static int arm8_d(s32i f) { return f >= 0? 8 + (int)f: f == ACC? 0: 1; }
+
+// to op= by: fmov, fadd fsub fmul fdiv, or fcmp
+void arm8_fop(file* data, u32i op, s32i to, s32i by) {
   u32i o = op & ~(WIDE | TEST | REAL);
-  arm8_fmov(data, 1, 0, r0);
-  arm8_fmov(data, 1, 1, r1);
+  int  d = arm8_d(to), s = arm8_d(by);
+  if(o == '=') { if(d != s) arm8_put(data, 0x1e604000 | s << 5 | d); return; }
   if(o == '+' || o == '-' || o == '*' || o == '/') {
-    arm8_put(data, (o == '+'? 0x1e612800: o == '-'? 0x1e613800: o == '*'? 0x1e610800: 0x1e611800)); // fadd/fsub/fmul/fdiv d0, d0, d1
-    arm8_fmov(data, 0, 0, r0);
+    arm8_put(data, (o == '+'? 0x1e602800: o == '-'? 0x1e603800: o == '*'? 0x1e600800: 0x1e601800) | s << 16 | d << 5 | d);
     return;
   }
-  arm8_put(data, 0x1e612000);                                       // fcmp d0, d1
+  arm8_put(data, 0x1e602000 | s << 16 | d << 5);                   // fcmp d, s
   if(!(op & TEST)) arm8_flag(data, op);
 }
 
-// x0 = (double)w0 or x0, or (long)x0 truncated
+// movi to, #0 for 0.0, else the bits in x16, then fmov to, x16
+void arm8_fimm(file* data, s32i to, u64i bits) {
+  int  d = arm8_d(to);
+  bool first = 1;
+  if(!bits) { arm8_put(data, 0x2f00e400 | d); return; }
+  for(u32i h = 0; h < 4; h++) {
+    u32i half = (u32i)(bits >> 16 * h & 0xffff);
+    if(!half) continue;
+    arm8_put(data, X | (first? dati_movz: dati_movk) | h << 21 | half << 5 | r16); // movz/movk x16, #half, lsl 16h
+    first = 0;
+  }
+  arm8_fmov(data, 1, d, r16);
+}
+
+void arm8_fbit(file* data, bool in, s32i f, s32i x) {
+  arm8_fmov(data, in, arm8_d(f), arm8_reg(x));
+}
+
+void arm8_fslot(file* data, bool store, s32i f, s32i slot) {
+  arm8_slot(data, store? I3312_STRVD: I3312_LDRVD, 8, arm8_d(f), slot);
+}
+
+// the low 8 bytes, which AAPCS64 keeps
+void arm8_fstow(file* data, u32i r, s32i slot, bool back, u32i size) {
+  (void)size;
+  arm8_fslot(data, !back, (s32i)r, slot);
+}
+
+void arm8_fat(file* data, bool store, s32i f) {
+  arm8_disp(data, store? I3312_STRVD: I3312_LDRVD, 8, arm8_d(f), r0, 0);
+}
+
+void arm8_fkeep(file* data) {
+  arm8_put(data, 0xfc1f0fe0);                                       // str d0, [sp, #-16]!
+}
+
+// fmov d16 + k, d0, or fmov x, d0 to the register of locals
+void arm8_flift(const file* data, byte* keep, u32i k) {
+  (void)data;
+  *(uint32_t*)keep = k < HELD? 0x1e604000u | (16 + k): 0x9e660000u | (u32i)arm8_held(k);
+}
+
+void arm8_ftake(file* data, u32i k) {
+  arm8_put(data, 0x1e604001);                                       // fmov d1, d0
+  arm8_put(data, k < HELD? 0x1e604000u | (16 + k) << 5: 0x9e670000u | (u32i)arm8_held(k) << 5); // fmov d0, d16 + k or x
+}
+
+void arm8_fpull(file* data) {
+  arm8_put(data, 0x1e604001);                                       // fmov d1, d0
+  arm8_put(data, 0xfc4107e0);                                       // ldr d0, [sp], #16
+}
+
+// d0 = (double)w0 or x0, or x0 = (long)d0 truncated
 void arm8_turn(file* data, bool real, bool wide) {
-  if(real) {
-    arm8_put(data, wide? 0x9e620000: 0x1e620000);                  // scvtf d0, x0 or w0
-    arm8_fmov(data, 0, 0, r0);
-  }
-  else {
-    arm8_fmov(data, 1, 0, r0);
-    arm8_put(data, 0x9e780000);                                     // fcvtzs x0, d0
-  }
+  if(real) arm8_put(data, wide? 0x9e620000: 0x1e620000);           // scvtf d0, x0 or w0
+  else arm8_put(data, 0x9e780000);                                  // fcvtzs x0, d0
 }
 
 void arm8_when(file* data, bool nz) {
   arm8_put(data, X | (nz? I3201_CBNZ: I3201_CBZ) | r0);             // cb(n)z x0, patched by mend
-  arm8_put(data, NOP);                                              // as for bcnd
+  arm8_put(data, (u32i)NOP);                                              // as for bcnd
 }
 
 void arm8_jump(file* data) {
@@ -637,7 +686,7 @@ void arm8_hail(file* data, osys os, u32i argc, u32i real) {
   if(!(real >> RETS & 1)) return;
   arm8_put(data, 0xa9bf7bfd);                                       // stp x29, x30, [sp, #-16]!
   arm8_put(data, 0x910003fd);                                       // mov x29, sp
-  arm8_put(data, I3206_BL | 4);                                     // bl the function, past what follows
+  arm8_put(data, (u32i)I3206_BL | 4);                                     // bl the function, past what follows
   arm8_fmov(data, 1, 0, r0);                                        // fmov d0, x0
   arm8_put(data, 0xa8c17bfd);                                       // ldp x29, x30, [sp], #16
   arm8_put(data, form(brur, ret, .rn=r30));                         // ret
@@ -682,10 +731,20 @@ const emit arm8 = {
   .hail = arm8_hail,
   .rop  = arm8_rop,
   .stow = arm8_stow,
-  .flop = arm8_flop,
   .turn = arm8_turn,
   .step = arm8_step,
+  .fop  = arm8_fop,
+  .fimm = arm8_fimm,
+  .fbit = arm8_fbit,
+  .fslot = arm8_fslot,
+  .fstow = arm8_fstow,
+  .fat  = arm8_fat,
+  .fkeep = arm8_fkeep,
+  .flift = arm8_flift,
+  .ftake = arm8_ftake,
+  .fpull = arm8_fpull,
   .cpu  = cpu_arm8,
   .regs = 10,
+  .fregs = 8,                                                       // d8-d15
 };
 

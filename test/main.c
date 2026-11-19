@@ -1727,8 +1727,8 @@ spec(TAG) {
     it("writes a bundle for a Mach-O program, with the identifier of the program", llvms()) {
       char out[1 << 14];
       const char* arch[] = {"ia64", "arm8"};
-      for(int i = 0; i < 2; i++) {
-        check(debugged("dbg-mac", DBG_NODES, arch[i], "mach") == 0);
+      for(int a = 0; a < 2; a++) {
+        check(debugged("dbg-mac", DBG_NODES, arch[a], "mach") == 0);
         captured("llvm-dwarfdump --verify bins/dbg-mac.dSYM/Contents/Resources/DWARF/dbg-mac", out, sizeof out);
         check(strstr(out, "No errors"));
         captured("llvm-dwarfdump --debug-info bins/dbg-mac.dSYM/Contents/Resources/DWARF/dbg-mac", out, sizeof out);
@@ -1751,8 +1751,8 @@ spec(TAG) {
     it("writes a PE program with its debug sections", llvms()) {
       char out[1 << 14];
       const char* arch[] = {"ia64", "arm8"};
-      for(int i = 0; i < 2; i++) {
-        check(debugged("dbg-pe", DBG_NODES, arch[i], "pe32") == 0);
+      for(int a = 0; a < 2; a++) {
+        check(debugged("dbg-pe", DBG_NODES, arch[a], "pe32") == 0);
         captured("llvm-dwarfdump --verify bins/dbg-pe", out, sizeof out);
         check(strstr(out, "No errors"));
         captured("llvm-dwarfdump --name=main bins/dbg-pe", out, sizeof out);
@@ -1829,6 +1829,30 @@ spec(TAG) {
     unix_it("calls libm with reals")
       here(17, "load \"m\";\nreal sqrt(real x);\nreal pow(real x, real y);\nload \"c\";\n"
                "int main() { real v = 2; return sqrt(v * 8) + pow(v, 4) - 3; }\n");
+    unix_it("keeps the real registers of locals across calls into C code")
+      here(194, "load \"m\";\nreal sqrt(real x);\nreal pow(real x, real y);\nload \"c\";\n"
+                "int main() { real a = 2, b = 3, c = 0.5, s = 0; int i = 0;\n"
+                "  while(i < 4) { s += sqrt(a * b) + pow(c, 2) * a; a += 1; b *= 1.5; c -= 0.25; i += 1; }\n"
+                "  int r = s * 10; return r % 256; }\n");
+    it("keeps more real locals than there are registers for, in a loop")
+      expect(68, "int main() { real a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, k = 8, m = 9, n = 10; int i = 0;\n"
+                 "  while(i < 10) { a += b * 0.5; b -= c / 4; c *= 1.01; d += e - f; e = e + g * 0.1; f = f - k / m;\n"
+                 "    g += n; k = k * 0.9 + a; m += 1; n -= 0.5; i += 1; }\n"
+                 "  int r = a + b + c + d + e + f + g + k + m + n; return r % 256; }\n");
+    it("keeps real left operands deeper than the scratch registers, and across calls")
+      expect(103, "real h(real x) { return x * 0.5; }\n"
+                  "int main() { real a = 1.5, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, k = 8; int i = 0; real s = 0;\n"
+                  "  while(i < 3) { s += (a*b) + ((c*d) + ((e*f) + ((g*k) + ((a*c) + (b*d)))));\n"
+                  "    s += (a + b) * h(c) - (c - d) / h(a + s * 0.001); i += 1; }\n"
+                  "  int r = s; return r % 256; }\n");
+    it("passes reals in registers through recursion")
+      expect(98, "real fib(real n) { when(n < 2.0) return n; return fib(n - 1.0) + fib(n - 2.0); }\n"
+                 "int main() { int r = fib(15.0); return r % 256; }\n");
+    it("compares reals in registers, a NaN unordered, and -0.0 false")
+      expect(176, "int main() { real z = 0, p = 1, n = z / z, m = -z; int r = 0, i = 0;\n"
+                  "  while(i < 2) { r += (n < p) + (n > p) * 2 + (n == n) * 4 + (n != n) * 8 + (p <= p) * 16 + !n * 32 + !m * 64\n"
+                  "    + (1 / m < 0) * 128; i += 1; }\n"
+                  "  return r % 256; }\n");
     elfs_it("gives a C program a function that takes and gives reals")
       check(library("lb-real", "real scale(int k, real x, real y) { return k * x + y; }\n", 0, "",
                     "double scale(int k, double x, double y);\n"

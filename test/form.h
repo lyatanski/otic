@@ -118,7 +118,7 @@ static void  start(chip cpu, const char* code, u32i size, const char* data, u32i
     .arch = {.cpu = cpu},
     .heap = mock_heap,
     .core = {mock_dock, mock_gap, mock_lay, mock_name, mock_find, mock_heft, mock_ask,
-             mock_sign, mock_knit},
+             mock_sign, mock_knit, NULL},
   };
 }
 

@@ -480,11 +480,11 @@ static file* elfs_relo(mode* self) {
 static u32i  elfs_file(const meta* l, clib c, char* out) {
   static const char* const glibc[][2] = {{"c", "libc.so.6"}, {"m", "libm.so.6"}};
   const char* s = l->name->name + 1; // without the quotes
-  u32i n = l->name->size - 2;
+  u32i n = (u32i)l->name->size - 2;
   bool as_is = 0;
   for(u32i i = 0; i < n; i++) as_is |= s[i] == '.';
   for(u32i i = 0; !as_is && c == cl_glibc && i < sizeof glibc / sizeof *glibc; i++)
-    if(slen(glibc[i][0]) == n && alike(glibc[i][0], s, n)) s = glibc[i][1], n = slen(s), as_is = 1;
+    if(slen(glibc[i][0]) == n && alike(glibc[i][0], s, n)) s = glibc[i][1], n = (u32i)slen(s), as_is = 1;
   if(as_is) { if(out) copy((byte*)out, s, n); return n; }
   if(out) copy(copy(copy((byte*)out, "lib", 3), s, n), ".so", 3);
   return n + 6;

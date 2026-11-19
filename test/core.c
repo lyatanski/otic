@@ -30,7 +30,9 @@ static u64i  laid; // data bytes when shown: make frees data after show
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
   X(loop) X(open) X(size) X(parm) X(args) X(dial) X(trap) X(done) X(boot)       \
   X(link) X(ffi) X(crt) X(flag) X(cond) X(keep) X(lift) X(take) X(pass)       \
-  X(rop) X(stow) X(flop) X(turn) X(step)
+  X(rop) X(stow) X(turn) X(step) X(fop) X(fimm) X(fbit) X(fslot) X(fstow)   \
+  X(fat)                                                                        \
+  X(fkeep) X(flift) X(ftake) X(fpull)
 #define TAG(x) op_##x,
 #define NAME(x) #x,
 enum { OPS(TAG) };
@@ -127,17 +129,47 @@ static void mock_rop(file* t, u32i op, s32i to, s32i by, s32i n) {
   note(t, op_rop, "%s %s %s %s", w, mock_reg(to, 0, a), mock_op(op, o), mock_reg(by, n, b));
 }
 static void mock_stow(file* t, u32i r, s32i slot, bool back) { note(t, op_stow, back? " r%u < %d": " r%u > %d", r, slot); }
-static void mock_flop(file* t, u32i op) {
-  char o[4];
-  note(t, op_flop, "%s %s", op & TEST? ".t": "", mock_op(op, o));
-}
 static void mock_turn(file* t, bool real, bool wide)  { note(t, op_turn, real? wide? " real long": " real int": " long"); }
 static void mock_step(file* t, s32i by, u32i scale, bool wide) {
   char b[16];
   note(t, op_step, "%s %s * %u", wide? ".w": "", mock_reg(by, 0, b), scale);
 }
+// a real operand: f2 the register of a real local, facc, ftmp
+static char* mock_freg(s32i f, char* o) {
+  if(f >= 0) sprintf(o, "f%d", f);
+  else sprintf(o, f == ACC? "facc": "ftmp");
+  return o;
+}
+static void mock_fop(file* t, u32i op, s32i to, s32i by) {
+  char o[4], a[16], b[16];
+  note(t, op_fop, "%s %s %s %s", op & TEST? ".t": "", mock_freg(to, a), mock_op(op, o), mock_freg(by, b));
+}
+static void mock_fimm(file* t, s32i to, u64i bits) {
+  char a[16];
+  double v;
+  memcpy(&v, &bits, 8);
+  note(t, op_fimm, " %s %g", mock_freg(to, a), v);
+}
+static void mock_fbit(file* t, bool in, s32i f, s32i x) {
+  char a[16], b[16];
+  mock_freg(f, a);
+  mock_reg(x, 0, b);
+  note(t, op_fbit, " %s = %s", in? a: b, in? b: a);
+}
+static void mock_fslot(file* t, bool store, s32i f, s32i slot) {
+  char a[16];
+  note(t, op_fslot, store? " %s > %d": " %s < %d", mock_freg(f, a), slot);
+}
+static void mock_fstow(file* t, u32i r, s32i slot, bool back, u32i size) {
+  note(t, op_fstow, back? " f%u < %d%s": " f%u > %d%s", r, slot, size == 16? " full": "");
+}
+static void mock_fat(file* t, bool store, s32i f) { char a[16]; note(t, op_fat, store? " %s >": " %s <", mock_freg(f, a)); }
+static void mock_fkeep(file* t)                   { note(t, op_fkeep, ""); }
+static void mock_flift(const file* t, byte* keep, u32i k) { note(NULL, op_flift, k < HELD? " %s %u": " %s r%u", at(t, keep), k < HELD? k: k - HELD); }
+static void mock_ftake(file* t, u32i k)           { note(t, op_ftake, k < HELD? " %u": " r%u", k < HELD? k: k - HELD); }
+static void mock_fpull(file* t)                   { note(t, op_fpull, ""); }
 
-static u32i regs; // registers for locals the next make_ has, reset after each
+static u32i regs, fregs; // registers for locals and real ones the next make_ has, reset after each
 
 static const emit mock = {
   mock_move, mock_load, mock_stor, mock_peek, mock_addr, mock_glob, mock_site,
@@ -145,7 +177,9 @@ static const emit mock = {
   mock_when, mock_jump, mock_back, mock_loop, mock_open, mock_size, mock_parm,
   mock_args, mock_dial, mock_trap, mock_done, mock_boot, mock_link, mock_ffi,
   mock_crt, mock_flag, mock_cond, mock_keep, mock_lift, mock_tmpk, mock_pass,
-  mock_hail, mock_rop, mock_stow, mock_flop, mock_turn, mock_step, cpu_ia64, 0,
+  mock_hail, mock_rop, mock_stow, mock_turn, mock_step, mock_fop, mock_fimm,
+  mock_fbit, mock_fslot, mock_fstow, mock_fat, mock_fkeep, mock_flift, mock_ftake, mock_fpull,
+  cpu_ia64, 0, 0,
 };
 
 static file* mock_pack(mode* m)          { packs++; (void)m; return NULL; }
@@ -187,6 +221,7 @@ static void source(char* path, char* src) {
 
 static byte libs; // what make_ asks for without main, reset after each
 static clib clibs; // the C library of a Linux image, reset after each
+static osys oses = os_linux; // the os of the form, reset after each
 
 // compile main.ot, src: 1 when make got to show, else 0 and said tells why
 static int  make_(char* src) {
@@ -198,13 +233,15 @@ static int  make_(char* src) {
   self = (mode){
     .name = "main.ot",
     .hold = mock_hold, .drop = mock_drop, .heap = mock_heap, .show = mock_show, .scan = mock_scan,
-    .arch = mock, .form = {mock_pack, mock_take, os_linux}, .libs = libs,
+    .arch = mock, .form = {mock_pack, mock_take, oses}, .libs = libs,
     .clib = clibs,
   };
   self.arch.regs = regs;
+  self.arch.fregs = fregs;
   libs = lb_none;
   clibs = cl_glibc;
-  regs = 0;
+  oses = os_linux;
+  regs = fregs = 0;
   source("main.ot", src);
   nest(&self, (unit){.kind = un_root});
   if(setjmp(bail)) { filen = 0; return 0; }
@@ -696,7 +733,7 @@ spec("core") {
     #define OV2 "int f(int a) { return 1; }\nint f(real a) { return 2; }\n"
     it("compiles the arguments that pick an overload twice, the first code dropped") {
       check(compiles(OV2 "int main() { real r = 1.5; return f(r * r); }"));
-      check(calls[op_flop] == 2 && left(op_flop) == 1 && calls[op_dial] == 1);
+      check(calls[op_fop] == 2 && left(op_fop) == 1 && calls[op_dial] == 1);
     }
     it("names the overloads a call fits alike") {
       check(rejects("int f(int a, long b) { return 2; }\nint f(long a, int b) { return 3; }\nint main() { return f(1, 1); }",
@@ -759,11 +796,15 @@ spec("core") {
   context("reals") {
     it("folds real constants, and cuts one to an int") {
       check(compiles("int main() { return 1.5 * 2 + 1; }"));
-      check(has("open, move 4, done") && calls[op_flop] == 0 && calls[op_turn] == 0);
+      check(has("open, move 4, done") && calls[op_fop] == 0 && calls[op_turn] == 0);
     }
-    it("reads a real constant from data, 0.0 as a move") {
+    it("makes a real constant in facc, stored from there") {
       check(compiles("int main() { real a = 2.5; real b = 0.0; return 0; }"));
-      check(has("glob, read 8, stor -8:8, move 0, stor -16:8") && laid == 8 && tail8 == 0x4004000000000000ull);
+      check(has("fimm facc 2.5, fslot facc > -8, fimm facc 0, fslot facc > -16") && laid == 0);
+    }
+    it("reads a real constant from data when acc needs its bits") {
+      check(compiles("real h(real x) { return x; } int main() { h(2.5); return 0; }"));
+      check(has("glob, read 8, pass 0, dial") && laid == 8 && tail8 == 0x4004000000000000ull);
     }
     it("writes a global real, an int constant made one, and cuts one to an int") {
       double v;
@@ -778,29 +819,78 @@ spec("core") {
     }
     it("turns an int operand into a real, and the result into an int") {
       check(compiles("int main() { real a = 1.5; int i = 2; return a * i; }"));
-      check(has("load -16:4, turn real int, swap, load -8:8, flop *, turn long, cast int, done"));
+      check(has("load -16:4, turn real int, fslot ftmp < -8, fop facc * ftmp, turn long, cast int, done"));
     }
     it("branches on the flags of a comparison of reals") {
       check(compiles("int main() { real a = 1.5; when(a < 2.0) return 1; return 0; }"));
-      check(has("swap, load -8:8, flop.t <, cond !<, move 1"));
+      check(has("fslot facc < -8, fimm ftmp 2, fop.t facc < ftmp, cond !<, move 1"));
     }
     it("compares a real with 0.0 as a condition, so -0.0 is false") {
       check(compiles("int main() { real a = 2; when(a) return 1; return !a; }"));
-      check(has("load -8:8, swap, move 0, flop.t !=, cond !!=") && has("load -8:8, swap, move 0, flop ==, done"));
+      check(has("fslot facc < -8, fimm ftmp 0, fop.t facc != ftmp, cond !!=")
+            && has("fslot facc < -8, fimm ftmp 0, fop.t facc == ftmp, flag ==, done"));
     }
     it("negates a real as -0.0 minus it") {
       check(compiles("int main() { real a = 2; return -a; }"));
-      check(has("load -8:8, swap, glob, read 8, flop -"));
+      check(has("fslot facc < -8, fop ftmp = facc, fimm facc -0, fop facc - ftmp, turn long"));
     }
-    it("keeps reals out of the registers of locals") {
+    it("keeps reals out of the registers of integer locals") {
       regs = 5;
       check(compiles("int main() { real a = 1; a += 1; a += 1; a += 1; return a; }"));
-      check(calls[op_rop] == 0 && calls[op_stow] == 0);
+      check(calls[op_rop] == 0 && calls[op_stow] == 0 && !strstr(trace, "f0"));
     }
     it("computes op= of a real into an int register") {
       regs = 5;
       check(compiles("int main() { real a = 2; int k = 3; k += a; return k; }"));
-      check(has("rop acc = r0, turn real int, flop +, turn long, cast int, rop r0 = acc"));
+      check(has("rop acc = r0, turn real int, fslot ftmp < -16, fop facc + ftmp, turn long, cast int, rop r0 = acc"));
+    }
+    it("keeps a real local in a real register, saved and restored") {
+      fregs = 8;
+      check(compiles("int main() { real a = 1; a += 1; a *= a; a -= 0.5; return a; }"));
+      check(is("boot, open, fstow f0 > -8, fimm f0 1, fimm ftmp 1, fop f0 + ftmp, fop f0 * f0, fimm ftmp 0.5, "
+               "fop f0 - ftmp, fop facc = f0, turn long, cast int, fstow f0 < -8, done, move 0, "
+               "fstow f0 < -8, done, size open 16, link boot open"));
+    }
+    it("takes a real parameter into its register, and passes one from there") {
+      fregs = 8;
+      check(compiles("real h(real x) { x += 1; x += 1; return x * x; } int main() { real a = 2; a += a; return h(a); }"));
+      check(has("fstow f0 > -8, fbit f0 = a0, fimm ftmp 1, fop f0 + ftmp"));
+      check(has("fop facc = f0, fop facc * f0, fbit acc = facc, fstow f0 < -8, done"));
+      check(has("fop f0 + f0, fbit a0 = f0, dial"));
+    }
+    it("gives no register to a name of a real and of an integer") {
+      fregs = 8, regs = 5;
+      check(compiles("int main() { { real a = 1; a += 1; a += 1; } { int a = 1; a += 1; a += 1; } return 0; }"));
+      check(calls[op_rop] == 0 && calls[op_stow] == 0 && calls[op_fop] == 2);
+    }
+    it("computes the right operand first, then puts the left one beside it") {
+      check(compiles("int main() { real a = 2, b = 3; int i = 4; return a - b * i; }"));
+      check(has("load -24:4, turn real int, fslot ftmp < -16, fop facc * ftmp, fop ftmp = facc, fslot facc < -8, fop facc - ftmp"));
+    }
+    it("takes + * and comparisons with the left operand second") {
+      check(compiles("int main() { real a = 2, b = 3; when(a < b * b) return a + b * b; return 0; }"));
+      check(has("fop facc * ftmp, fslot ftmp < -8, fop.t facc > ftmp, cond !>") && has("fop facc * ftmp, fslot ftmp < -8, fop facc + ftmp"));
+    }
+    it("keeps a computed left operand in a real scratch, or on the stack across a call") {
+      check(compiles("real h(real x) { return x; }\n"
+                     "int main() { real a = 2, b = 3; return (a + b) * (a - b) + (a + b) * h(a); }"));
+      check(has("fop facc + ftmp, fkeep, fslot facc < -8, fslot ftmp < -16, fop facc - ftmp, flift fkeep 0, ftake 0, fop facc * ftmp"));
+      check(has("fkeep, load -8:8, pass 0, dial, link dial open, fbit facc = acc, fpull, fop facc * ftmp, fpull, fop facc + ftmp"));
+    }
+    it("keeps a real through a pointer for op=, and stores it back") {
+      check(compiles("int main() { real v[2]; real* p = v; *p = 1; *p += 2; p[1] = *p; return 0; }"));
+      check(has("load -24:8, push, fat facc <, fkeep, fimm ftmp 2, fop facc + ftmp, pull, fat facc >"));
+      check(has("calc.w + 8, push, load -24:8, fat facc <, pull, fat facc >"));
+    }
+    it("saves the real registers of locals around C code, which does not keep them on x86-64") {
+      fregs = 8;
+      check(compiles("real sqrt(real x);\nint main() { real a = 2; a += a; a += a; return sqrt(a) > a; }"));
+      check(has("fbit acc = f0, push, fslot f0 > -16, glob, ffi 1/1 slot real 0x41, fslot f0 < -16, keep, fbit facc = acc, fop.t facc > f0"));
+    }
+    it("saves all 16 bytes of the real registers of locals on Win64, which C code keeps") {
+      fregs = 8, regs = 5, oses = os_win;
+      check(compiles("real sqrt(real x);\nint main() { int i = 0; real a = 2; while(i < 3) { a += sqrt(a); i += 1; } return a; }"));
+      check(has("open, stow r0 > -8, fstow f0 > -24 full,") && has("fstow f0 < -24 full, done") && calls[op_fslot] == 0);
     }
     it("makes an argument the type of its parameter") {
       check(compiles("real h(real x, int k) { return x; } int main() { return h(2, 3.5); }"));
