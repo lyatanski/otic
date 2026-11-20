@@ -81,6 +81,12 @@ int main() {
 
 - types: `void`, `bool`, `byte`, `char`, `nu16`, `int`, `long`, `real`,
   pointers, arrays, structs (anonymous, bit-fields)
+- a struct member without a declarator gives its members to the outer struct
+  at its own offset and alignment, which allows basic inheritance:
+  `struct foo { int a; int b; }; struct bar { foo; int c; };` makes `bar`
+  start with a `foo`, so `bar` has `a`, `b` and `c`, and a `bar*` can be
+  used where a `foo*` is expected. An anonymous `struct { int a; };` member
+  works the same way; a member name given twice is an error
 - `real` is a 64-bit floating point number, C's `double`: literals `1.5`,
   `.5`, `1e3`; with an integer it computes as a real, and an assignment,
   argument or `return` converts between them (toward zero). It takes

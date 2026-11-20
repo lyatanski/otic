@@ -1888,11 +1888,18 @@ meta* nibs(mode* self, meta* t, u32i at, u32i width) {
   return sole(self, (meta){.kind = bitf, .type = t, .size = t->size, .slot = at, .longs = (byte)width});
 }
 
+// fail when struct type has a member called name already (none when NULL)
+static void  dupe(mode* self, const meta* type, const item* name) {
+  for(meta* m = name? type->type: NULL; m; m = m->hide)
+    if(m->name && akin(m->name, name)) flaw(self, "member '%.*s' given twice\n", nick(name));
+}
+
 // { type declarator (: width)? (, declarator (: width)?)* ; ... } after
 // "struct" name?, name NULL when it has none. A member is aligned to its size,
 // the struct to its widest member. A bit-field takes the bits after the one
 // before unless they would cross a unit of its type, a width 0 without a name
-// ends the unit. A struct without a name nor a declarator gives its members
+// ends the unit. A struct member without a declarator gives its members to
+// this one, at its offset; a name given twice fails
 meta* bulk(mode* self, item* name) {
   meta* type;
   if(name) { // seeded first: members may point to it
@@ -1906,11 +1913,13 @@ meta* bulk(mode* self, item* name) {
   u32i  bit = 0, align = 1; // bits laid out
   while(!twin(self, '}')) {
     meta* of = sort(self); // the type the declarators are of
-    if(twin(self, ';')) { // a struct, defined: its members are this one's when it has no name
-      if(of->kind != list || of->name) continue;
+    if(twin(self, ';')) { // a struct without a declarator: its members are this one's
+      if(of->kind != list) continue;
+      if(of == type) flaw(self, "a struct cannot hold itself\n");
       u32i  a = lean(of);
       bit = (bit + 8 * a - 1) & ~(8 * a - 1);
       for(meta* m = of->type; m; m = m->hide) {
+        dupe(self, type, m->name);
         *next = mint(self, (meta){.name = m->name, .type = m->type, .slot = bit / 8 + m->slot});
         next = &(*next)->hide;
       }
@@ -1939,6 +1948,7 @@ meta* bulk(mode* self, item* name) {
         at = bit = (bit + 8 * a - 1) & ~(8 * a - 1);
         bit += 8 * t->size;
       }
+      dupe(self, type, n);
       *next = mint(self, (meta){.name = n, .type = t, .slot = at / 8});
       next = &(*next)->hide;
       if(align < a) align = a;

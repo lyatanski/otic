@@ -1170,6 +1170,25 @@ spec(TAG) {
       expect(31, "struct o { char k; struct { int a; byte b:2, c:3; }; long z; };\n"
                  "o g = {1, 2, 3, 4, 5};\n"
                  "int main() { o v = {.c = 7, .a = 9}; return g.k + g.a + g.b + g.c + g.z + v.a + v.c + v.k + v.z; }\n");
+    it("gives the members of a named struct member without a declarator to its struct")
+      expect(31, "struct pt { char x; int y; };\n"
+                 "struct o { char k; struct pt; long z; };\n"
+                 "struct w { o; byte b:3; };\n"
+                 "struct same { char k; pt p; long z; };\n"
+                 "int main() { w v = {1, 2, 3, 4, 5}; w* p = &v; o* q = &v; pt* r = &q->x; same s;\n"
+                 "  byte* vz = &v.z; byte* v0 = &v; byte* sz = &s.z; byte* s0 = &s;\n"
+                 "  return (v.k + v.x + v.y + v.z + p->b == 15) + (sizeof(o) == sizeof(same)) * 2\n"
+                 "    + (r->y == 3) * 4 + (vz - v0 == sz - s0) * 8 + (sizeof(w) == 32) * 16; }\n");
+    it("rejects a member name given twice")
+      expect(bad, "struct s { int a; long a; };\nint main() { return 0; }\n");
+    it("rejects a member name given twice through a struct member")
+      expect(bad, "struct p { int a; };\nstruct s { long a; p; };\nint main() { return 0; }\n");
+    it("rejects the same struct member given twice")
+      expect(bad, "struct p { int a; };\nstruct s { struct p; struct p; };\nint main() { return 0; }\n");
+    it("rejects a member name of two anonymous struct members")
+      expect(bad, "struct s { struct { int a; }; struct { char b; int a; }; };\nint main() { return 0; }\n");
+    it("rejects a struct that holds itself")
+      expect(bad, "struct s { int a; struct s; };\nint main() { return 0; }\n");
     it("defines a struct in a function and with its declarators")
       expect(23, "struct n { int v; n* next; } n1 = {3};\n"
                  "int main() { struct w { int a; } wv = {11}; struct p { int b; }; p v; v.b = 9; return wv.a + v.b + n1.v; }\n");
