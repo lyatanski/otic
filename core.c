@@ -72,18 +72,8 @@ static void lex(mode* self) {
       kind = tnum; break;
     case '"':
       for(c++; *c != '"'; c++) {
-        if(!*c || *c == '\n') flaw(self, "unterminated string\n");
+        if(!*c) flaw(self, "unterminated string\n");
         if(*c == '\\') c++;
-        //if(*c == '\\') switch (*++c) {
-        //  case 'a': '\a'; break;
-        //  case 'b': '\b'; break;
-        //  case 'f': '\f'; break;
-        //  case 'n': '\n'; break;
-        //  case 't': '\t'; break;
-        //  case 'v': '\v'; break;
-        //  case 'r': '\r'; break;
-        //  default: break;
-        //}
       }
       c++;
       kind = '"'; break;
