@@ -492,6 +492,20 @@ spec(TAG) {
       expect(5, "int main() { return 0b101; }\n");
     it("reads octal numbers")
       expect(15, "int main() { return 0o17; }\n");
+    it("reads a number wider than 32 bits as a long")
+      expect(15, "long a = 4294967296;\nlong b = 14695981039346656037;\n"
+                 "int main() { long c = 1099511628211, d = 4294967296;\n"
+                 "  return (a == d) + (c >> 32 == 256) * 2 + (b < 0) * 4 + (a >> 32 == 1) * 8; }\n");
+    it("reads a prefixed number of 32 bits as an int of its bits")
+      expect(3, "int main() { long v = 0xffffffff; return (v == -1) + (0x80000000 < 0) * 2; }\n");
+    it("takes a long number, negated, as an initializer")
+      expect(31, "long g = -9223372036854775807;\nlong h = ~4294967296;\nint i = 4294967297;\nreal r = 4294967296;\n"
+                 "int main() { static long s = -4294967296;\n"
+                 "  return (g + 9223372036854775807 == 0) + (h == -4294967297) * 2 + (i == 1) * 4"
+                 " + (r == 4294967296.0) * 8 + (s >> 32 == -1) * 16; }\n");
+    it("picks the long overload for a long number")
+      expect(21, "int f(int a) { return 1; }\nint f(long a) { return 2; }\n"
+                 "int main() { return f(4294967296) * 10 + f(7); }\n");
     it("reads a character as its number")
       expect(97, "int main() { char c = 'a'; return c; }\n");
     it("reads escaped characters")

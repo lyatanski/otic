@@ -17,7 +17,7 @@ enum { tend, ttag, tnum, treal };
 char  esc(char v) { return v == 'n'? '\n': v == 't'? '\t': v == 'r'? '\r': v == '0'? 0: v; }
 
 static void lex(mode* self) {
-  s64i  ival = 0;
+  u64i  ival = 0;
   u64i  fval = 0;
   u32i  kind = tend;
   byte* c = home(self)->code->body;
@@ -89,6 +89,7 @@ static void lex(mode* self) {
         c = (byte*)end;
         kind = treal; break;
       }
+      byte* d = c; // past the digits: a prefix follows when it moves
       if(*c == 'B' || *c == 'b')
         while(*c++ && (*c == '0' || *c == '1')) ival = ival *  2 + *c - '0';
       else if(*c == 'O' || *c == 'o')
@@ -100,6 +101,7 @@ static void lex(mode* self) {
           else if(*c >= 'a' && *c <= 'f') ival = ival * 16 + *c - 'a' + 10;
           else break;
         }
+      if(c != d && ival <= 0xffffffff) ival = (u64i)(s64i)(s32i)ival; // 0xffffffff is -1, as 32 bits
       kind = tnum; break;
     case '\0': break;
     default:
@@ -991,11 +993,28 @@ yield sharp(mode* self) {
   return r;
 }
 
+// v, an int constant when it fits, else a long read from data. Its slot is
+// mode.big, so an initializer or a unary operator still takes it as a constant
+oper  huge(mode* self, s64i v) {
+  if(v == (s32i)v) return cnst(self, (s32i)v);
+  u32i  off = lay(self, 8, 0, 8);
+  copy(self->data->head + off, &v, 8);
+  self->big = off + 1;
+  return (oper){.kind = vglo, .ival = (s32i)off, .type = tget(self, long)};
+}
+
+// 1 and its value in v when x is the last long constant huge read from data
+bool  great(const mode* self, oper x, s64i* v) {
+  if(x.kind != vglo || (u32i)x.ival + 1 != self->big) return 0;
+  copy((byte*)v, self->data->head + x.ival, 8);
+  return 1;
+}
+
 oper  atom(mode* self) {
   u32i op = home(self)->talk.kind;
   oper x;
   switch(op) {
-    case tnum: x = cnst(self, (s32i)home(self)->talk.ival); chop(self); return x;
+    case tnum: x = huge(self, (s64i)home(self)->talk.ival); chop(self); return x;
     case treal: x = (oper){.kind = vflo, .fval = home(self)->talk.fval, .type = tget(self, real)}; chop(self); return x;
     case '"': {
       u32i off = lay(self, (u32i)(home(self)->talk.hash->size - 1), 0, 8);
@@ -1028,10 +1047,7 @@ oper  atom(mode* self) {
       if(self->dry && span(y.type) == 8) return (oper){.kind = vnum, .type = tget(self, long)};
       s64i  v = (s64i)y.bits;
       switch(span(y.type)) { case 0: v = 0; break; case 1: v = (byte)v; break; case 2: v = (u16i)v; break; case 4: v = (s32i)v; }
-      if(v == (s32i)v) return cnst(self, (s32i)v);
-      u32i  off = lay(self, 8, 0, 8); // a long that is no int: read from data
-      copy(self->data->head + off, &v, 8);
-      return (oper){.kind = vglo, .ival = (s32i)off, .type = tget(self, long)};
+      return huge(self, v);
     }
     case '(':
       chop(self);
@@ -1071,6 +1087,9 @@ oper  atom(mode* self) {
       }
       if(x.kind == vnum)
         return cnst(self, op == '-'? (s32i)(0 - (u32i)x.ival): op == '!'? !x.ival: ~x.ival);
+      s64i  v;
+      if(great(self, x, &v)) // into a slot of its own: code may read the old one
+        return op == '!'? cnst(self, !v): huge(self, op == '-'? (s64i)(0 - (u64i)v): ~v);
       x = load(self, x);
       u32i w = wide(x.type);
       if(op == '-') { emit(self, swap); emit(self, move, 0); emit(self, calc, '-' | w, 0, 0); }
@@ -1713,11 +1732,14 @@ void  seal(mode* self, meta* type, bool glob, s32i slot) {
   else if(glob && type->kind == refs && cite(self, slot)) return;
   else if(glob) {
     oper x = expr(self, 1);
+    s64i v;
+    bool  big = great(self, x, &v); // a long constant
+    if(big) x = flot(self, type)? flo(self, (double)v): (oper){.kind = vnum, .type = x.type};
     if(x.kind == vnum || x.kind == vflo) x = bend(self, x, type);
     byte* at = self->data->head + slot; // after expr: a string in it moves data
     if((x.kind != vnum && x.kind != vflo) || t || type->kind == list)
       flaw(self, "expected a constant\n");
-    s64i v = x.ival;
+    if(!big) v = x.ival;
     if(x.kind == vflo) copy(at, &x.fval, 8);
     else if(type->kind == bitf) { // into the bits of its unit
       u64i u = 0;
@@ -1928,80 +1950,117 @@ void  sift(mode* self, u32i top, bool lone) {
     x->name->pick |= flot(self, x->type)? FLOT: fits(self, x->type)? INTS: NEVER;
     again |= meet(c, n, x->name, 0, clash, live, &mine); // in scope through the body
   }
-  do {
-    u32i  k = u->talk.kind, w = 1u << 3 * (loops < 3? loops: 3);
-    item* it = k == ttag && p != '.' && p != tokd('-', '>')? u->talk.hash: NULL; // not a member
-    item* was = decl;
-    // an operand ends before the token: a & after it is no address
-    bool  val = p == tnum || p == treal || p == ')' || p == ']' || (p == ttag && last != ret && last != alt && last != len);
-    bool  shut = 0; // the ) of a condition: a statement follows
-    decl = NULL;
-    depth += (k == '{') - (k == '}');
+  // an operand ends before the token: a & after it is no address
+#define VALUE (p == tnum || p == treal || p == ')' || p == ']' || (p == ttag && last != ret && last != alt && last != len))
+  // the name before the ( is called: not a keyword taking parentheses
+#define CALLS (p == ttag && last != loop && last != when && last != len && last != ret)
+  do { // one switch on the token's kind: each kind updates only what it changes
+    u32i  k = u->talk.kind;
+    item* it = NULL, *was = decl; // it: a name, not a member
+    bool  shut = 0, open = !cond, ref = amp; // shut: the ) of a condition, a statement follows; ref: a unary & came before
+    decl = NULL, amp = 0;
     if(cond) { cond += (k == '(') - (k == ')'); if(cond == 1) cond = 0, shut = 1; }
-    else if(it && (it == loop || it == when)) { cond = 1; if(it == loop && loops < 8) end[loops++] = depth, hold = 0, prec = 0; }
-    else if(k == ';' || k == '}') while(loops && end[loops - 1] == depth) loops--;
-
-    const meta* m = it && !it->pick && !cond && it != ret && (p == '{' || p == '}' || p == ';')? find(self, self->unit, it): NULL;
-    if(m && (m->kind == base || m->kind == list)) { of = m; arm = 1; stars = 0; lvl = 0; }
-    else if(it) {
-      if(arm || amp || deep) { // declared, or its address is taken
-        if(!(ok = sown(c, &n, it))) break;
-        if(amp || deep) it->pick |= NEVER;
-        else it->pick |= !stars && flot(self, of)? FLOT: stars || fits(self, of)? INTS: NEVER;
-        if(arm) { decl = it; again |= meet(c, n, it, depth, clash, live, &mine); }
-      }
-      if(it->pick && (it->pick & USES) < 1u << 28) it->pick += w;
-      arm = 0;
-    }
-    else if(k == '*' && arm) stars = 1;
-    else if(k == ',' && of && !lvl) { arm = 1; stars = 0; }
-    else {
-      if(k == '[' && was) was->pick |= NEVER; // an array
-      if(k == ';') of = NULL;
-      lvl += (k == '(' || k == '[' || k == '{') - (k == ')' || k == ']' || k == '}');
-      arm = 0;
-    }
+    if(k == ttag) goto name; // the most frequent kind: skips the switch's search
     switch(k) {
-      case '#': run = 1; break;
-      case '(':
-        if((p == ttag && !run && last != loop && last != when && last != len && last != ret) || p == ')' || p == ']') calls = 1;
-        run = 0;
+      case ttag: name: {
+        if(p == '.' || p == tokd('-', '>')) { arm = 0; break; } // a member
+        it = u->talk.hash;
+        u32i  w = 1u << 3 * (loops < 3? loops: 3);
+        if(open && (it == loop || it == when)) { cond = 1; if(it == loop && loops < 8) end[loops++] = depth, hold = 0, prec = 0; }
+        const meta* m = !it->pick && !cond && it != ret && (p == '{' || p == '}' || p == ';')? find(self, self->unit, it): NULL;
+        if(m && (m->kind == base || m->kind == list)) { of = m; arm = 1; stars = 0; lvl = 0; break; }
+        if(arm || ref || deep) { // declared, or its address is taken
+          if(!(ok = sown(c, &n, it))) goto full;
+          if(ref || deep) it->pick |= NEVER;
+          else it->pick |= !stars && flot(self, of)? FLOT: stars || fits(self, of)? INTS: NEVER;
+          if(arm) { decl = it; again |= meet(c, n, it, depth, clash, live, &mine); }
+        }
+        if(it->pick && (it->pick & USES) < 1u << 28) it->pick += w;
+        arm = 0;
         break;
-      case '{': lits |= p == ')'; break;
-      case '/': case '%': case tokd('/', '='): case tokd('%', '='): divs = 1;
-    }
-    if(k == '}' && depth + 1 < NEST) live[depth + 1] = 0; // the locals of the block it ends leave scope
-    if(deep) deep += (k == '(') - (k == ')');
-    else if(amp && k == '(') deep = 1;
-    amp = k == '&' && !val;
-    if(loops) switch(k) {
+      }
       case '(':
-        if(p == ttag && last != loop && last != when && last != len && last != ret) lend |= hold; // a call
+        lvl++, arm = 0;
+        if((CALLS && !run) || p == ')' || p == ']') calls = 1;
+        run = 0;
+        if(deep) deep++;
+        else if(ref) deep = 1;
+        if(loops) { if(CALLS) lend |= hold; prec = 0; } // a call
+        break;
+      case ')':
+        lvl--, arm = 0;
+        if(deep) deep--;
+        if(loops && shut) hold = 0, prec = 0;
+        break;
+      case '[':
+        if(was) was->pick |= NEVER; // an array
+        lvl++, arm = 0;
+        if(loops) prec = 0;
+        break;
+      case ']': lvl--, arm = 0; break;
+      case '{':
+        depth++, lvl++, arm = 0;
+        lits |= p == ')';
+        if(loops) hold = 0, prec = 0;
+        break;
+      case '}':
+        depth--, lvl--, arm = 0;
+        if(open) while(loops && end[loops - 1] == depth) loops--;
+        if(depth + 1 < NEST) live[depth + 1] = 0; // the locals of the block it ends leave scope
+        if(loops) hold = 0, prec = 0;
+        break;
+      case ';':
+        of = NULL, arm = 0;
+        if(open) while(loops && end[loops - 1] == depth) loops--;
+        if(loops) hold = 0, prec = 0;
+        break;
+      case ',':
+        if(of && !lvl) arm = 1, stars = 0;
+        else arm = 0;
+        if(loops) hold = 0, prec = 0;
+        break;
+      case '#': run = 1, arm = 0; if(loops) hold = 0; break; // its call runs while compiling
+      case tokd('/', '='): case tokd('%', '='): divs = 1;
         // fallthrough
-      case '[': prec = 0; break;
-      case ')': if(shut) hold = 0, prec = 0; break;
-      case '#': hold = 0; break; // its call runs while compiling
-      case ';': case '{': case '}': case ',': case '=': case tokd('&', '&'): case tokd('|', '|'):
-      case tokd('+', '='): case tokd('-', '='): case tokd('*', '='): case tokd('/', '='): case tokd('%', '='):
+      case '=': case tokd('&', '&'): case tokd('|', '|'):
+      case tokd('+', '='): case tokd('-', '='): case tokd('*', '='):
       case tokd('&', '='): case tokd('|', '='): case tokd('^', '='): case tokd('<', '<', '='): case tokd('>', '>', '='):
-        hold = 0, prec = 0; break;
-      case tokd('-', '>'): case '!': case '~': prec = NEST; break;
-      case '*': case '-': case '&':
+        arm = 0;
+        if(loops) hold = 0, prec = 0;
+        break;
+      case tokd('-', '>'): case '!': case '~': arm = 0; if(loops) prec = NEST; break;
+      case '*': case '-': case '&': {
+        bool  val = VALUE;
+        if(k != '*' || !arm) arm = 0;
+        else stars = 1;
+        if(k == '&') amp = !val;
+        if(!loops) break;
         if(!val) { prec = NEST; break; } // unary
+        goto bin;
+      }
+      case '/': case '%': divs = 1;
         // fallthrough
-      case '+': case '/': case '%': case '|': case '^': case tokd('<', '<'): case tokd('>', '>'):
-      case '<': case '>': case tokd('<', '='): case tokd('>', '='): case tokd('=', '='): case tokd('!', '='): {
-        u32i r = (u32i)rank((int)k); // binary: its left operand is computed unless a lone name or number
+      case '+': case '|': case '^': case tokd('<', '<'): case tokd('>', '>'):
+      case '<': case '>': case tokd('<', '='): case tokd('>', '='): case tokd('=', '='): case tokd('!', '='):
+        arm = 0;
+        if(!loops) break;
+      bin: {
+        u32i  r = (u32i)rank((int)k); // binary: its left operand is computed unless a lone name or number
         if(p == ')' || p == ']' || prec >= r) hold = 1;
         prec = r;
+        break;
       }
+      default: arm = 0;
     }
     if(it != tag || !it) { p = shut? ';': k; last = it; } // struct name is a type as name is
     byte* from = u->code->body;
     lex(self);
-    self->lexes = swell(self, self->lexes, self->lexn, &self->lexc, sizeof(lexed), 256);
+    if(self->lexn == self->lexc) self->lexes = swell(self, self->lexes, self->lexn, &self->lexc, sizeof(lexed), 256);
     self->lexes[self->lexn++] = (lexed){from, u->code->body, u->line, u->talk};
   } while(depth && u->talk.kind);
+full:
+#undef VALUE
+#undef CALLS
   u->code->body = at, u->line = line, u->talk = talk;
   self->lexi = 0, self->lexu = self->unit; // chop replays the tokens
 

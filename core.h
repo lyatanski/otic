@@ -427,6 +427,7 @@ struct mode {
   u32i  layers;    // sources a # generated, one inside another
   u32i  dry;       // nesting of overload arguments compiled for their types only: a # there is not run
   u32i  ripe;      // bytes of data that finished declarations have laid
+  u32i  big;       // 1 + the data offset of the last long constant read from data (huge)
   u64i  bssat, slotat; // set while docking an image: where bss and the import slots are
 
   u32i  top, piles;
