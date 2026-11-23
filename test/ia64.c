@@ -190,6 +190,15 @@ spec("ia64") {
       // push rbp; mov rbp, rsp; sub rsp, 32
       check(emits("55 48 89 e5 48 81 ec 20 00 00 00", f = here, e.open(t), e.size(t, f, 32)));
     }
+    it("grows a frame past 4K after the function a page at a time, and comes back") {
+      // push rbp; mov rbp, rsp; jmp +4; nop; leave; ret;
+      // sub rsp, 0x340; test [rsp], rsp; mov r11d, 0x12;
+      // sub rsp, 4096; test [rsp], rsp; dec r11d; jnz -16; jmp -40
+      check(emits("55 48 89 e5 e9 04 00 00 00 66 90 c9 c3 "
+                  "48 81 ec 40 03 00 00 48 85 24 24 41 bb 12 00 00 00 "
+                  "48 81 ec 00 10 00 00 48 85 24 24 41 ff cb 75 f0 e9 d8 ff ff ff",
+                  f = here, e.open(t), e.done(t), e.size(t, f, 0x12340)));
+    }
     it("leaves and returns") {
       check(emits("c9 c3", e.done(t)));                 // leave; ret
     }

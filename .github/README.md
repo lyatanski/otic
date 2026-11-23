@@ -121,6 +121,12 @@ int main() {
   source file; an `extern` global lives in a loaded library and has no
   storage of its own. A `static` local is a global that only its block
   sees: it keeps its value between calls, set once by constants
+- after a `load`, a call of an undeclared name imports it from that library
+  (`sprintf(b, "%d", 42)`): it gives an int and takes each call's arguments
+  as they are, as if not variadic. That fits C functions that give an int or
+  nothing, except variadic ones on Apple arm64 (and their real arguments on
+  Windows arm64); a pointer result needs a declaration. So past a `load`, a
+  function of the source is defined before its calls
 - `syscall(n, ...)` goes straight to the kernel
 - a `#!` first line is skipped, so a source can be a script: `#!/usr/bin/env otic`
 - `#f(args)` calls `f` while compiling, as host code, and takes its result in

@@ -597,7 +597,9 @@ oper  suit(mode* self, const meta* f, u32i i, oper x, u32i* real) {
 // names each for the linker
 #define KIN   32   // overloads of a name at most
 #define SPELL 1024 // bytes of a symbol or an overload message
-#define ours(m) ((m) && (m)->kind == call && !((m)->ext && !(m)->lib))
+// an import guessed at a call (dial): C code of the library of its unit's load
+#define hunch(m) ((m)->lib && (m)->size == VARY)
+#define ours(m) ((m) && (m)->kind == call && !((m)->ext && !(m)->lib) && !hunch(m))
 
 static bool  peer(const meta* f, const meta* g) {
   return f->size == g->size && f->longs == g->longs && f->reals == g->reals;
@@ -744,11 +746,18 @@ meta* elect(mode* self, item* name) {
 
 // each argument is pushed on 64 bits, then popped into its register, the last
 // one from acc. A constant or a register local waits (late) until the others
-// are computed. C code and syscall pop them all
+// are computed. C code and syscall pop them all. After a load an undeclared
+// name is an import of its library (hunch): an int result, the parameters of
+// each call its arguments, none of them variadic
 oper  dial(mode* self, item* name) {
   bool  trap = name == sget(self, "syscall");
   meta* func = find(self, self->unit, name);
   if(func && plural(func, name)) func = elect(self, name);
+  if(!func && !trap && home(self)->from) {
+    func = mint(self, (meta){.name = name, .hide = name->data, .type = tget(self, int), .kind = call,
+                             .ext = 1, .size = VARY, .lib = home(self)->from, .unit = self->unit});
+    name->data = func;
+  }
   bool  ffi = func && (func->kind == pend || (func->kind == call && func->ext));
   u32i  argc = 0, late = 0, real = 0;
   s32i  last = -1; // the argument in acc
@@ -2218,14 +2227,20 @@ void  stmt(mode* self) {
 }
 
 // an import from the library of the last load, or "c". Redeclaring the same
-// import keeps its slot; over C code of an object or archive x is a prototype
-// (cabi). A new overload (lots) is checked by its symbol (dub)
+// import keeps its slot, as does declaring one guessed at a call (hunch); over
+// C code of an object or archive x is a prototype (cabi). A new overload
+// (lots) is checked by its symbol (dub)
 void  hire(mode* self, meta* x, const meta* prev, bool lots) {
   x->ext = 1;
   if(x->kind == call && prev && (prev->kind == pend || (prev->kind == call && prev->ext && !prev->lib)))
     return;
   x->lib = home(self)->from? home(self)->from: rack(self, sget(self, "\"c\""));
-  if(prev && prev->ext && !prev->addr && prev->kind == x->kind && prev->lib == x->lib
+  if(x->kind == call && prev && hunch(prev)) {
+    if(prev->lib != x->lib || prev->type != x->type)
+      flaw(self, "'%.*s' was called before its declaration, as an int function of the library loaded there\n", nick(x->name));
+    x->slot = prev->slot;
+  }
+  else if(prev && prev->ext && !prev->addr && prev->kind == x->kind && prev->lib == x->lib
      && prev->type == x->type && prev->size == x->size && prev->more == x->more)
     x->slot = prev->slot;
   else if(prev || !lots) once(self, prev, x->name, x->own);
@@ -2323,6 +2338,8 @@ void  decl(mode* self) {
       bury(self, top);
       return;
     }
+    if(prev && hunch(prev) && prev->unit == self->unit)
+      flaw(self, "'%.*s' was called before its definition, as a function of the library loaded there\n", nick(name));
     if(prev || !lots) once(self, prev, name, own);
     if(lots) crowd(self, func, c, lots, NULL);
     if(anon) flaw(self, "a parameter without a name\n");

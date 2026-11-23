@@ -242,11 +242,14 @@ spec("arm8") {
       // stp x29, x30, [sp, #-16]!; mov x29, sp; sub sp, sp, #32
       check(emits("fd 7b bf a9 fd 03 00 91 ff 83 00 d1", f = here, e.open(t), e.size(t, f, 32)));
     }
-    it("grows a frame past 4K after the function, and comes back") {
+    it("grows a frame past 4K after the function a page at a time, and comes back") {
       // stp x29, x30, [sp, #-16]!; mov x29, sp; b +16; mov sp, x29; ldp x29, x30, [sp], #16; ret;
-      // sub sp, sp, #0x12, lsl #12; sub sp, sp, #0x340; b -20
+      // sub sp, sp, #0x340; ldr xzr, [sp]; mov w16, #0x12;
+      // sub sp, sp, #1, lsl #12; ldr xzr, [sp]; subs w16, w16, #1; b.ne -12; b -40
       check(emits("fd 7b bf a9 fd 03 00 91 04 00 00 14 bf 03 00 91 fd 7b c1 a8 c0 03 5f d6 "
-                  "ff 4b 40 d1 ff 03 0d d1 fb ff ff 17", f = here, e.open(t), e.done(t), e.size(t, f, 0x12340)));
+                  "ff 03 0d d1 ff 03 40 f9 50 02 80 52 "
+                  "ff 07 40 d1 ff 03 40 f9 10 06 00 71 a1 ff ff 54 f6 ff ff 17",
+                  f = here, e.open(t), e.done(t), e.size(t, f, 0x12340)));
     }
     it("unwinds and returns") {
       // mov sp, x29; ldp x29, x30, [sp], #16; ret

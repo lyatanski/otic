@@ -55,6 +55,11 @@
 #else
 #define environ_it it
 #endif
+#if defined(__aarch64__) && defined(__APPLE__) || defined(_M_ARM64) // variadic arguments on the stack, or reals in integer registers
+#define vary_it xit
+#else
+#define vary_it it
+#endif
 #if defined(__linux__) && defined(__x86_64__) // objects: x86-64 ELF only
 #define elfs_it it
 #else
@@ -1417,6 +1422,16 @@ spec(TAG) {
                      "int main() { long v = 1; ilogb(v); puts(\"m\"); return 0; }\n");
     it("rejects a link of a library the host does not have")
       expect(bad, "link \"zzz\";\nint main() { return 0; }\n");
+    it("calls a function of a load without declaring it")
+      here(45, "load \"c\";\nint main() { return atoi(\"42\") + strlen(\"abc\"); }\n");
+    vary_it("calls a variadic function of a load without declaring it")
+      here(42, "load \"c\";\nint main() { char b[8]; sprintf(b, \"%d\", 42); return atoi(b); }\n");
+    vary_it("passes each undeclared call its own arguments")
+      prints("a 1 2.5\n", "load \"c\";\nint main() { printf(\"a \"); printf(\"%d %.1f\\n\", 1, 2.5); return 0; }\n");
+    it("declares an import after a call that guessed it")
+      here(6, "load \"c\";\nint f() { return abs(-5); }\nint abs(int a);\nint main() { return f() + abs(-1); }\n");
+    it("lets a local hide an undeclared import")
+      here(2, "load \"c\";\nint main() { int abs = 2; return abs; }\nint g() { return abs(-9); }\n");
   }
 
   context("objects") {
@@ -2163,6 +2178,12 @@ spec(TAG) {
       lost("load \"c\";\nint nosuch(int);\nint main() { return nosuch(1); }\n");
     it("rejects a call to an import from a missing library")
       lost("load \"zzz\";\nint f(int);\nint main() { return f(1); }\n");
+    it("rejects an undeclared call to a function the load does not have")
+      lost("load \"c\";\nint main() { return nosuch(1); }\n");
+    it("rejects a declaration with another result after an undeclared call")
+      expect(bad, "load \"c\";\nint main() { return labs(1); }\nlong labs(long n);\n");
+    it("rejects a definition after an undeclared call")
+      expect(bad, "load \"c\";\nint main() { return f(); }\nint f() { return 1; }\n");
     it("rejects a forward call to an import")
       expect(bad, "int main() { return puts(\"x\"); }\nload \"c\";\nint puts(char*);\n");
     it("rejects an import from two libraries")

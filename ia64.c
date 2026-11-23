@@ -555,9 +555,25 @@ void ia64_open(file* text) {
   ib(text, 0x48); iw(text, 0xec81); id(text, 0); // sub rsp, imm32, patched by size
 }
 
+// a frame past 4K: the sub becomes a jmp to code after the function that grows
+// rsp and comes back. It goes down a page at a time and touches each one, as
+// Windows commits the stack only past its guard page
 void ia64_size(file* text, byte* func, s32i size) {
-  (void)text;
-  copy(func + 7, &size, sizeof(size));
+  if(size <= 0xfff) { copy(func + 7, &size, sizeof(size)); return; }
+  s32i to = (s32i)(text->body - (func + 9));
+  func[4] = 0xe9; copy(func + 5, &to, sizeof(to)); // jmp rel32
+  func[9] = 0x66; func[10] = 0x90;              // xchg ax, ax: a 2-byte nop
+  if(size & 0xfff) {
+    ib(text, 0x48); iw(text, 0xec81); id(text, (u32i)size & 0xfff); // sub rsp, size % 4K
+    id(text, 0x24248548);                       // test [rsp], rsp
+  }
+  iw(text, 0xbb41); id(text, (u32i)size >> 12); // mov r11d, pages
+  ib(text, 0x48); iw(text, 0xec81); id(text, 0x1000); // sub rsp, 4096
+  id(text, 0x24248548);                         // test [rsp], rsp
+  ib(text, 0x41); iw(text, 0xcbff);             // dec r11d
+  iw(text, 0xf075);                             // jnz the sub
+  to = (s32i)(func + 11 - (text->body + 5));
+  ib(text, 0xe9); id(text, (u32i)to);           // jmp back
 }
 
 // Linux syscall: number in rax, arguments in rdi rsi rdx r10 r8 r9

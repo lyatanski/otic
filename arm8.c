@@ -384,12 +384,21 @@ void arm8_open(file* data) {
 }
 
 // a frame past 4K: the sub becomes a b to code after the function that grows
-// sp and comes back
+// sp and comes back. It goes down a page at a time and touches each one, as
+// Windows commits the stack only past its guard page
 void arm8_size(file* data, byte* func, s32i size) {
   uint32_t* sub = (uint32_t*)func + 2;
   if(size <= 0xfff) { *sub |= size << 10; return; }
   *sub = I3206_B | arm8_span(sub, data->body, 26);
-  arm8_less(data, 31, 31, size);
+  if(size & 0xfff) {
+    arm8_less(data, 31, 31, size & 0xfff);
+    arm8_put(data, 0xf94003ff);                                     // ldr xzr, [sp]
+  }
+  arm8_imm(data, r16, (u32i)size >> 12);
+  arm8_put(data, 0xd14007ff);                                       // sub sp, sp, #1, lsl #12
+  arm8_put(data, 0xf94003ff);                                       // ldr xzr, [sp]
+  arm8_put(data, 0x71000610);                                       // subs w16, w16, #1
+  arm8_put(data, 0x54ffffa1);                                       // b.ne the sub
   arm8_put(data, I3206_B | arm8_span(data->body, sub + 1, 26));
 }
 
