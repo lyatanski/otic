@@ -309,8 +309,9 @@ static void ia64_sse(file* text, byte pre, byte code, byte reg, byte rm) {
 }
 
 // the xmm register of a real operand: facc xmm0, ftmp xmm1, the register of
-// real local r xmm8 + r. Real scratch k is xmm2 + k, which Win64 does not keep
-static byte ia64_xmm(s32i f) { return f >= 0? (byte)(8 + f): f == ACC? 0: 1; }
+// real local r xmm8 + r, the spares from 8 xmm6 and xmm7, which Win64 keeps
+// (no spares there). Real scratch k is xmm2 + k, which Win64 does not keep
+static byte ia64_xmm(s32i f) { return f >= 8? (byte)(6 + f - 8): f >= 0? (byte)(8 + f): f == ACC? 0: 1; }
 
 // to op= by: movapd, addsd subsd mulsd divsd, or ucomisd, which compares <
 // and <= the other way round. == and != leave ZF clear when equal and
@@ -525,8 +526,13 @@ void ia64_fpull(file* text) {
   ia64_movq(text, 1, 0, 0);                     // movq xmm0, rax
 }
 
+// the spare registers, for the locals of a function that calls nothing: rdi
+// and rsi, its first arguments, then rdx, which division takes
+static const byte ia64_spare[] = { 7, 6, 2 };
+
 // the machine register of an operand of rop
 static byte ia64_reg(s32i x) {
+  if(x >= (s32i)sizeof ia64_kept) return ia64_spare[x - (s32i)sizeof ia64_kept];
   return x >= 0? ia64_kept[x]: x == ACC? 0: x == TMP? 1: ia64_regs[ARG - x];
 }
 
@@ -538,6 +544,7 @@ void ia64_rop(file* text, u32i op, s32i to, s32i by, s32i n) {
   byte d = ia64_reg(to), s = by == NUM? 0: ia64_reg(by);
   byte k = o == '='? 8: o == '+'? add: o == '|'? or: o == '&'? and: o == '-'? sub: o == '^'? xor: cmp;
   bool w = op & WIDE && !(by == NUM && k == 8 && n >= 0), i8 = (int8_t)n == n;
+  if(k == 8 && by != NUM && d == s && w) return; // mov r, r on 64 bits: nothing
   if(w || d > 7 || s > 7) ib(text, rex(.w=w, .r=s > 7, .b=d > 7));
   if(by != NUM) {
     ib(text, k == 8? 0x89: k << 3 | 1);           // op r/m, reg
@@ -591,6 +598,10 @@ void ia64_dial(file* text) {
 
 void ia64_done(file* text) {
   ib(text, 0xc9);                             // leave
+  ia64_ret(text);
+}
+
+void ia64_bare(file* text) {
   ia64_ret(text);
 }
 
@@ -735,6 +746,7 @@ const emit ia64 = {
   .dial = ia64_dial,
   .trap = ia64_trap,
   .done = ia64_done,
+  .bare = ia64_bare,
   .boot = ia64_boot,
   .link = ia64_link,
   .ffi  = ia64_ffi,
@@ -763,5 +775,10 @@ const emit ia64 = {
   .cpu  = cpu_ia64,
   .regs = sizeof ia64_kept,
   .fregs = 8,                                   // xmm8-xmm15
+  .spare = sizeof ia64_spare,
+  .fspare = 2,                                  // xmm6, xmm7
+  .sarg = 0,
+  .sargs = 3,                                   // rdi rsi rdx
+  .sdiv = 1 << 2,                               // rdx: cdq, idiv
 };
 

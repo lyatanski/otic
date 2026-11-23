@@ -42,6 +42,12 @@ spec("ia64") {
       check(emits("4d 89 c4", e.rop(t, '=' | WIDE, 1, ARG - 4, 0)));   // mov r12, r8
       check(emits("4c 89 ee", e.rop(t, '=' | WIDE, ARG - 1, 2, 0)));   // mov rsi, r13
     }
+    it("has the spares rdi, rsi and rdx past them, and moves none to itself on 64 bits") {
+      check(emits("89 f7", e.rop(t, '=', 5, ARG - 1, 0)));             // mov edi, esi
+      check(emits("48 01 f2", e.rop(t, '+' | WIDE, 7, 6, 0)));         // add rdx, rsi
+      check(emits("89 ff", e.rop(t, '=', 5, ARG - 0, 0)));             // mov edi, edi: clears the top half
+      check(emits("", e.rop(t, '=' | WIDE, 7, ARG - 2, 0)));          // mov rdx, rdx
+    }
     it("moves a constant, sign extended on 64 bits when below 0") {
       check(emits("bb 05 00 00 00", e.rop(t, '=', 0, NUM, 5)));                     // mov ebx, 5
       check(emits("41 bc 05 00 00 00", e.rop(t, '=' | WIDE, 1, NUM, 5)));           // mov r12d, 5
@@ -187,6 +193,9 @@ spec("ia64") {
     it("leaves and returns") {
       check(emits("c9 c3", e.done(t)));                 // leave; ret
     }
+    it("returns from a function with no frame") {
+      check(emits("c3", e.bare(t)));                    // ret
+    }
     it("stores a parameter register in its slot") {
       check(emits("48 89 75 f0", e.parm(t, 1, -16)));   // mov [rbp-16], rsi
     }
@@ -240,6 +249,10 @@ spec("ia64") {
       check(emits("f2 44 0f 5c c0", e.fop(t, '-', 0, ACC)));      // subsd xmm8, xmm0
       check(emits("f2 41 0f 59 c5", e.fop(t, '*', ACC, 5)));      // mulsd xmm0, xmm13
       check(emits("f2 45 0f 5e ff", e.fop(t, '/', 7, 7)));        // divsd xmm15, xmm15
+    }
+    it("has the spares xmm6 and xmm7 past them") {
+      check(emits("f2 0f 58 f7", e.fop(t, '+', 8, 9)));           // addsd xmm6, xmm7
+      check(emits("66 0f 28 c7", e.fop(t, '=', ACC, 9)));         // movapd xmm0, xmm7
     }
     it("compares < the other way round, so a NaN fails it") {
       check(emits("66 44 0f 2e d0", e.fop(t, '<' | REAL | TEST, ACC, 2)));                // ucomisd xmm10, xmm0

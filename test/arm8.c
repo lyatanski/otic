@@ -21,6 +21,12 @@ spec("arm8") {
       check(emits("fc 03 03 aa", e.rop(t, '=' | WIDE, 9, ARG - 3, 0)));   // mov x28, x3
       check(emits("e1 03 15 aa", e.rop(t, '=' | WIDE, ARG - 1, 2, 0)));   // mov x1, x21
     }
+    it("has the spares x2-x7 past them, and moves none to itself on 64 bits") {
+      check(emits("e3 03 00 2a", e.rop(t, '=', 11, ARG - 0, 0)));         // mov w3, w0
+      check(emits("e7 00 02 8b", e.rop(t, '+' | WIDE, 15, 10, 0)));       // add x7, x7, x2
+      check(emits("e4 03 04 2a", e.rop(t, '=', 12, ARG - 4, 0)));         // mov w4, w4: clears the top half
+      check(emits("", e.rop(t, '=' | WIDE, 13, ARG - 5, 0)));             // mov x5, x5
+    }
     it("moves a constant, sign extended on 64 bits when below 0") {
       check(emits("b3 00 80 52", e.rop(t, '=', 0, NUM, 5)));              // mov w19, #5
       // mov w20, #0x2345; movk w20, #1, lsl 16
@@ -246,6 +252,9 @@ spec("arm8") {
       // mov sp, x29; ldp x29, x30, [sp], #16; ret
       check(emits("bf 03 00 91 fd 7b c1 a8 c0 03 5f d6", e.done(t)));
     }
+    it("returns from a function with no frame") {
+      check(emits("c0 03 5f d6", e.bare(t)));          // ret
+    }
     it("stores a parameter register in its slot") {
       check(emits("a1 03 1f f8", e.parm(t, 1, -16)));  // stur x1, [x29, #-16]
     }
@@ -282,6 +291,7 @@ spec("arm8") {
       check(emits("60 41 60 1e", e.fop(t, '=', ACC, 3)));         // fmov d0, d11
       check(emits("2f 40 60 1e", e.fop(t, '=', 7, TMP)));         // fmov d15, d1
       check(emits("", e.fop(t, '=', 2, 2)));                      // a move to itself is none
+      check(emits("94 2a 7b 1e", e.fop(t, '+', 8, 15)));          // fadd d20, d20, d27: the spares, d20 up
       check(emits("00 28 61 1e", e.fop(t, '+', ACC, TMP)));       // fadd d0, d0, d1
       check(emits("08 39 60 1e", e.fop(t, '-', 0, ACC)));         // fsub d8, d8, d0
       check(emits("00 08 6d 1e", e.fop(t, '*', ACC, 5)));         // fmul d0, d0, d13

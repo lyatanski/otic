@@ -814,6 +814,31 @@ spec(TAG) {
                 "while(i < 6) { s = s * 2 + a[i]; i += 1; }\nreturn s;\n}\n");
   }
 
+  context("leaf functions") { // calling nothing: spare registers, no frame when every local has one
+    it("keeps its parameters and locals in spare registers")
+      expect(101, "int f6(int a, int b, int c, int d, int e, int g) { int s = a - 2 * b; s += 3 * c - 4 * d; return s + 5 * e - 6 * g; }\n"
+                  "long mix(long h, long v) { h = h ^ v; h = h * 31; return h ^ (h >> 7); }\n"
+                  "int clamp(int x, int lo, int hi) { when(x < lo) return lo; when(x > hi) return hi; return x; }\n"
+                  "int main() { int i = 0; long h = 7; int s = 0;\n"
+                  "while(i < 50) { s += f6(i, 2, 3, i, 5, 1) + clamp(i, 10, 40); h = mix(h, i); i += 1; }\n"
+                  "return (s + h) & 127; }\n");
+    it("takes reals and integers mixed, each from its argument register")
+      expect(39, "real g(int a, int b, int c, real d, int e) { return a * 1000 + b * 100 + c * 10 + d + e * 10000; }\n"
+                 "real h(real a, int b, real c, int d, real e, int f) { real t = a * c - e; return t + b * 3 + d - f; }\n"
+                 "real sq(real x) { return x * x; }\n"
+                 "int main() { int r = g(1, 2, 3, 0.5, 4) + h(1.5, 2, 4.0, 7, 0.5, 3) + sq(3.0); return r & 127; }\n");
+    it("divides, and is compiled again with a frame when a guess fails")
+      expect(96, "int dv(int a, int b, int c, int d) { int t = a / b; return t + c % 5 + d * c - a % b; }\n"
+                 "long diff(int* p, int* q, long k) { return (p - q) * 10 + k; }\n"
+                 "int other(int a) { when(a > 5) a -= 1; else int b = a + 2; return a; }\n"
+                 "int main() { int t[8]; return dv(20, 3, 13, 2) + diff(t + 6, t + 1, 3) + other(9) + other(2); }\n");
+    it("keeps operands on the stack, shadows a local and builds a compound literal")
+      expect(74, "int deep(int a, int b) { return (a + b) * ((a - b) * ((a + 1) * ((b + 2) * ((a + 3) * ((b + 4) * (a + 5)))))); }\n"
+                 "int shadow(int a) { int s = a; { int s = 2; a += s; } return a + s; }\n"
+                 "struct pt { int x; int y; };\nint lit(int a) { pt* p = &(pt){a, 2}; return p->x + p->y; }\n"
+                 "int main() { return (deep(2, 3) & 63) + shadow(4) + lit(5); }\n");
+  }
+
   context("calls") {
     it("passes parameters")
       expect(7, "int sub(int a, int b) { return a - b; }\n"

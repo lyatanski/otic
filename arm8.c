@@ -373,9 +373,10 @@ void arm8_pass(file* data, u32i i) {
 }
 
 // the machine register of an operand of rop: a local's is x19 + r, kept by a
-// function called; acc x0, tmp x1, argument i xi
+// function called, or a spare from 10 up: x2-x7, arguments not in acc or
+// tmp, x2 taken by %; acc x0, tmp x1, argument i xi
 static int arm8_reg(s32i x) {
-  return x >= 0? r19 + x: x == ACC? r0: x == TMP? r1: ARG - x;
+  return x >= 10? r2 + x - 10: x >= 0? r19 + x: x == ACC? r0: x == TMP? r1: ARG - x;
 }
 
 // to op= by. A constant below 4K is added, subtracted or compared as it is,
@@ -385,6 +386,7 @@ void arm8_rop(file* data, u32i op, s32i to, s32i by, s32i n) {
   int  d = arm8_reg(to), s = by != NUM? arm8_reg(by): o == '='? d: r16;
   bool sub = o == '-', test = o != '=' && o != '+' && !sub && o != '&' && o != '|' && o != '^';
   uint32_t w = op & WIDE? X: 0;
+  if(o == '=' && by != NUM && d == s && w) return;                  // mov x, x: nothing
   if(by == NUM && (o == '+' || sub || test) && n >= 0 && n < 4096) {
     arm8_put(data, w | (test? I3401_SUBSI: sub? I3401_SUBI: I3401_ADDI) | n << 10 | d << 5 | (test? 31: d));
     return;
@@ -505,8 +507,9 @@ static void arm8_fmov(file* data, bool in, int d, int x) {
 }
 
 // the d register of a real operand: facc d0, ftmp d1, the register of real
-// local r d8 + r, which AAPCS64 keeps. Real scratch k is d16 + k
-static int arm8_d(s32i f) { return f >= 0? 8 + (int)f: f == ACC? 0: 1; }
+// local r d8 + r, which AAPCS64 keeps, the spares from 8 d20 + r - 8, which
+// it does not. Real scratch k is d16 + k
+static int arm8_d(s32i f) { return f >= 8? 12 + (int)f: f >= 0? 8 + (int)f: f == ACC? 0: 1; }
 
 // to op= by: fmov, fadd fsub fmul fdiv, or fcmp
 void arm8_fop(file* data, u32i op, s32i to, s32i by) {
@@ -595,6 +598,10 @@ void arm8_loop(file* data, const byte* dest) {
 void arm8_done(file* data) {
   arm8_put(data, 0x910003bf);                                       // mov sp, x29
   arm8_put(data, 0xa8c17bfd);                                       // ldp x29, x30, [sp], #16
+  arm8_put(data, form(brur, ret, .rn=r30));                         // ret
+}
+
+void arm8_bare(file* data) {
   arm8_put(data, form(brur, ret, .rn=r30));                         // ret
 }
 // prev is the end of a b, or of a cb(n)z or b.cc and its nop: past 1M, the
@@ -718,6 +725,7 @@ const emit arm8 = {
   .dial = arm8_dial,
   .trap = arm8_trap,
   .done = arm8_done,
+  .bare = arm8_bare,
   .boot = arm8_boot,
   .link = arm8_link,
   .ffi  = arm8_ffi,
@@ -746,5 +754,10 @@ const emit arm8 = {
   .cpu  = cpu_arm8,
   .regs = 10,
   .fregs = 8,                                                       // d8-d15
+  .spare = 6,                                                       // x2-x7
+  .fspare = 8,                                                      // d20-d27
+  .sarg = 2,
+  .sargs = 4,                                                       // x2-x5
+  .sdiv = 1,                                                        // x2: sdiv, msub
 };
 

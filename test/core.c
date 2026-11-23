@@ -28,7 +28,7 @@ static u64i  laid; // data bytes when shown: make frees data after show
 
 #define OPS(X) X(move) X(load) X(stor) X(peek) X(addr) X(glob) X(site) X(read) \
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
-  X(loop) X(open) X(size) X(parm) X(args) X(dial) X(trap) X(done) X(boot)       \
+  X(loop) X(open) X(size) X(parm) X(args) X(dial) X(trap) X(done) X(bare) X(boot)\
   X(link) X(ffi) X(crt) X(flag) X(cond) X(keep) X(lift) X(take) X(pass)       \
   X(rop) X(stow) X(turn) X(step) X(fop) X(fimm) X(fbit) X(fslot) X(fstow)   \
   X(fat)                                                                        \
@@ -94,6 +94,7 @@ static void mock_args(file* t, u32i i)                 { note(t, op_args, " %u",
 static void mock_dial(file* t)                         { note(t, op_dial, ""); }
 static void mock_trap(file* t, u32i argc)              { note(t, op_trap, " %u", argc); }
 static void mock_done(file* t)                         { note(t, op_done, ""); }
+static void mock_bare(file* t)                         { note(t, op_bare, ""); }
 static void mock_boot(file* t)                         { note(t, op_boot, ""); }
 static void mock_link(const file* t, byte* from, const byte* to) { note(NULL, op_link, " %s %s", at(t, from), at(t, to)); }
 static byte* mock_ffi(file* t, const byte* func, u32i argc, u32i fixed, u32i real, osys os) {
@@ -170,16 +171,17 @@ static void mock_ftake(file* t, u32i k)           { note(t, op_ftake, k < HELD? 
 static void mock_fpull(file* t)                   { note(t, op_fpull, ""); }
 
 static u32i regs, fregs; // registers for locals and real ones the next make_ has, reset after each
+static u32i spares, sdivs; // its spare registers, each the argument register of its place, and those division takes
 
 static const emit mock = {
   mock_move, mock_load, mock_stor, mock_peek, mock_addr, mock_glob, mock_site,
   mock_read, mock_fill, mock_push, mock_pull, mock_swap, mock_cast, mock_calc,
   mock_when, mock_jump, mock_back, mock_loop, mock_open, mock_size, mock_parm,
-  mock_args, mock_dial, mock_trap, mock_done, mock_boot, mock_link, mock_ffi,
+  mock_args, mock_dial, mock_trap, mock_done, mock_bare, mock_boot, mock_link, mock_ffi,
   mock_crt, mock_flag, mock_cond, mock_keep, mock_lift, mock_tmpk, mock_pass,
   mock_hail, mock_rop, mock_stow, mock_turn, mock_step, mock_fop, mock_fimm,
   mock_fbit, mock_fslot, mock_fstow, mock_fat, mock_fkeep, mock_flift, mock_ftake, mock_fpull,
-  cpu_ia64, 0, 0,
+  cpu_ia64, 0, 0, 0, 0, 0, 0, 0,
 };
 
 static file* mock_pack(mode* m)          { packs++; (void)m; return NULL; }
@@ -238,10 +240,12 @@ static int  make_(char* src) {
   };
   self.arch.regs = regs;
   self.arch.fregs = fregs;
+  self.arch.spare = self.arch.sargs = spares;
+  self.arch.sdiv = sdivs;
   libs = lb_none;
   clibs = cl_glibc;
   oses = os_linux;
-  regs = fregs = 0;
+  regs = fregs = spares = sdivs = 0;
   source("main.ot", src);
   nest(&self, (unit){.kind = un_root});
   if(setjmp(bail)) { filen = 0; return 0; }
@@ -673,6 +677,78 @@ spec("core") {
     it("puts the lexer back for the pass, the lines too") {
       regs = 2;
       check(rejects("int main() {\n  int a = 1;\n  a += 2;\n  a += b;\n  return a;\n}", "main.ot:4: no variable 'b'"));
+    }
+  }
+
+  context("leaf functions") { // calling nothing: spare registers, no frame when every local has one
+    it("has no frame, its locals in spare registers, a parameter in its own") {
+      regs = 2, spares = 3;
+      check(compiles("int f(int a, int b) { int c = a; c += b; return c; } int main() { return 0; }"));
+      check(has("boot, rop r2 = a0, rop r3 = a1, rop r4 = r2, rop r4 + r3, rop acc = r4, bare, move 0, bare, move 0"));
+      check(calls[op_open] == 0 && calls[op_size] == 0 && calls[op_stow] == 0 && calls[op_done] == 0);
+    }
+    it("has none with no locals and no spares") {
+      regs = 2;
+      check(compiles("int main() { return 7; }"));
+      check(is("boot, move 7, bare, move 0, bare, link boot move"));
+    }
+    it("keeps a frame on a target without registers for locals") {
+      check(compiles("int main() { return 7; }"));
+      check(calls[op_open] == 1 && calls[op_bare] == 0);
+    }
+    it("keeps a frame for a call, and saves the spares for leaves") {
+      regs = 2, spares = 2;
+      check(compiles("int f(int a) { return a; } int main() { int x = 1; return f(x); }"));
+      check(has("boot, rop r2 = a0, rop acc = r2, bare, move 0, bare, open, move 1, stor -8:4"));
+    }
+    it("keeps a frame for a local with no register, saving none") {
+      regs = 2, spares = 1;
+      check(compiles("int main() { int a = 1, b = 2; return a + b; }"));
+      check(has("open, rop r2 = 1, move 2, stor -8:4, rop acc = r2, peek -8:4, calc +, done") && calls[op_stow] == 0);
+    }
+    it("saves a register of locals in a leaf when the spares run out") {
+      regs = 2, spares = 1;
+      check(compiles("int main() { int a = 1, b = 2; a += b; a += b; return a + b; }"));
+      check(has("open, stow r0 > -8, rop r2 = 1, rop r0 = 2"));
+    }
+    it("moves a parameter to no spare that holds a later argument") {
+      regs = 1, spares = 3;
+      check(compiles("int f(int a, int b, real c, int d) { return a + b + c + d; } int main() { return 0; }"));
+      check(has("rop r1 = a0, rop r2 = a1, parm 2 -8, rop r3 = a3,"));
+      regs = 1, spares = 3, sdivs = 1; // a's own is taken by division, b's and c's are read after it
+      check(compiles("int f(int a, real b, real c) { return a / 2 + b + c; } int main() { return 0; }"));
+      check(has("open, parm 0 -8, parm 1 -16, parm 2 -24,"));
+      regs = 1, spares = 3, sdivs = 1;
+      check(compiles("int f(int a) { return a / 2; } int main() { return 0; }"));
+      check(has("boot, rop r2 = a0, rop acc = r2, calc / 2, bare"));
+    }
+    it("keeps the spares division takes out of a function that divides") {
+      regs = 2, spares = 3, sdivs = 4;
+      check(compiles("int f(int a, int b, int c) { return a / b + c; } int main() { return 0; }"));
+      check(has("rop r2 = a0, rop r3 = a1, parm 2 -8,") && calls[op_open] == 1);
+    }
+    it("has a frame for a compound literal or a local of a name in scope") {
+      regs = 2, spares = 3;
+      check(compiles("struct p { int x; }; int main() { return (p){4}.x; }"));
+      check(calls[op_open] == 1 && calls[op_bare] == 0);
+      regs = 2, spares = 3;
+      check(compiles("int main() { int a = 1; { int a = 2; a += 1; } return a; }"));
+      check(calls[op_open] == 1 && calls[op_bare] == 0);
+    }
+    it("compiles again, framed, a local sift did not see") {
+      regs = 2, spares = 3;
+      check(compiles("int f(int a) { when(a) a = 1; else int b = 2; return a; } int main() { return 0; }"));
+      check(calls[op_bare] == 4 && left(op_open) == 1 && left(op_bare) == 2 && left(op_done) == 2);
+    }
+    it("compiles again, framed, a division that takes a spare in use") {
+      regs = 2, spares = 3, sdivs = 4;
+      check(compiles("long f(int* p, int* q, long k) { return p - q + k; } int main() { return 0; }"));
+      check(has("rop.w r4 = a2,") && left(op_open) == 1 && left(op_rop) == 0 && left(op_parm) == 3);
+    }
+    it("takes the same data when compiled again") {
+      regs = 2, spares = 3;
+      check(compiles("char* f(int a) { when(a) a = 1; else int b = 2; return \"abc\"; } int main() { return 0; }"));
+      check(laid == 4);
     }
   }
 

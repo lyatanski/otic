@@ -140,6 +140,7 @@ typedef struct {
   void (*dial)(file*);                             // call, patched by link
   void (*trap)(file*, u32i argc);                  // pop the arguments and the number, syscall
   void (*done)(file*);                             // epilogue and return
+  void (*bare)(file*);                             // return from a function that has no frame (no open)
   void (*boot)(file*);                             // entry stub: call main
   void (*link)(const file*, byte* boot, const byte* main); // point a call at its function
   // call C code at func, or at the address in [acc] (an import slot), the C
@@ -199,6 +200,12 @@ typedef struct {
   u32i  regs;  // registers for locals, kept by the functions called
   u32i  fregs; // registers for real locals, kept by otic's functions and by C
                // code, but on x86-64 outside Windows (core saves them around a call)
+  // spare registers: kept by no function, used by calls only (and those of
+  // sdiv by integer division), so a function that calls nothing keeps locals
+  // in them with no save: those of locals from regs up, of real locals from
+  // fregs up. Spare j is argument register sarg + j when j is below sargs; an
+  // integer division takes spare j when bit j of sdiv is set
+  u32i  spare, fspare, sarg, sargs, sdiv;
 } emit;
 #define FREG 16 // registers of locals from FREG up are those of real locals, r - FREG
 
@@ -447,6 +454,9 @@ struct mode {
   u32i  fregn;     // registers it keeps real locals in, saved in the slots after those
   u32i  lend;      // the first of them lent to left operands kept across calls, up to regn
   u32i  busy;      // bit r: register r holds a local in scope (FREG + r: real register r)
+  bool  leaf;      // the function calls nothing, as sift saw it: its locals may take the spare registers
+  bool  bare;      // and they all have registers: no frame, no open
+  bool  spoil;     // a call, a division or a frame slot proved sift wrong: the function is compiled again, framed, with no spares
   item* pick[SIFT]; // the names of the locals given a register
   u32i  picks;
   lexed* lexes;    // the tokens of the body being compiled, lexed by sift: chop replays them
