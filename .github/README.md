@@ -18,7 +18,7 @@ gcc -O3 -o otic main.c
 With MSVC, from a Developer Command Prompt:
 
 ```bat
-cl /std:clatest /O3 /Feotic main.c
+cl /std:clatest /O2 /Feotic main.c
 ```
 
 ## Usage

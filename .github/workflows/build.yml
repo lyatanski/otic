@@ -7,15 +7,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    cc: gcc,   cflags: -Wall -Wextra, out: "-o " }
-          - { os: ubuntu-24.04-arm, cc: gcc,   cflags: -Wall -Wextra, out: "-o " }
-          - { os: macos-latest,     cc: clang, cflags: -Wall -Wextra, out: "-o " }
-          - { os: windows-latest,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, out: -Fe, vcarch: x64 }
-          - { os: windows-11-arm,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, out: -Fe, vcarch: arm64 }
+          - { os: ubuntu-latest,    cc: gcc,   cflags: -Wall -Wextra, opt: -O3, out: "-o " }
+          - { os: ubuntu-24.04-arm, cc: gcc,   cflags: -Wall -Wextra, opt: -O3, out: "-o " }
+          - { os: macos-latest,     cc: clang, cflags: -Wall -Wextra, opt: -O3, out: "-o " }
+          - { os: windows-latest,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, opt: -O2, out: -Fe, vcarch: x64 }
+          - { os: windows-11-arm,   cc: cl,    cflags: -nologo -std:clatest -W4 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS, opt: -O2, out: -Fe, vcarch: arm64 }
     runs-on: ${{ matrix.os }}
     env:
       CC: ${{ matrix.cc }}
       CFLAGS: ${{ matrix.cflags }}
+      OPT: ${{ matrix.opt }}
       OUT: ${{ matrix.out }}
     defaults:
       run:
@@ -30,7 +31,7 @@ jobs:
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" ${{ matrix.vcarch }} >nul && set" >> $env:GITHUB_ENV
       - name: Build
-        run:  $CC $CFLAGS -O3 ${OUT}otic main.c
+        run:  $CC $CFLAGS $OPT ${OUT}otic main.c
       - name: Module specs
         run:  for m in core link ario ia64 arm8 elfs mach pe32; do $CC $CFLAGS ${OUT}spec-$m test/$m.c && ./spec-$m || exit 1; done
       - name: Test

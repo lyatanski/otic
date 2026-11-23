@@ -2077,7 +2077,7 @@ full:
   for(u32i j = 0; j < n; j++) {
     parm[j] = -1;
     u32i q = c[j]->pick;
-    if(ok && (q & USES) > (leaf? 0: 3) && !(q & NEVER) && (q & (FLOT | INTS)) != (FLOT | INTS)) e[m++] = j;
+    if(ok && (q & USES) > (leaf? 0u: 3u) && !(q & NEVER) && (q & (FLOT | INTS)) != (FLOT | INTS)) e[m++] = j;
   }
   for(u32i i = 0; i < argc && i < n; i++) { // sown first, in order
     u32i j = 0;

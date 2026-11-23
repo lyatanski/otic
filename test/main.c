@@ -1768,8 +1768,8 @@ spec(TAG) {
         captured("llvm-dwarfdump --debug-info bins/dbg-mac.dSYM/Contents/Resources/DWARF/dbg-mac", out, sizeof out);
         check(strstr(out, "DW_AT_name\t(\"sum\")") && strstr(out, "DW_AT_location\t(DW_OP_addr 0x1"));
         captured("llvm-dwarfdump --uuid bins/dbg-mac bins/dbg-mac.dSYM/Contents/Resources/DWARF/dbg-mac", out, sizeof out);
-        const char* a = strstr(out, "UUID: "), *b = a? strstr(a + 6, "UUID: "): NULL;
-        check(b && !strncmp(a + 6, b + 6, 36));
+        const char* u = strstr(out, "UUID: "), *v = u? strstr(u + 6, "UUID: "): NULL;
+        check(v && !strncmp(u + 6, v + 6, 36));
         check(!access("bins/dbg-mac.dSYM/Contents/Info.plist", F_OK));
       }
     }
