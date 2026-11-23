@@ -8,7 +8,6 @@
 #define PAGE 0x4000
 #define TOP  (sizeof(mach_head) + sizeof(mach_blob)) // an executable's load commands, without imports
 
-// sha256 of the size bytes at msg is want, in hex
 static bool  hashes(char* msg, u64i size, const char* want) {
   byte out[32];
   sha256((byte*)msg, size, out);
@@ -44,8 +43,6 @@ static void  import(char* name) {
   ours.impn++;
 }
 
-// the first load command cmd of an image, section i of the segment seg, symbol
-// i and its name
 #define HEAD(out) ((mach_mh*)(out)->head)
 static void*  cmd_(file* out, u32i cmd) {
   byte* at = out->head + sizeof(mach_mh);
@@ -60,14 +57,13 @@ static nl64*  sym_(file* out, u32i i) {
 static char*  name_(file* out, const nl64* s) {
   return (char*)out->head + ((mach_symtab*)cmd_(out, lc_symtab))->stroff + s->strx;
 }
-static u64i   uleb_(const byte* at) { // a ULEB128 number
+static u64i   uleb_(const byte* at) {
   u64i v = 0;
   for(u32i k = 0; k == 0 || at[-1] & 0x80; k += 7) v |= (u64i)(*at++ & 0x7f) << k;
   return v;
 }
 static mrel*  rel_(file* out, const sec64* sec, u32i i) { return (mrel*)(out->head + sec->reloff) + i; }
-// relocation r: at addr, to symbol or section sym, pc-relative, of 2^len bytes,
-// external, of type
+// len is log2 of the size in bytes
 static bool   rel_is(const mrel* r, s32i addr, u32i sym, bool pcrel, u32i len, bool ext, u32i type) {
   u32i want = sym | pcrel << 24 | len << 25 | ext << 27 | type << 28;
   if(r->addr == addr && r->info == want) return 1;

@@ -1,5 +1,5 @@
 // vim: ts=2:sw=2
-// spec/context/it/check: a single-file test harness, from pro2call
+// from pro2call
 #ifndef TEST_H
 #define TEST_H
 
@@ -83,4 +83,4 @@ int main(void) {
     continue;                                              \
   }
 
-#endif /* TEST_H */
+#endif

@@ -1,7 +1,6 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-// the byte helpers of every part, declared in core.h
 byte* copy(byte* dst, const void* src, u64i size) {
   for(const byte* s = src; size--; *dst++ = *s++);
   return dst;
@@ -71,16 +70,15 @@ bool  alike(const void* x, const void* y, u64i size) {
 }
 
 
-// string hash, computed once for every table a name is looked up in
+// computed once per name, for every table it is looked up in
 u64i  clue(const char* mark, u64i size) {
   u64i clue = 0x01;
   for(u64i i = 0; i < size; clue += (clue << 5) + (clue >> 27) + mark[i++]);
   return clue;
 }
 
-// the slot of the name in the table, or the free slot where it goes; NULL
-// when the table is empty. The step is odd: it reaches every slot, and the
-// table, at most 3/4 full, has a free one
+// the slot of the name, or the free slot where it goes; NULL when the table is
+// empty. The odd step reaches every slot, and at most 3/4 full there is a free one
 static item** hpos(unit* self, const char* mark, u64i size, u64i clue) {
   u64i step = (clue >> 16) | 1;
   for(u64i i = 0; self->size; i++) {
@@ -95,7 +93,6 @@ item* hsee(unit* self, const char* mark, u64i size, u64i clue) {
   return at? *at: NULL;
 }
 
-// double the table
 static void  hgrow(const mode* m, unit* self) {
   item** pool = self->pool;
   u32i   size = self->size;
@@ -106,8 +103,8 @@ static void  hgrow(const mode* m, unit* self) {
   m->heap(pool, 0);
 }
 
-// the slot of the name, counted as used when it is free: the table grows
-// first when that makes it more than 3/4 full
+// as hpos, counting a free slot as used: the table first grows when that
+// makes it more than 3/4 full
 static item** hpos_make(const mode* m, unit* self, const char* mark, u64i size, u64i k) {
   item** at = hpos(self, mark, size, k);
   if(at && *at) return at;
@@ -119,9 +116,8 @@ static item** hpos_make(const mode* m, unit* self, const char* mark, u64i size, 
   return at;
 }
 
-// the item of the name, made when new. Items are allocated apart from the
-// table and never move: metas, words and fixes point to them. A new one has
-// its own copy of the bytes of the name, so the file it is in can go
+// Items live apart from the table and never move: metas, words and fixes
+// point to them. A new one copies the name's bytes, so its file can go
 static item* hput(const mode* m, unit* self, char* mark, u64i size, u64i k) {
   static item* spare;
   static u32i  left;
@@ -139,9 +135,8 @@ static item* hput(const mode* m, unit* self, char* mark, u64i size, u64i k) {
   return *at;
 }
 
-// a new item also joins the items of its spelling, in join order, so that
-// find visits only the units that have the name. The slot of the spelling in
-// mode.names holds the first of them
+// a new item also joins its spelling's chain in mode.names, in join order, so
+// find visits only the units that have the name
 item* hget(mode* self, u32i at, char* mark, u64i size) {
   u64i  k = clue(mark, size);
   unit* u = self->units + at;

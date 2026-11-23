@@ -2,24 +2,20 @@
 #include "core.h"
 
 enum { tend, ttag, tnum, treal };
-// text is held at its most, the pages touched as it fills: code points into
-// it. Data starts at DATA and doubles as needed, up to below WANT: what points
-// into it is an offset
+// text is reserved whole, so code points into it; data doubles up to WANT
+// and moves: refer to it by offset
 #define CODE (1u << 30)
 #define DATA (1u << 16)
 #define tok1(x) ((x)+=1, tokd((x)[-1]))
 #define tok2(x) ((x)+=2, tokd((x)[-2], (x)[-1]))
 #define tok3(x) ((x)+=3, tokd((x)[-3], (x)[-2], (x)[-1]))
-// a string literal in the table of the unit being parsed
+// k: a string literal
 #define sget(self, k) hget(self, (self)->unit, k, sizeof(k)-1)
-// the builtin type k (void, bool, byte, char, nu16, int, long, real), whatever a
-// source declares by its name
+// the builtin type k, even where a source redeclares its name
 #define tget(self, k) ((self)->b##k)
 
-// the character an escape \v stands for: \n, \t, \r, \0, else v itself
 char  esc(char v) { return v == 'n'? '\n': v == 't'? '\t': v == 'r'? '\r': v == '0'? 0: v; }
 
-// the next token of the unit being parsed, from its source
 static void lex(mode* self) {
   s64i  ival = 0;
   u64i  fval = 0;
@@ -29,7 +25,7 @@ static void lex(mode* self) {
   pass: switch(*(home(self)->code->body = c)) {
     case '\n': home(self)->line++; // fallthrough
     case ' ': case '\f': case '\t': case '\v': case '\r': c++; goto pass;
-    case '#': // #! on the first line of a file is a comment: a script
+    case '#': // #! line of a script
       if(c[1] == '!' && c == home(self)->code->head) { while(*c && *c != '\n') c++; goto pass; }
       kind = tok1(c); break;
     case ',': case ';': case ':': case '?': case '~': case '@':
@@ -62,7 +58,7 @@ static void lex(mode* self) {
         default: kind = (c[1] == '='? tok2(c): tok1(c));
       }
       break;
-    case '\'': // a character is its number
+    case '\'':
       c++;
       if(*c == '\\' && c[1]) ival = (byte)esc(*++c);
       else if(*c && *c != '\n' && *c != '\'') ival = (byte)*c;
@@ -78,18 +74,17 @@ static void lex(mode* self) {
       c++;
       kind = '"'; break;
     case '.':
-      // '.', '...' or number
       if     (c[1] == '.' && c[2] == '.') { kind = tok3(c); break; }
       else if(c[1] <  '0' || c[1] >  '9') { kind = tok1(c); break; }
-      // else fall trough to number
+      // fallthrough
     case '0': case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':
       while(*c >= '0' && *c <= '9') ival = ival * 10 + *c++ - '0';
-      // a real: digits with a . or an exponent, its value rounded by the host
+      // a real, rounded by the host's strtod
       if(*c == '.' || ((*c == 'e' || *c == 'E') && ((c[1] >= '0' && c[1] <= '9')
          || ((c[1] == '+' || c[1] == '-') && c[2] >= '0' && c[2] <= '9')))) {
         char*  end;
-        double v = strtod((char*)home(self)->code->body, &end); // from the token's start
+        double v = strtod((char*)home(self)->code->body, &end);
         copy((byte*)&fval, &v, sizeof v);
         c = (byte*)end;
         kind = treal; break;
@@ -107,7 +102,7 @@ static void lex(mode* self) {
         }
       kind = tnum; break;
     case '\0': break;
-    default: // a name: a letter or _, then letters, digits and _
+    default:
       if(!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || *c == '_'))
         flaw(self, "unexpected character '%c'\n", *c);
       while((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')
@@ -124,8 +119,7 @@ static void lex(mode* self) {
   home(self)->code->body = c;
 }
 
-// the token sift lexed from at, NULL when none starts there: the tokens are
-// in source order
+// the token sift lexed starting at at, or NULL
 static lexed* relex(mode* self, const byte* at) {
   u32i lo = 0, hi = self->lexn;
   while(lo < hi) {
@@ -135,8 +129,7 @@ static lexed* relex(mode* self, const byte* at) {
   return lo < self->lexn && self->lexes[lo].from == at? self->lexes + lo: NULL;
 }
 
-// the next token: in a function body, as sift lexed it, also when a
-// lookahead put the source back; else lexed
+// in a function body, replays sift's tokens, also after a lookahead rewinds
 void chop(mode* self) {
   unit* u = home(self);
   if(self->lexn && self->unit == self->lexu) {
@@ -151,7 +144,7 @@ void chop(mode* self) {
   lex(self);
 }
 
-// the token is the name k, a string literal: its spelling compared, not looked up
+// k: a string literal, compared by spelling, not looked up
 #define same(self, k) (\
   home(self)->talk.kind == ttag &&\
   home(self)->talk.hash->size == sizeof(k) - 1 &&\
@@ -183,22 +176,19 @@ int rank(int op) {
   }
 }
 
-// types: every value has one, never NULL
 meta* mint(mode* self, meta x) {
   meta* m = cell(self, &self->defs, &self->defp, self->defn++);
   *m = x;
   return m;
 }
 
-// what the type x is made of, hashed: its kind, the type it is over, its
-// size, and slot, longs and more (a function's parameters, a bit-field's bits)
 static u64i  sire(const meta* x) {
   u64i h = (u64i)(uintptr_t)x->type ^ (u64i)x->kind << 56 ^ (u64i)x->size << 24;
   h = (h ^ (u64i)(u32i)x->slot << 32 ^ (u64i)x->longs << 8 ^ (u64i)x->reals << 16 ^ x->more) * 0x9e3779b97f4a7c15ull;
   return h ^ h >> 31;
 }
 
-// the slot of the type made of what x is, or the free one where it goes
+// x's slot in made, or the free one for it
 static meta** lode(const mode* self, const meta* x) {
   u64i  mask = self->madec - 1;
   for(u64i i = sire(x) & mask;; i = (i + 1) & mask) {
@@ -208,8 +198,7 @@ static meta** lode(const mode* self, const meta* x) {
   }
 }
 
-// the pointer, array, function or bit-field type made of what x is, made
-// once. The table doubles when half full
+// derived types are interned: one meta per pointer, array, function, bit-field
 meta* sole(mode* self, meta x) {
   if(2 * (self->maden + 1) > self->madec) {
     meta** was = self->made;
@@ -224,45 +213,37 @@ meta* sole(mode* self, meta x) {
   return *at;
 }
 
-// a pointer or array type of size bytes over type, made once
 meta* knot(mode* self, what kind, meta* type, u32i size) {
   return sole(self, (meta){.kind = kind, .type = type, .size = size});
 }
 
-// pointer to type
 meta* href(mode* self, meta* type) { return knot(self, refs, type, 8); }
 
-// the type of a function returning type, of argc parameters (-1: unknown),
-// the 64-bit ones in longs, the reals in reals, variadic when more, made once
+// argc -1: unknown; longs, reals: bitmasks of 64-bit and real parameters
 meta* mold(mode* self, meta* type, s32i argc, byte longs, byte reals, bool more) {
   return sole(self, (meta){.kind = proc, .type = type, .slot = argc, .longs = longs, .reals = reals, .more = more});
 }
 
-// a pointer to a function type, NULL for the rest
+// the function type t points to, else NULL
 meta* aimp(meta* t) { return t && t->kind == refs && t->type->kind == proc? t->type: NULL; }
 
-// what a pointer points to or an array holds, NULL for the rest
 meta* elem(const meta* t) { return t && (t->kind == refs || t->kind == many)? t->type: NULL; }
 u32i  wide(const meta* t) { return elem(t) || ((t->kind == base || t->kind == bitf) && t->size == 8)? WIDE: 0; }
 u32i  span(const meta* t) { return t->size; }
-// the type real
 #define flot(self, t) ((t) == tget(self, real))
 u32i  lean(meta* t) { return t->kind == many? lean(t->type): t->kind == list? (u32i)t->slot: t->size; }
 
 // deferred operand: code is emitted only when the value must be in acc
 typedef enum { vacc, vnum, vloc, vglo, vmem, vcmp, vreg, vflo, vfac } vkind;
-// ival: value, frame slot, data offset or register of a local (a real
-// local's from FREG up); vmem: its address is in acc; vcmp: the op of a
-// comparison whose result is in the flags, for a branch on it; vflo: a real
-// constant, its bits in fval, which shares its place with ival; vfac: a real
-// in facc. A real in acc (vacc) is its bits
+// ival: value, frame slot, data offset or register (reals from FREG up);
+// vmem: address in acc; vcmp: comparison op, result in the flags; vflo: real
+// constant, bits in fval; vfac: real in facc. A real in acc (vacc) is its bits
 typedef struct { vkind kind; union { s32i ival; u64i fval; }; meta* type; } oper;
 #define cnst(self, n) ((oper){.kind = vnum, .ival = (n), .type = tget(self, int)})
 #define acc(t)  ((oper){.kind = vacc, .type = (t)})
 #define fac(self) ((oper){.kind = vfac, .type = tget(self, real)})
 
-// size bytes of data, or of bss when zero: their offset. Data may move: keep
-// the offset, not an address into it
+// an offset, not an address: data may move
 u32i  lay(mode* self, u32i size, bool zero, u32i align) {
   if(zero) {
     self->zero = ((self->zero + align - 1) & ~(u64i)(align - 1)) + size;
@@ -290,7 +271,7 @@ void  spot(mode* self, u32i off) {
   emit(self, glob);
 }
 
-// the bytes of string literal s and a NUL, into out when given: their count
+// unescapes s into out when given; its size with the NUL
 u32i  quote(const item* s, byte* out) {
   u32i n = 0;
   for(const char* c = s->name + 1; c < s->name + s->size - 1; c++, n++) {
@@ -302,11 +283,10 @@ u32i  quote(const item* s, byte* out) {
   return n + 1;
 }
 
-// the bits of bit-field f in its unit
+// the mask of bit-field f in its unit
 u64i  ones(const meta* f) { return (f->longs < 64? ((u64i)1 << f->longs) - 1: ~(u64i)0) << f->slot; }
 
-// acc, the unit of bit-field f, to the value of f: shifted down, sign extended
-// unless its type is narrower than int (a char is not)
+// acc, the unit of f, to its value: sign extended unless narrower than int
 oper  bite(mode* self, meta* f) {
   u32i  w = wide(f), n = w? 64: 32;
   if(f->size < 4) {
@@ -320,8 +300,7 @@ oper  bite(mode* self, meta* f) {
   return acc(f->type);
 }
 
-// acc &= the bits of bit-field f: a mask that is no 32-bit constant is made in
-// acc and moved to tmp
+// a mask wider than a 32-bit constant is built in acc, via tmp
 void  mask(mode* self, const meta* f) {
   u64i  m = ones(f);
   u32i  w = wide(f);
@@ -336,8 +315,8 @@ void  mask(mode* self, const meta* f) {
   emit(self, calc, '&' | WIDE, 0, 0);
 }
 
-// acc into bit-field f of x, a local, or in memory with its address pushed:
-// unit ^= (unit ^ acc << slot) & ones. The value is what f holds then
+// acc into bit-field f of x, a local or memory with its address pushed:
+// unit ^= (unit ^ acc << slot) & ones
 oper  sow(mode* self, oper x, meta* f) {
   u32i  w = wide(f), n = f->size;
   if(f->slot) emit(self, calc, tokd('<', '<') | w, 1, f->slot);
@@ -365,21 +344,19 @@ oper  sow(mode* self, oper x, meta* f) {
   return bite(self, f);
 }
 
-// the value of a constant, an int or a real
 double  sum(oper x) {
   double v = x.ival;
   if(x.kind == vflo) copy((byte*)&v, &x.fval, sizeof v);
   return v;
 }
 
-// a real constant of value v
 oper  flo(mode* self, double v) {
   oper x = {.kind = vflo, .type = tget(self, real)};
   copy((byte*)&x.fval, &v, sizeof v);
   return x;
 }
 
-// x, a real, into the real register f (facc, ftmp or a local's)
+// f: ACC, TMP or a local's real register
 void  fput(mode* self, oper x, s32i f) {
   switch(x.kind) {
     case vfac: if(f != ACC) emit(self, fop, '=', f, ACC); return;
@@ -394,13 +371,12 @@ void  fput(mode* self, oper x, s32i f) {
   }
 }
 
-// x, a real, in facc
 oper  fload(mode* self, oper x) {
   fput(self, x, ACC);
   return fac(self);
 }
 
-// the real x as an operand of fop: the register it is in, else ftmp with x
+// x's real register, else ftmp loaded with x
 s32i  fsrc(mode* self, oper x) {
   if(x.kind == vreg) return x.ival - FREG;
   if(x.kind == vfac) return ACC;
@@ -420,7 +396,7 @@ oper  load(mode* self, oper x) {
     x = (oper){.kind = vglo, .ival = (s32i)off, .type = t};
   }
   if(x.kind == vreg) { emit(self, rop, '=' | wide(t), ACC, x.ival, 0); return acc(t); }
-  if(t->kind == many) { // an array is the address of its first element
+  if(t->kind == many) {
     if(x.kind == vloc) emit(self, addr, x.ival);
     if(x.kind == vglo) spot(self, x.ival);
     return acc(href(self, t->type));
@@ -436,7 +412,6 @@ oper  load(mode* self, oper x) {
   return t->kind == bitf? bite(self, t): acc(t);
 }
 
-// &x
 oper  refr(mode* self, oper x) {
   if(x.type->kind == bitf) flaw(self, "cannot take the address of a bit-field\n");
   if(x.kind == vloc) emit(self, addr, x.ival);
@@ -446,7 +421,6 @@ oper  refr(mode* self, oper x) {
   return acc(href(self, x.type));
 }
 
-// *x
 oper  star(mode* self, oper x) {
   meta* t = elem(x.type);
   if(!t) flaw(self, "not a pointer\n");
@@ -454,7 +428,6 @@ oper  star(mode* self, oper x) {
   return (oper){.kind = vmem, .type = t};
 }
 
-// the member of the struct type that the name at hand names
 meta* mate(mode* self, meta* type) {
   meta* m = type && type->kind == list? type->type: NULL;
   if(!m || home(self)->talk.kind != ttag) flaw(self, "expected a member\n");
@@ -464,7 +437,6 @@ meta* mate(mode* self, meta* type) {
   return m;
 }
 
-// x.name
 oper  memb(mode* self, oper x) {
   meta* m = mate(self, x.type);
   if(x.kind != vmem) x.ival += m->slot;
@@ -473,7 +445,7 @@ oper  memb(mode* self, oper x) {
   return x;
 }
 
-// rewind text to mark: calls in the dropped code are checked but not patched
+// calls in the dropped code are still checked, not patched
 void  trim(mode* self, byte* mark) {
   dwarf_trim(self, mark);
   self->text->body = mark;
@@ -506,19 +478,17 @@ s32i  fold(u32i op, s32i a, s32i b) {
 
 oper  expr(mode* self, int least);
 
-// the ops a register takes (emit.rop): not a shift, nor * / %
+// the ops emit.rop takes: not shifts, nor * / %
 #define plain(op) (rank(op) != 8 && rank(op) != 10)
-// what a register may hold: an integer or a pointer
 #define fits(self, t) ((t)->kind == refs || ((t)->kind == base && (t)->size && !flot(self, t)))
 
-// add a forward call: name, called at at with argc arguments, the C way when ext
+// a forward call, bound later; ext: the C way
 void  post(mode* self, item* name, byte* at, u32i argc, bool ext) {
   self->link = swell(self, self->link, self->fixs, &self->fixc, sizeof(fix), 64);
   self->link[self->fixs++] = (fix){name, at, argc, home(self)->line, self->unit, ext};
 }
 
-// point the call at to func, the function name with argc arguments; a call
-// the C way (ext) was checked against its prototype by cabi
+// a call the C way (ext) was checked against its prototype by cabi
 void  bind(const mode* self, byte* at, const item* name, const meta* func, u32i argc, bool ext) {
   if(!func || (func->kind != call && func->kind != pend))
     flaw(self, "no function '%.*s'\n", nick(name));
@@ -532,9 +502,9 @@ void  bind(const mode* self, byte* at, const item* name, const meta* func, u32i 
 
 s32i  room(mode* self, u32i size);
 
-// before a call to C code that does not keep the registers of real locals
-// (x86-64 but on Windows), those in scope stored in fresh frame slots: where,
-// 0 when none. After it, with at, where: loaded back
+// C code on x86-64 but Windows clobbers the registers of real locals: before
+// the call those in scope go to fresh slots (returned, 0 if none), after it
+// they are loaded back from at
 s32i  ferry(mode* self, s32i at) {
   u32i  m = self->busy >> FREG, n = 0;
   if(!m || self->arch.cpu != cpu_ia64 || self->form.os == os_win) return 0;
@@ -544,11 +514,9 @@ s32i  ferry(mode* self, s32i at) {
   return at? at: s - 8 * (s32i)n;
 }
 
-// a call to C code, its argc arguments pushed: through the slot of an import,
-// or straight to a function of an object. One in an archive member not pulled
-// yet is asked for, and the call bound when the member is in. C leaves the
-// bytes of a result past its size undefined: an int is cut to 32 bits, a char
-// or short masked. The arguments that are reals are in real (ffi)
+// a function in an archive member not pulled yet is asked for, the call bound
+// once it is in. C leaves result bytes past its size undefined: cut them.
+// real: bitmask of the real arguments
 oper  cabi(mode* self, item* name, meta* func, u32i argc, u32i real) {
   if(func->size != VARY && (argc < func->size || (argc > func->size && !func->more)))
     flaw(self, "'%.*s' takes %d arguments, got %d\n", nick(name), func->size, argc);
@@ -567,18 +535,16 @@ oper  cabi(mode* self, item* name, meta* func, u32i argc, u32i real) {
   return acc(func->type);
 }
 
-// acc, the int x as load left it, sign extended to 64 bits: a constant not
-// below 0 is already, its move zero extends
+// a constant not below 0 needs none: its move zero extends
 void  sext(mode* self, oper x) {
   if(x.kind != vnum || x.ival < 0) emit(self, cast, 1);
 }
 
-// a number: an integer or a real, not a pointer, an array nor a struct
+// an integer or a real
 #define digit(t) ((t)->kind == base || (t)->kind == bitf)
 
-// x as a value of type t: an integer made a real in facc when t is the real,
-// a real an integer when t is one, truncated to 64 bits, then cut to 32
-// unless t is wide. A constant stays one when it can
+// between integer and real only: a real is truncated to 64 bits, then cut to
+// 32 unless t is wide. A constant stays one when it can
 oper  bend(mode* self, oper x, meta* t) {
   meta* u = x.type->kind == bitf? x.type->type: x.type;
   bool  to = flot(self, t), from = flot(self, u);
@@ -597,7 +563,7 @@ oper  bend(mode* self, oper x, meta* t) {
   return acc(t->kind == bitf? t->type: t);
 }
 
-// the real x compared with 0.0 by op, in the flags
+// real x op 0.0, in the flags
 oper  nought(mode* self, oper x, u32i op) {
   s32i  a = ACC;
   if(x.kind == vreg) a = x.ival - FREG;
@@ -607,16 +573,15 @@ oper  nought(mode* self, oper x, u32i op) {
   return (oper){.kind = vcmp, .ival = (s32i)(op | WIDE | REAL), .type = tget(self, int)};
 }
 
-// x as a condition: a real is compared with 0, in the flags, so -0.0 is false
+// a real is compared with 0, so -0.0 is false
 oper  truth(mode* self, oper x) {
   if(!flot(self, x.type)) return x;
   if(x.kind == vflo) return cnst(self, sum(x) != 0);
   return nought(self, x, tokd('!', '='));
 }
 
-// the argument i of a function, or of a pointer to one, of type f, made the
-// type of its parameter when that is a real or the argument is: in real
-// when it is one then
+// argument i converted to its parameter's type when either is a real; bit i
+// of real set when it ends up one
 oper  suit(mode* self, const meta* f, u32i i, oper x, u32i* real) {
   bool  known = f && i < 6 && (f->kind == proc? f->slot >= 0 && i < (u32i)f->slot: f->size != VARY && i < f->size);
   if(known && f->reals >> i & 1) x = bend(self, x, tget(self, real));
@@ -625,27 +590,22 @@ oper  suit(mode* self, const meta* f, u32i i, oper x, u32i* real) {
   return x;
 }
 
-// Overloads: functions of the source and imports that share a name, told
-// apart by the count and the kinds of their parameters: int (32 bits or
-// narrower), long (64 bits: long, a pointer, an array) or real. C code of an
-// object has none. A call of the name picks one (elect), and each is named for
-// the linker by its parameters (dub)
+// overloads: told apart by the count and kinds (int, long, real) of their
+// parameters; C code of an object has none. elect picks one per call, dub
+// names each for the linker
 #define KIN   32   // overloads of a name at most
-#define SPELL 1024 // bytes of a symbol or of a message on overloads
+#define SPELL 1024 // bytes of a symbol or an overload message
 #define ours(m) ((m) && (m)->kind == call && !((m)->ext && !(m)->lib))
 
-// the same count and kinds of parameters
 static bool  peer(const meta* f, const meta* g) {
   return f->size == g->size && f->longs == g->longs && f->reals == g->reals;
 }
 
-// the kind of a parameter or an argument of type t: 0 int, 1 long, 2 real
+// 0 int, 1 long, 2 real
 static u32i  sort3(const mode* self, const meta* t) { return flot(self, t)? 2: wide(t)? 1: 0; }
 
-// the overloads of name that unit at sees, but skip: its own functions and
-// imports of the name, the latest first, then the public ones of the other
-// units in join order; of those with the same parameters, the first. Their
-// count, into out
+// the overloads unit at sees, but skip: its own, latest first, then the public
+// ones of other units in join order; of the same parameters, the first
 static u32i  kin(mode* self, u32i at, const item* name, meta** out, const meta* skip) {
   u32i  n = 0;
   item* first = hsee(&self->names, name->name, name->size, clue(name->name, name->size));
@@ -664,7 +624,6 @@ static u32i  kin(mode* self, u32i at, const item* name, meta** out, const meta* 
   return n;
 }
 
-// size bytes of s into b at n: the new n
 static u32i  utter(const mode* self, char* b, u32i n, const char* s, u64i size) {
   if(n + size >= SPELL) flaw(self, "a name or message too long for an overload\n");
   copy((byte*)b + n, s, size);
@@ -672,9 +631,7 @@ static u32i  utter(const mode* self, char* b, u32i n, const char* s, u64i size) 
   return n + (u32i)size;
 }
 
-// type t as written into b at n, a pointer (or an array, as an argument is)
-// with star after what it points to, a function type as its result and fn:
-// the new n
+// a pointer or array as what it points to and star, a function type with fn
 static u32i  scribe(const mode* self, const meta* t, char* b, u32i n, char star) {
   if(t->kind == refs || t->kind == many) return utter(self, b, scribe(self, t->type, b, n, star), &star, 1);
   if(t->kind == bitf) return scribe(self, t->type, b, n, star);
@@ -682,8 +639,7 @@ static u32i  scribe(const mode* self, const meta* t, char* b, u32i n, char star)
   return t->name? utter(self, b, n, t->name->name, t->name->size): utter(self, b, n, "struct", 6);
 }
 
-// overload f, called name, as a call takes it into b at n, name(int, real),
-// after a ", " unless n is 0: the new n
+// name(int, real), after ", " unless n is 0
 static u32i  style(const mode* self, const meta* f, const item* name, char* b, u32i n) {
   if(n) n = utter(self, b, n, ", ", 2);
   n = utter(self, b, utter(self, b, n, name->name, name->size), "(", 1);
@@ -692,10 +648,8 @@ static u32i  style(const mode* self, const meta* f, const item* name, char* b, u
   return utter(self, b, n, ")", 1);
 }
 
-// the symbol of overload f, once: its name, then _ and the type of each
-// parameter as written, * as p (f_void without any). A public one is bound to
-// it in the root's table, where nothing else may be: already defined. was is
-// an import that f declares again, which has it
+// f's symbol: name_type..., * as p (name_void without parameters); a public
+// one claims it in the root's table. was: an import f declares again
 void  dub(mode* self, meta* f, const meta* was) {
   if(!f->name->unit) return;
   char  b[SPELL];
@@ -711,9 +665,8 @@ void  dub(mode* self, meta* f, const meta* was) {
   f->name = s;
 }
 
-// func overloads the n functions c, and was, an import it declares again
-// (NULL when none): each is marked, and named but func, whose body may
-// follow. A forward call bound to one by its name would now be ambiguous
+// all but func, whose body may follow, are named now (dub). A forward call by
+// the bare name would now be ambiguous
 void  crowd(mode* self, meta* func, meta** c, u32i n, meta* was) {
   for(u32i i = 0; i <= n; i++) {
     const meta* m = i < n? c[i]: was;
@@ -724,13 +677,10 @@ void  crowd(mode* self, meta* func, meta** c, u32i n, meta* was) {
   if(was) { was->lots = 1; dub(self, was, NULL); }
 }
 
-// the overload of name that the arguments at hand fit best, after its (:
-// they are compiled once for their types (mode.dry), their code dropped and
+// the arguments are compiled once for their types (mode.dry), then dropped and
 // their tokens put back. Per argument the same kind fits best, then an int for
-// a long, then the rest: an int for a pointer, a real for an integer or back
-// (not for a pointer, nor a pointer for a real); a variadic one takes more.
-// The best is the one no other beats on any argument: none, or more than one,
-// fails
+// a long, then the rest (never a real for a pointer or back). The winner is
+// the one no other beats on any argument
 meta* elect(mode* self, item* name) {
   meta* c[KIN], *t[6];
   u32i  n = kin(self, self->unit, name, c, NULL), argc = 0, dials = self->dials;
@@ -790,11 +740,9 @@ meta* elect(mode* self, item* name) {
   flaw(self, "the call of '%.*s' fits more than one overload: %.*s\n", nick(name), (int)m, b);
 }
 
-// name(args): each argument is pushed on 64 bits, then popped into its
-// register, the last one moved there from acc. A constant, or a local in a
-// register, waits (late) and is moved to its register once the others are
-// computed: the one in acc before only such ones is not pushed. C code and
-// syscall(number, args), which goes to the kernel, pop them all
+// each argument is pushed on 64 bits, then popped into its register, the last
+// one from acc. A constant or a register local waits (late) until the others
+// are computed. C code and syscall pop them all
 oper  dial(mode* self, item* name) {
   bool  trap = name == sget(self, "syscall");
   meta* func = find(self, self->unit, name);
@@ -841,8 +789,7 @@ oper  dial(mode* self, item* name) {
   return acc(func? func->type: tget(self, int));
 }
 
-// where an address of function func, named name, points: its entry for C
-// code, when it has one. It must be defined, and not overloaded
+// its entry for C code (hail) when it has one
 byte* deed(mode* self, item* name, const meta* func) {
   if(plural(func, name)) flaw(self, "'%.*s' is overloaded: name one by its symbol to take its address\n", nick(name));
   const meta* body = func->addr? func: find(self, 0, name); // past a prototype
@@ -851,9 +798,7 @@ byte* deed(mode* self, item* name, const meta* func) {
   return body->hail? body->hail: body->addr;
 }
 
-// the address of function func, named name: a pointer to its type, called
-// the C way (ring). That of an import is read from its slot, one in text is
-// pc-relative
+// a function pointer is called the C way (ring)
 oper  hand(mode* self, item* name, meta* func) {
   if(plural(func, name)) flaw(self, "'%.*s' is overloaded: name one by its symbol to take its address\n", nick(name));
   meta* t = href(self, mold(self, func->type, func->size == VARY? -1: (s32i)func->size, func->longs, func->reals, func->more));
@@ -865,10 +810,8 @@ oper  hand(mode* self, item* name, meta* func) {
   return acc(t);
 }
 
-// x(args), x a pointer to a function or what one points to: called the C way,
-// which an otic function follows as well, or its entry for C code. x is kept in a frame
-// slot while the arguments are pushed, each sign extended to 64 bits, then the
-// call goes through the slot
+// called the C way, which an otic function follows too (or its C entry). x
+// waits in a frame slot while the arguments are pushed
 oper  ring(mode* self, oper x) {
   meta* f = x.type && x.type->kind == proc && x.kind == vmem? x.type: aimp(x.type);
   if(!f) flaw(self, "not a function\n");
@@ -897,12 +840,9 @@ oper  ring(mode* self, oper x) {
   return acc(f->type);
 }
 
-// where the right operand of a pair starts, past the keep of the left one,
-// and the calls emitted before it
+// at, past: around the keep of the left operand; dials: calls before it
 typedef struct { byte* at; byte* past; u32i dials; } kept;
 
-// x before its right operand is parsed: a value in acc, or a real in facc,
-// is kept at the mark
 kept  keep(mode* self, oper* x) {
   if(x->kind == vmem && flot(self, x->type)) *x = fload(self, *x);
   if(x->kind == vmem || x->kind == vcmp) *x = load(self, *x);
@@ -920,7 +860,6 @@ meta* coil(mode* self, meta* type, item** name);
 meta* dims(mode* self, meta* type);
 oper  atom(mode* self);
 
-// the type the word names, NULL when it names none
 meta* ilk(mode* self) {
   meta* x = home(self)->talk.kind == ttag? find(self, self->unit, home(self)->talk.hash): NULL;
   return x && (x->kind == base || x->kind == list)? x: NULL;
@@ -928,8 +867,7 @@ meta* ilk(mode* self) {
 
 #define type(self) (same(self, "struct") || ilk(self))
 
-// sizeof's operand: (a type name) with its pointers and arrays, a string
-// literal, else a unary expression whose code is dropped. Its bytes
+// sizeof's operand: the code of an expression is dropped
 s32i  gist(mode* self) {
   if(home(self)->talk.kind == '"') {
     s32i n = (s32i)quote(home(self)->talk.hash, NULL);
@@ -961,15 +899,11 @@ sized:
 
 void  fini(mode* self);
 
-// what the # at hand gives, after the #: its operand is a call name(args) of a
-// function with its code, whose result is an int, long, real or char*. The
-// call is compiled as a function of no parameters at the end of text, run at
-// compile time by mode.eval, in an image of all that is compiled so far whose
-// globals keep what earlier #s did to them, then dropped with what it laid in
-// data, bss and the import slots: the output is what it would be without it.
-// The locals of the function being compiled are out of scope in the
-// arguments. A mode that makes code for another target takes the result, in
-// order, from the tape of the host's mode for the same source (mirror)
+// # name(args): compiled as a parameterless function at the end of text, run
+// by mode.eval in an image of all compiled so far (globals keep what earlier
+// #s did), then dropped with what it laid in data, bss and the import slots.
+// Locals are out of scope in the arguments. A mode for another target takes
+// the results in order from the host mode's tape (mirror)
 yield sharp(mode* self) {
   if(home(self)->talk.kind != ttag) flaw(self, "expected the name of a function after #\n");
   item* name = home(self)->talk.hash;
@@ -983,7 +917,7 @@ yield sharp(mode* self) {
   meta* t = func->type;
   bool  text = t->kind == refs && t->type == tget(self, char), real = flot(self, t);
   if(!text && t->kind != base) flaw(self, "'%.*s' gives a result that cannot be used at compile time\n", nick(name));
-  if(self->dry) { // the arguments of an overloaded call are typed: not run, its type is its result's
+  if(self->dry) { // typing an overloaded call's arguments: not run
     for(u32i d = 1; d; chop(self)) {
       u32i k = home(self)->talk.kind;
       if(!k) flaw(self, "expected )\n");
@@ -1086,7 +1020,7 @@ oper  atom(mode* self) {
       if(var->ext) { spot(self, port(self, var)); emit(self, read, 8); x = (oper){.kind = vmem, .type = var->type}; }
       break;
     }
-    case '#': { // a number computed while compiling
+    case '#': {
       chop(self);
       yield y = sharp(self);
       if(y.text) flaw(self, "source text from # goes where a declaration does, not in an expression\n");
@@ -1146,7 +1080,7 @@ oper  atom(mode* self) {
     default:
       flaw(self, "expected expression, got %x\n", op);
   }
-  for(;;) { // postfix: x[i] is *(x + i), x.m, x->m is (*x).m, x(args) a call through x
+  for(;;) {
     if(twin(self, '(')) x = ring(self, x);
     else if(twin(self, '[')) {
       kept  mark = keep(self, &x);
@@ -1163,7 +1097,6 @@ oper  atom(mode* self) {
   }
 }
 
-// x && y, x || y: y runs only when x does not decide, the result is 0 or 1
 oper  both(mode* self, u32i op, oper x, int r) {
   bool  any  = op == tokd('|', '|'); // the value of x that decides
   byte* mark = self->text->body;
@@ -1192,7 +1125,6 @@ oper  both(mode* self, u32i op, oper x, int r) {
   return acc(tget(self, int));
 }
 
-// the integer x, loaded in acc, on 64 bits for a WIDE op, times scale
 void  grow(mode* self, oper x, s32i scale, u32i w) {
   if(!w) return;
   if(!wide(x.type)) sext(self, x);
@@ -1202,10 +1134,8 @@ void  grow(mode* self, oper x, s32i scale, u32i w) {
 // a scale that step takes
 #define steps(n) ((n) == 1 || (n) == 2 || (n) == 4 || (n) == 8)
 
-// y in acc moved to tmp and the left operand x of a pair back in acc, kept
-// at nesting k: from scratch k when no call came between, else from the
-// register of locals lent to that nesting (sift), else from the stack, else
-// loaded
+// y in acc to tmp, x back in acc from where keep put it: scratch k when no
+// call came between, else the register sift lent, else the stack
 oper  rest(mode* self, oper x, u32i k, kept mark) {
   bool  calm = self->dials == mark.dials;
   if(x.kind == vacc && ((calm && k < HELD) || self->lend + k < self->regn)) {
@@ -1218,7 +1148,7 @@ oper  rest(mode* self, oper x, u32i k, kept mark) {
   return x;
 }
 
-// rest for a real x kept in facc: y in facc moved to ftmp, x back in facc
+// rest for a real x kept in facc
 void  frest(mode* self, u32i k, kept mark) {
   bool  calm = self->dials == mark.dials;
   if((calm && k < HELD) || self->lend + k < self->regn) {
@@ -1229,27 +1159,20 @@ void  frest(mode* self, u32i k, kept mark) {
   else emit(self, fpull);
 }
 
-// x, an integer or a real, into facc
 void  ftop(mode* self, oper x) {
   if(flot(self, x.type)) { fput(self, x, ACC); return; }
   x = load(self, x);
   emit(self, turn, 1, wide(x.type) != 0);
 }
 
-// comparison op with its operands swapped
 u32i  flip(u32i op) {
   u32i o = op & 0xffffff;
   o = o == '<'? '>': o == '>'? '<': o == tokd('<', '=')? tokd('>', '='): o == tokd('>', '=')? tokd('<', '='): o;
   return (op & ~0xffffffu) | o;
 }
 
-// x op y as pair does it, one of them a real, the other made one: + - * /,
-// or a comparison left in the flags. Constants are folded by the host. The
-// result is in facc. When y emitted nothing, x goes to facc and y is taken
-// where it is (ftmp, or the register of a local); else y is computed in
-// facc, then moved to ftmp for x, back from where keep put it (acc for an
-// integer, or a real's bits a call gave) or loaded. + * and the comparisons
-// take an x not kept as the second operand instead, y staying in facc
+// pair with a real operand, the result in facc; constants folded by the host.
+// + * and comparisons commute when x is not kept, y staying in facc
 oper  rpair(mode* self, u32i op, oper x, oper y, kept mark) {
   u32i  r = rank(op);
   bool  test = r == 6 || r == 7;
@@ -1293,12 +1216,10 @@ oper  rpair(mode* self, u32i op, oper x, oper y, kept mark) {
   return fac(self);
 }
 
-// x op y, y parsed after mark; x was kept there when it was in acc: in a
-// scratch register unless a call came between. A comparison is left in the
-// flags. pointer + n moves n elements, pointer - pointer counts them; void* by bytes
+// a comparison is left in the flags. void* arithmetic is by bytes
 oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
   if(flot(self, x.type) || flot(self, y.type)) return rpair(self, op, x, y, mark);
-  meta *ex = elem(x.type), *ey = elem(y.type), *t = tget(self, int); // t: type of the result
+  meta *ex = elem(x.type), *ey = elem(y.type), *t = tget(self, int);
   if((op == '/' || op == '%' || (op == '-' && ex && ey)) && self->leaf && self->busy >> self->arch.regs & self->arch.sdiv)
     self->spoil = 1; // division takes a spare that holds a local
   s32i  sx = 1, sy = 1;
@@ -1313,7 +1234,7 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
       if(ex) sy = ex->size? ex->size: 1; else sx = ey->size? ey->size: 1;
     }
   }
-  else if(w && !test) t = wide(x.type)? x.type: y.type; // long
+  else if(w && !test) t = wide(x.type)? x.type: y.type;
   if(t->kind == bitf) t = t->type;
 
   bool trap = (op == '/' || op == '%') && y.kind == vnum && !y.ival; // left to run time
@@ -1368,7 +1289,7 @@ oper  pair(mode* self, u32i op, oper x, oper y, kept mark) {
   return acc(t);
 }
 
-// the operator of an assignment: '=' or the op of op=, 0 when it is none
+// '=', op for op=, else 0
 u32i  sets(u32i kind) {
   switch(kind) {
     case '=': return '=';
@@ -1381,8 +1302,6 @@ u32i  sets(u32i kind) {
   }
 }
 
-// x = y, x op= y for a real x: in its register, else from facc, where the
-// value is left
 oper  fgive(mode* self, u32i op, oper x) {
   if(x.kind == vreg) {
     oper  y = expr(self, 1);
@@ -1418,10 +1337,9 @@ oper  fgive(mode* self, u32i op, oper x) {
   return fac(self);
 }
 
-// x = y, x op= y: right associative, the value is left in acc
 oper  give(mode* self, u32i op, oper x) {
   meta* t = x.type, *f = t->kind == bitf? t: NULL;
-  if(f) t = f->type; // the value is of its integer type
+  if(f) t = f->type;
   if(x.kind == vnum || x.kind == vacc || x.kind == vcmp || x.kind == vflo || x.kind == vfac
      || t->kind == many || t->kind == list || t->kind == proc)
     flaw(self, "cannot assign\n");
@@ -1489,8 +1407,7 @@ oper  expr(mode* self, int least) {
   return x;
 }
 
-// (condition): a branch taken when it fails, patched by back. A comparison
-// branches on its flags
+// a branch taken when false, patched by back
 void  gate(mode* self) {
   skip(self, '(');
   oper  x = truth(self, expr(self, 1));
@@ -1511,12 +1428,11 @@ void  gate(mode* self) {
   x.name->data = y; \
   *y = x; }
 
-// the builtin type k, also kept in mode.b<k> for tget
 #define crux(self, k, ...) {\
   seed((self), .kind = base, .name = sget((self), #k), __VA_ARGS__) \
   (self)->b##k = pin((self)->pile, (self)->top - 1); }
 
-// leave a scope: the names declared since top mean what they did before
+// names declared since top get back what they shadowed
 void  bury(mode* self, u32i top) {
   while(self->top > top) {
     meta* x = pin(self->pile, --self->top);
@@ -1525,8 +1441,7 @@ void  bury(mode* self, u32i top) {
   }
 }
 
-// fresh frame slots for size bytes: a function sift left with no frame
-// spoils
+// a function sift left without a frame spoils
 s32i  room(mode* self, u32i size) {
   if(self->bare) self->spoil = 1;
   self->slot += (size + 7) & -8;
@@ -1534,9 +1449,7 @@ s32i  room(mode* self, u32i size) {
   return -self->slot;
 }
 
-// where a local named name, of type t and size bytes, lives: the register
-// sift gave the name, when t fits one (a real one from FREG up) and no local
-// in scope has it, else fresh frame slots
+// the register sift gave name if t fits it and it is free, else frame slots
 s32i  stay(mode* self, const item* name, const meta* t, u32i size) {
   u32i  r = name->pick - 1;
   if(!name->pick || !(r >= FREG? flot(self, t): fits(self, t)) || self->busy >> r & 1) return room(self, size);
@@ -1546,8 +1459,6 @@ s32i  stay(mode* self, const item* name, const meta* t, u32i size) {
 
 meta* bulk(mode* self, item* name);
 
-// a type name: struct name, or a type name with an optional struct before,
-// or struct name? { ... }, which defines one
 meta* sort(mode* self) {
   if(same(self, "struct")) {
     chop(self);
@@ -1572,8 +1483,7 @@ meta* sort(mode* self) {
 
 meta* coil(mode* self, meta* type, item** name);
 
-// (parameters) after a declarator: the type of a function returning type. The
-// names of the parameters may be left out, they are not declared
+// parameter names may be left out; they are not declared
 meta* plan(mode* self, meta* type) {
   u32i  argc = 0;
   byte  longs = 0, reals = 0;
@@ -1591,9 +1501,7 @@ meta* plan(mode* self, meta* type) {
   return mold(self, type, argc, longs, reals, more);
 }
 
-// a declarator of type: pointers to type with the name into *name, NULL when
-// there is none, or one of a pointer to a function, (*name[n]...)(parameters),
-// with its arrays of pointers
+// *s name, or (*name[n]...)(parameters); *name NULL when there is none
 meta* coil(mode* self, meta* type, item** name) {
   while(twin(self, '*')) type = href(self, type);
   *name = NULL;
@@ -1622,14 +1530,12 @@ meta* coil(mode* self, meta* type, item** name) {
   return type;
 }
 
-// a declarator of type that names: its type, the name into *name
 meta* term(mode* self, meta* type, item** name) {
   type = coil(self, type, name);
   if(!*name) flaw(self, "expected name, got %x\n", home(self)->talk.kind);
   return type;
 }
 
-// [n][m] after a declared name: n arrays of m of type
 meta* dims(mode* self, meta* type) {
   if(!twin(self, '[')) return type;
   oper n = expr(self, 1);
@@ -1640,21 +1546,18 @@ meta* dims(mode* self, meta* type) {
   return knot(self, many, type, n.ival * type->size);
 }
 
-// the declared type of name with its array sizes, which must have a size
 meta* full(mode* self, meta* type, const item* name) {
   type = dims(self, type);
   if(!type->size) flaw(self, "'%.*s' has no size\n", nick(name));
   return type;
 }
 
-// a declarator after base: *name and its full type
 meta* noun(mode* self, meta* base, item** name) {
   meta* type = term(self, base, name);
   return full(self, type, *name);
 }
 
-// size bytes at slot from src in stores of 4, 2 or 1 bytes, or zeros when
-// src is NULL
+// zeros when src is NULL
 void  bits(mode* self, s32i slot, const byte* src, u32i size) {
   if(!src && size) emit(self, move, 0);
   for(u32i n; size; slot += n, size -= n) {
@@ -1664,8 +1567,7 @@ void  bits(mode* self, s32i slot, const byte* src, u32i size) {
   }
 }
 
-// an array or struct being initialized, at off in the braced one, and the
-// part of it at hand: member memb of a struct, element i of an array
+// an aggregate being initialized at off; the part at hand is memb or i
 typedef struct { meta* type; meta* memb; u32i i, off; } tier;
 
 #define bulky(t) ((t)->kind == many || (t)->kind == list)
@@ -1673,13 +1575,12 @@ typedef struct { meta* type; meta* memb; u32i i, off; } tier;
 #define text(self, t) ((t)->kind == many && (t)->type->size == 1 && home(self)->talk.kind == '"')
 #define TIERS 16
 
-// a tier for type at off, at its first part
 tier  dive(const mode* self, u32i depth, meta* type, u32i off) {
   if(depth == TIERS) flaw(self, "initializer nested too deep\n");
   return (tier){type, type->kind == list? type->type: NULL, 0, off};
 }
 
-// the part of n at hand and its offset into off, NULL past the end of n
+// NULL past the end of n
 meta* pick(tier* n, u32i* off) {
   if(n->type->kind == list) {
     if(!n->memb) return NULL;
@@ -1694,7 +1595,6 @@ meta* pick(tier* n, u32i* off) {
 
 void  step(tier* n) { if(n->type->kind == list) n->memb = n->memb->hide; else n->i++; }
 
-// a designator, .name or [index], picks the part of n
 void  aim(mode* self, tier* n) {
   if(twin(self, '.')) { n->memb = mate(self, n->type); return; }
   skip(self, '[');
@@ -1706,12 +1606,9 @@ void  aim(mode* self, tier* n) {
   n->i = i.ival;
 }
 
-// the address a global pointer at data offset slot starts with, when its
-// initializer is one: &x of a global x (a member or an element of one too), a
-// global array, a string or a function, plus or minus constants. It goes in
-// data as an address in a library object does (a hook, which dock patches and
-// a form relocates where the image is loaded). 0, nothing parsed, when the
-// initializer is no address
+// a global pointer starting at &global, a global array, a string or a
+// function, +- constants: a hook, which dock patches and the form relocates.
+// 0, nothing parsed, when the initializer is no address
 bool  cite(mode* self, s32i slot) {
   bool  amp = twin(self, '&');
   u32i  c = home(self)->talk.kind;
@@ -1754,14 +1651,9 @@ bool  cite(mode* self, s32i slot) {
   return 1;
 }
 
-// the initializer of type: { a list }, the rest zero, a string for a char
-// array, or a value; a global's (glob) is a constant written to data at
-// offset slot, a local's is stored to frame slot, or to register slot when
-// it is not below 0. A list goes over the members
-// of a struct or the elements of an array in order, or from the part a
-// designator chain (.name, [index]) picks; a part that is a struct or array
-// takes the values that come when they are not in braces. A value or a string
-// may be in braces
+// slot: a data offset for a global (glob), else a frame slot, or a register
+// when not below 0. A nested aggregate without braces takes the values that
+// follow
 void  seal(mode* self, meta* type, bool glob, s32i slot) {
   const meta* t = type->kind == many? type->type: NULL;
   if(glob && bulky(type)) // as a whole, again
@@ -1838,8 +1730,7 @@ void  seal(mode* self, meta* type, bool glob, s32i slot) {
   else give(self, '=', (oper){.kind = slot < 0? vloc: vreg, .ival = slot, .type = type});
 }
 
-// (type){ init }, after the "(": a compound literal, a local that lives to the
-// end of the block
+// a compound literal lives to the end of the block
 oper  lit(mode* self) {
   meta* type = sort(self);
   while(twin(self, '*')) type = href(self, type);
@@ -1853,8 +1744,7 @@ oper  lit(mode* self) {
   return (oper){.kind = vloc, .ival = slot, .type = type};
 }
 
-// static? type declarator (= init)? (, declarator (= init)?)* ; static: a
-// global of the source that only the block sees, set once by constants
+// static: a global only the block sees, set once by constants
 void  vars(mode* self) {
   u64i  line = home(self)->line;
   bool  own  = same(self, "static");
@@ -1879,10 +1769,8 @@ void  vars(mode* self) {
   skip(self, ';');
 }
 
-// fail when a global or function is defined again. prev, what the name meant
-// before, is of this unit, or, unless the new one is static (own), of another
-// that makes it public, but not as a weak definition. Nor may another unit
-// define it as public when the new one is
+// a redefinition: prev of this unit, or, unless own, a public non-weak one of
+// another unit; nor may another unit define it public when this one is
 void  once(mode* self, const meta* prev, item* name, bool own) {
   const meta* x = own? NULL: find(self, 0, name);
   if((prev && (prev->kind == glob || prev->kind == call)
@@ -1891,23 +1779,18 @@ void  once(mode* self, const meta* prev, item* name, bool own) {
     flaw(self, "'%.*s' is already defined\n", nick(name));
 }
 
-// the type of a bit-field of integer type t, width bits from bit at in its unit
 meta* nibs(mode* self, meta* t, u32i at, u32i width) {
   return sole(self, (meta){.kind = bitf, .type = t, .size = t->size, .slot = at, .longs = (byte)width});
 }
 
-// fail when struct type has a member called name already (none when NULL)
 static void  dupe(mode* self, const meta* type, const item* name) {
   for(meta* m = name? type->type: NULL; m; m = m->hide)
     if(m->name && akin(m->name, name)) flaw(self, "member '%.*s' given twice\n", nick(name));
 }
 
-// { type declarator (: width)? (, declarator (: width)?)* ; ... } after
-// "struct" name?, name NULL when it has none. A member is aligned to its size,
-// the struct to its widest member. A bit-field takes the bits after the one
-// before unless they would cross a unit of its type, a width 0 without a name
-// ends the unit. A struct member without a declarator gives its members to
-// this one, at its offset; a name given twice fails
+// a member is aligned to its size, the struct to its widest. A bit-field
+// follows the one before unless it would cross a unit of its type; an unnamed
+// width 0 ends the unit. A struct member without a declarator inlines its members
 meta* bulk(mode* self, item* name) {
   meta* type;
   if(name) { // seeded first: members may point to it
@@ -1920,7 +1803,7 @@ meta* bulk(mode* self, item* name) {
   skip(self, '{');
   u32i  bit = 0, align = 1; // bits laid out
   while(!twin(self, '}')) {
-    meta* of = sort(self); // the type the declarators are of
+    meta* of = sort(self);
     if(twin(self, ';')) { // a struct without a declarator: its members are this one's
       if(of->kind != list) continue;
       if(of == type) flaw(self, "a struct cannot hold itself\n");
@@ -1970,25 +1853,23 @@ meta* bulk(mode* self, item* name) {
 
 void  stmt(mode* self);
 
-#define NEVER (1u << 31) // item.pick of one of them: its locals stay in the frame
-#define FLOT  (1u << 30) // item.pick: a local of the name is a real
-#define INTS  (1u << 29) // item.pick: a local of the name is an integer or a pointer
-#define USES  (INTS - 1) // item.pick: 1 plus the uses of the name
+// item.pick while sifting
+#define NEVER (1u << 31) // its locals stay in the frame
+#define FLOT  (1u << 30) // a local of the name is a real
+#define INTS  (1u << 29) // a local of the name is an integer or a pointer
+#define USES  (INTS - 1) // 1 plus the uses of the name
 
 #define NEST  32         // brace depths sift tells apart: deeper ones count as this one
 
-// name among the names sifted: its pick, 1 plus its uses; 0 when there are
-// too many
+// 0 when there are too many names
 static u32i  sown(item** c, u32i* n, item* name) {
   if(!name->pick && *n < SIFT) (c[(*n)++] = name)->pick = 1;
   return name->pick;
 }
 
-// a local of name c[j] declared at depth d: in scope with every name whose
-// local is (live[i]: those declared at depth i, in scope until its block
-// ends), they cannot share a register (clash). The name is a local's (mine);
-// whether one of it was in scope already, which leaves the new one a frame
-// slot (stay)
+// a local of name declared at depth d clashes with every name live there
+// (live[i]: declared at depth i). 1 when one of the name was in scope already:
+// the new one gets a frame slot (stay)
 static bool  meet(item* const* c, u32i n, const item* name, u32i d, u64i* clash, u64i* live, u64i* mine) {
   u32i  j = 0;
   while(j < n && c[j] != name) j++;
@@ -2005,27 +1886,16 @@ static bool  meet(item* const* c, u32i n, const item* name, u32i d, u64i* clash,
   return again;
 }
 
-// the prescan of a function at the { of its body, its parameters in scope
-// from top: the tokens up to the matching } are lexed once and walked, not
-// parsed, and the lexer put back: chop replays them (mode.lexes). It follows the names of the numbers and pointers declared
-// (the parameters; a name after a type that starts a statement and its *s,
-// and after a , of that statement): each use counts, 8 times per loop
-// around it, and the most used names, of 3 uses at least, get a register
-// each (item.pick), which the locals so named take (stay): a real one for
-// reals, none for a name some locals of which are reals and some not. Names whose
-// locals are never in scope together, as in sibling blocks, may share one.
-// A name whose address is taken anywhere in the body, as &name or within
-// &(...), gets none: a use before the code for it exists is what a single
-// pass cannot see. When a call in a loop may come while a computed left
-// operand is kept (s += f(i) + f(i + 1)), a register left over is lent to
-// kept operands (mode.lend), which a call keeps: saved once, it saves a push
-// and a pop each time round. Out of a loop the stack is cheaper: the save
-// is paid on every path, a return before the call too (fib). A function
-// that calls nothing (leaf, when lone allows it) gives the spare registers
-// first, which need no save, to names of any use, a parameter its own
-// argument register first; with no compound literal and a register for every
-// local, saving none, it has no frame (bare). A guess that proves wrong while
-// compiling spoils the function: it is compiled again with lone 0
+// prescan of a function body: its tokens are lexed once and walked, not parsed
+// (chop replays them). Each use of a declared number or pointer counts, 8 times
+// per enclosing loop; the most used names (3 uses at least) get a register
+// (item.pick), names never in scope together may share one. A name whose
+// address is taken anywhere gets none: one pass cannot see a use before it.
+// When a call in a loop may come while a computed left operand is kept, a
+// spare register is lent to kept operands (mode.lend); out of a loop the stack
+// is cheaper. A leaf (when lone) gives spare registers, which need no save,
+// first; with no compound literal and every local in a register it has no
+// frame (bare). A wrong guess spoils the function: recompiled with lone 0
 void  sift(mode* self, u32i top, bool lone) {
   self->leaf = self->bare = 0;
   if((!self->arch.regs && !self->arch.fregs) || self->debug) return; // -g keeps every local in the frame, where a debugger finds it
@@ -2043,15 +1913,12 @@ void  sift(mode* self, u32i top, bool lone) {
   s32i  lvl = 0; // brackets open in the declaration
   bool  ok = 1, arm = 0, stars = 0, amp = 0; // arm: a declared name may follow; amp: a unary & came before
   u64i  clash[SIFT] = {0}, live[NEST] = {0};
-  // in a loop, a left operand computed in the statement is kept for its
-  // right one (hold); prec: the rank of the operator that the operand at
-  // hand ends, NEST above any for a unary one or ->, 0 when it is a lone
-  // name or number
+  // hold: a computed left operand is kept in a loop; prec: rank of the operator
+  // the operand ends, NEST for a unary one or ->, 0 for a lone name or number
   u32i  prec = 0;
   bool  hold = 0, lend = 0; // lend: a call while one is held
-  // calls: a call, or what may be one, but # name( which runs while
-  // compiling (run: a # before the name); lits: a compound literal; again: a
-  // local of a name in scope already; divs: an integer division, maybe
+  // calls: maybe a call, but not # name( (run); lits: a compound literal;
+  // again: a local of a name in scope already; divs: maybe an integer division
   bool  calls = 0, run = 0, lits = 0, again = 0, divs = 0;
   u64i  mine = 0; // the names of locals
   for(u32i i = top; ok && i < self->top; i++) {
@@ -2138,10 +2005,8 @@ void  sift(mode* self, u32i top, bool lone) {
   u->code->body = at, u->line = line, u->talk = talk;
   self->lexi = 0, self->lexu = self->unit; // chop replays the tokens
 
-  // the most used first, each to the lowest register of its kind none it
-  // clashes with has: in a leaf a spare one, else one it saves, for 3 uses
-  // at least. A parameter takes no spare that is the argument register of a
-  // later one, not read yet when it is moved there
+  // most used first, to the lowest free register of its kind. A parameter
+  // takes no spare that is a later parameter's argument register, not read yet
   bool  leaf = lone && ok && !calls;
   u32i  argc = self->top - top, regs = self->arch.regs, fregs = self->arch.fregs, sarg = self->arch.sarg;
   u32i  spare = leaf? self->arch.spare: 0, sdiv = divs? self->arch.sdiv: 0;
@@ -2200,14 +2065,11 @@ void  sift(mode* self, u32i top, bool lone) {
   self->bare = leaf && all;
 }
 
-// bytes of a register of real locals that a function saves: Win64 keeps all
-// 16 of xmm8-15, else C code keeps 8 or none
+// bytes saved per real register: Win64 keeps all 16 of xmm8-15, else 8 or none
 #define FULL(self) ((self)->arch.cpu == cpu_ia64 && (self)->form.os == os_win? 16: 8)
-// the slot that saves register r of locals, or of real locals (flot), after those
+// the slot saving register r; the real ones (flot) after the integer ones
 #define SAVE(self, r, flot) (flot? -8 * (s32i)(self)->regn - FULL(self) * (s32i)((r) + 1): -8 * (s32i)((r) + 1))
 
-// the registers of locals back as the caller had them, from the slots they
-// were saved in, and the epilogue
 void  fini(mode* self) {
   for(u32i r = 0; r < self->regn; r++) emit(self, stow, r, SAVE(self, r, 0), 1);
   for(u32i r = 0; r < self->fregn; r++) emit(self, fstow, r, SAVE(self, r, 1), 1, FULL(self));
@@ -2296,11 +2158,9 @@ void  stmt(mode* self) {
   self->slot = slot < self->lits? self->lits: slot; // the compound literals of the block stay
 }
 
-// x, declared without a body or as extern, is an import from the library of
-// the last load, or of "c". prev, what the name meant before, may be the same
-// import, which keeps its slot, or C code of an object or an archive, which x
-// gives a prototype: the calls go to the definition (cabi). An overload (lots)
-// with nothing before it of its parameters is checked by its symbol (dub)
+// an import from the library of the last load, or "c". Redeclaring the same
+// import keeps its slot; over C code of an object or archive x is a prototype
+// (cabi). A new overload (lots) is checked by its symbol (dub)
 void  hire(mode* self, meta* x, const meta* prev, bool lots) {
   x->ext = 1;
   if(x->kind == call && prev && (prev->kind == pend || (prev->kind == call && prev->ext && !prev->lib)))
@@ -2312,7 +2172,6 @@ void  hire(mode* self, meta* x, const meta* prev, bool lots) {
   else if(prev || !lots) once(self, prev, x->name, x->own);
 }
 
-// the string after link or load
 item* bond(mode* self) {
   item* s = home(self)->talk.hash;
   if(home(self)->talk.kind != '"') flaw(self, "expected a string\n");
@@ -2324,8 +2183,7 @@ void  feed(mode* self, u32i at);
 
 void  decl(mode* self) {
   u64i  born = home(self)->line; // where a function or global starts, for the debugger
-  // # name(args) ";"?: run at compile time; the source it gives, a char*, is
-  // declarations that go here, as a unit of their own
+  // the source a char* # gives is declarations, as a unit of their own
   if(twin(self, '#')) {
     u64i  line = home(self)->line;
     yield y = sharp(self);
@@ -2344,15 +2202,14 @@ void  decl(mode* self) {
     twin(self, ';');
     return;
   }
-  // load "name" ";": a shared library, the bodyless functions after it in this
-  // source file are imported from it
+  // load: the bodyless functions after it in this source are imported from it
   if(same(self, "load")) {
     chop(self);
     home(self)->from = rack(self, bond(self));
     skip(self, ';');
     return;
   }
-  // link "name" ";": a source, an object or an archive, linked here once
+  // link: a source, an object or an archive, linked here once
   if(same(self, "link")) {
     chop(self);
     haul(self, bond(self));
@@ -2365,15 +2222,11 @@ void  decl(mode* self) {
   bool ext = same(self, "extern");
   if(ext) chop(self);
 
-  // declaration begins with a type, or only defines a struct:
-  // "struct" name? "{" decl "}" ";"
   item* name;
   meta* base = sort(self);
   if(twin(self, ';')) return;
   meta* type = term(self, base, &name);
 
-  // type name "(" args ")" "{" stmt "}"     // callable decl
-  // type name "(" args ")" ";"               // import
   if(twin(self, '(')) {
     const meta* prev = find(self, self->unit, name);
     seed(self, .name=name, .type=type, .kind=call, .own=own);
@@ -2398,8 +2251,7 @@ void  decl(mode* self) {
       func->args = self->heap(NULL, func->size * sizeof(meta*));
       copy((byte*)func->args, args, func->size * sizeof(meta*));
     }
-    // after a function of the name: the overloads of the name, one of which
-    // func may declare again (prev), the others (c, lots of them) it overloads
+    // func may declare one overload again (prev) and overload the others (c)
     meta* c[KIN];
     u32i  n = ours(prev)? kin(self, self->unit, name, c, func): 0, lots = 0;
     if(n) {
@@ -2423,8 +2275,7 @@ void  decl(mode* self) {
     func->addr = self->text->body;
     func->hail = hail != func->addr? hail: NULL;
     dwarf_open(self, born);
-    // where the body starts, and what it may add to: put back when sift's
-    // guess spoils it
+    // put back when sift's guess spoils the function
     unit  at = *home(self);
     byte* body = at.code->body;
     u32i  fixs = self->fixs, imps = self->impn, size = (u32i)(self->data->body - self->data->head);
@@ -2473,7 +2324,6 @@ void  decl(mode* self) {
     return;
   }
 
-  // globals: type name ([n])* (= init)? (, declarator)* ;
   for(type = full(self, type, name);; type = noun(self, base, &name)) {
     if(ext) {
       const meta* prev = find(self, self->unit, name);
@@ -2492,11 +2342,8 @@ void  decl(mode* self) {
   skip(self, ';');
 }
 
-// the unit at, its file read in code: an object is taken, the symbol index of
-// an archive read, a source parsed: when it ends, its forward calls to
-// functions now known are bound. The unit being parsed is back after: each
-// source keeps its own place (line, talk, from) in its unit. The file goes
-// once read, its names have their own bytes; an archive's when the run ends
+// each source keeps its own place (line, talk, from) in its unit. The file is
+// freed once read, its names have their own bytes; an archive's at the end
 void  feed(mode* self, u32i at) {
   file* code = self->units[at].code; // nest may move the units
   byte  kind = self->units[at].kind;
@@ -2521,9 +2368,8 @@ void  feed(mode* self, u32i at) {
   self->unit = back;
 }
 
-// the file at path, read in code, into the pass as a unit of kind unless it
-// is in already: 1 when it was not. The unit joins the list as it starts, so
-// a cycle back into it sees what it has defined so far
+// 0 when path is in already. A unit joins as it starts, so a cycle back into
+// it sees what it has defined so far
 bool  join(mode* self, const char* path, u64i size, file* code, byte kind) {
   for(const unit* u = self->units + 1; kind != un_memb && u < self->units + self->unitn; u++)
     if(u->kind != un_memb && alike(u->path, path, size + 1)) { self->heap(code, 0); return 0; }
@@ -2531,9 +2377,8 @@ bool  join(mode* self, const char* path, u64i size, file* code, byte kind) {
   return 1;
 }
 
-// path, size bytes from mode.heap, tidy'd and joined as a unit of kind with
-// code, read when NULL: 0, path still the caller's, when it cannot be read.
-// Freed when the file is in already
+// path is from mode.heap, freed when the file is in already; code is read
+// when NULL. 0, path still the caller's, when it cannot be read
 bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
   size = tidy(path, size);
   if(!code && !(code = self->scan(path))) return 0;
@@ -2541,8 +2386,7 @@ bool  land(mode* self, char* path, u64i size, file* code, byte kind) {
   return 1;
 }
 
-// the file at name, named on the command line, as a unit of kind; read when
-// code is NULL, fatal when it cannot be
+// a file named on the command line: fatal when it cannot be read
 void  lead(mode* self, const char* name, file* code, byte kind) {
   u64i  size = slen(name);
   char* path = self->heap(NULL, size + 1);
@@ -2550,14 +2394,9 @@ void  lead(mode* self, const char* name, file* code, byte kind) {
   if(!land(self, path, size, code, kind)) fail("cannot open: %s\n", name);
 }
 
-// the front end: the source and what it links parsed, the calls bound, the
-// libraries and archives done with. The library whose start a C program has,
-// when linked in, else NULL. A mirror stops here: it has no image to write
+// the front end: the start of a linked C library, else NULL. A mirror stops
+// here: it has no image to write
 meta* build(mode* self) {
-  // unit = callable
-  //      | variable
-  //      | typedecl
-
   self->frame = ~0u;
   self->core = (core){dock, gap, lay, hget, find, heft, ask, sign, knit, dwarf_pack};
   self->text = (file*)self->hold(0, CODE);
@@ -2593,8 +2432,7 @@ meta* build(mode* self) {
   }
   tie(self, 0, 1);
 
-  // nothing is pulled or called forward from here on: the archives and the
-  // lists of asks and forward calls can go
+  // nothing is pulled or called forward from here on
   for(unit* u = self->units + 1; u < self->units + self->unitn; u++)
     if(u->kind == un_arch) { self->heap(u->code, 0); u->code = NULL; }
   self->askx.slot = self->heap(self->askx.slot, 0);
@@ -2617,9 +2455,8 @@ void  make(mode* self) {
       self->boot = self->text->body;
       emit(self, crt, self->main, libc->addr, cl_glibc);
     }
-    // a Linux program written with imports starts through the shared libc
-    // the same way, its __libc_start_main (bionic's __libc_init) an import
-    // too (libs is set only when writing: running binds the imports itself)
+    // a Linux program with imports starts through the shared libc the same way
+    // (libs is set only when writing: running binds the imports itself)
     else if(self->impn && self->libs && self->form.os == os_linux) {
       item* start = self->clib == cl_bionic? sget(self, "__libc_init"): sget(self, "__libc_start_main");
       if(self->clib == cl_bionic) libc = find(self, 0, start);

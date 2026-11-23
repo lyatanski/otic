@@ -1,11 +1,11 @@
 // vim: ts=2:sw=2
-// elfs' spec: the ELF program it packs, and the relocatable objects it takes,
-// which the case builds section by section
+// elfs' spec: the ELF images it packs, and relocatable objects it takes,
+// built section by section
 #include "form.h"
 #include "../elfs.c"
 #include "test.h"
 
-// the object being built: its header, the contents, the section headers last
+// header, contents, then section headers
 static struct { byte at[4096]; u64i n; sh64 sh[16]; u32i shn; } o;
 
 static void  begin(void) {
@@ -14,7 +14,6 @@ static void  begin(void) {
   o.shn = 1; // the null section
 }
 
-// a section of size bytes from src: its index
 static u32i  section(u32i type, u64i flags, const void* src, u64i size, u64i align) {
   o.n = (o.n + 7) & -8;
   o.sh[o.shn] = (sh64){.type = type, .flags = flags, .offset = o.n, .size = size, .align = align};
@@ -22,7 +21,6 @@ static u32i  section(u32i type, u64i flags, const void* src, u64i size, u64i ali
   return o.shn++;
 }
 
-// the symbols s, named in strs: the index of their table
 static u32i  symbols(const sym64* s, u32i n, const char* strs, u32i size) {
   u32i str = section(SHT_STRTAB, 0, strs, size, 1);
   u32i tab = section(SHT_SYMTAB, 0, s, n * sizeof(sym64), 8);
@@ -31,7 +29,6 @@ static u32i  symbols(const sym64* s, u32i n, const char* strs, u32i size) {
   return tab;
 }
 
-// relocations r of section at, by the symbols of table tab
 static void  relocate(const rela64* r, u32i n, u32i at, u32i tab) {
   u32i i = section(SHT_RELA, 0, r, n * sizeof(rela64), 8);
   o.sh[i].link = tab;
@@ -39,7 +36,7 @@ static void  relocate(const rela64* r, u32i n, u32i at, u32i tab) {
   o.sh[i].entsize = sizeof(rela64);
 }
 
-// the object for arch, as scan reads a file: NUL ended
+// NUL ended, as scan reads a file
 static file* finish(u16i arch) {
   o.n = (o.n + 7) & -8;
   elfs_id id = {.seal = {0x7f, 'E', 'L', 'F'}, .bits = eb_cl64, .data = ed_2lsb, .issue = ev_curr};
@@ -82,7 +79,6 @@ static file* standard(u16i arch) {
   return finish(arch);
 }
 
-// take f: 1 when it was, else 0 and said tells why
 static bool  took(file* f) {
   if(setjmp(bail)) return 0;
   elfs.take(&ours, f);
@@ -115,8 +111,6 @@ static void  library(chip cpu, byte libs) {
 }
 static void  cord_(cord c) { knits[cordn++] = c; }
 
-// the header and sections of an image, symbol i of table tab, its name, and
-// relocation i of section sec
 #define HEAD(out) ((eh64*)((out)->head + sizeof(elfs_id)))
 #define SECT(out) ((sh64*)((out)->head + HEAD(out)->shoff))
 static sym64*  sym_(file* out, u32i tab, u32i i) { return (sym64*)(out->head + SECT(out)[tab].offset) + i; }

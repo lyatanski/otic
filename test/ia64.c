@@ -244,7 +244,7 @@ spec("ia64") {
     it("computes in xmm0, xmm1 and the registers of real locals, xmm8 up") {
       check(emits("66 41 0f 28 c3", e.fop(t, '=', ACC, 3)));      // movapd xmm0, xmm11
       check(emits("66 44 0f 28 f9", e.fop(t, '=', 7, TMP)));      // movapd xmm15, xmm1
-      check(emits("", e.fop(t, '=', 2, 2)));                      // a move to itself is none
+      check(emits("", e.fop(t, '=', 2, 2)));
       check(emits("f2 0f 58 c1", e.fop(t, '+', ACC, TMP)));       // addsd xmm0, xmm1
       check(emits("f2 44 0f 5c c0", e.fop(t, '-', 0, ACC)));      // subsd xmm8, xmm0
       check(emits("f2 41 0f 59 c5", e.fop(t, '*', ACC, 5)));      // mulsd xmm0, xmm13

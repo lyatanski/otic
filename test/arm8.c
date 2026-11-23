@@ -7,7 +7,7 @@
 
 #define e arm8
 
-// a text past the reach of a conditional branch, and its words
+// past the reach of a conditional branch
 static byte  farb[sizeof(file) + (1 << 21)];
 static file* far = (file*)farb;
 static u32i  at32(const byte* p) { u32i w; memcpy(&w, p, 4); return w; }
@@ -290,7 +290,7 @@ spec("arm8") {
     it("computes in d0, d1 and the registers of real locals, d8 up") {
       check(emits("60 41 60 1e", e.fop(t, '=', ACC, 3)));         // fmov d0, d11
       check(emits("2f 40 60 1e", e.fop(t, '=', 7, TMP)));         // fmov d15, d1
-      check(emits("", e.fop(t, '=', 2, 2)));                      // a move to itself is none
+      check(emits("", e.fop(t, '=', 2, 2)));
       check(emits("94 2a 7b 1e", e.fop(t, '+', 8, 15)));          // fadd d20, d20, d27: the spares, d20 up
       check(emits("00 28 61 1e", e.fop(t, '+', ACC, TMP)));       // fadd d0, d0, d1
       check(emits("08 39 60 1e", e.fop(t, '-', 0, ACC)));         // fsub d8, d8, d0

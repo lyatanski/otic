@@ -1,24 +1,22 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-// ar archive (static library): "!<arch>\n", then members, each a 60-byte text
-// header and its body, padded to an even size. An archive is one unit whose
-// table is its symbol index, the first member: each name maps to the member
-// that defines it, which is taken (pulled) as a unit of its own only once one
-// of its names is used.
-// - GNU names end in '/'; a long one is "/n", n an offset into the "//"
-//   member, which follows the index. Its index is "/" or "/SYM64/": a big endian count of 4 or 8
-//   bytes, as many offsets of member headers, then as many names, NUL ended.
+// ar: "!<arch>\n", then members, each a 60-byte text header and a body padded
+// to an even size. The archive is one unit whose table is its symbol index (the
+// first member); a member is pulled as its own unit once one of its names is used.
+// - GNU names end in '/'; a long one is "/n", n an offset into the "//" member
+//   after the index. Index "/" or "/SYM64/": big endian count of 4 or 8 bytes,
+//   that many member header offsets, then that many NUL ended names.
 // - BSD names end in spaces; a long one is "#1/n", its n bytes open the body.
-//   Its index is "__.SYMDEF" or "__.SYMDEF_64", maybe " SORTED": the bytes of
-//   the (name, offset) pairs, the pairs, the bytes of the names, the names;
-//   little endian numbers of 4 or 8 bytes.
+//   Index "__.SYMDEF" or "__.SYMDEF_64", maybe " SORTED": byte size of the
+//   (name, offset) pairs, the pairs, byte size of the names, the names; little
+//   endian numbers of 4 or 8 bytes.
 
 typedef struct {
   char name[16], date[12], user[6], group[6], mode[8], size[10], seal[2];
 } ario_head;
 
-// a member: its name (GNU long ones from "//"), its body and the next header
+// name may point into the "//" member (GNU long names)
 typedef struct {
   char* name;
   u64i  nlen;
@@ -33,14 +31,12 @@ static u64i ario_num(const char* at, u32i size) {
   return n;
 }
 
-// a number of size bytes at at, big endian (GNU) or little endian (BSD)
 static u64i ario_word(const byte* at, u32i size, bool big) {
   u64i n = 0;
   for(u32i i = 0; i < size; i++) n = n << 8 | at[big? i: size - 1 - i];
   return n;
 }
 
-// the member whose header is at at, in the archive f at path
 static ario_part ario_read(const char* path, file* f, byte* at) {
   ario_head* h = (ario_head*)at;
   ario_part  p = {.name = h->name, .body = at + sizeof(*h)};
@@ -70,8 +66,7 @@ static ario_part ario_read(const char* path, file* f, byte* at) {
   return p;
 }
 
-// name, len bytes, defined by the member whose header is off bytes into the
-// archive: an archive name x, unless an earlier member defines it
+// off: the defining member's header. An earlier member's definition wins
 static void ario_name(mode* self, meta* x, char* name, u64i len, u64i off) {
   const file* f = home(self)->code;
   if(off < 8 || off >= (u64i)(f->tail - f->head) || off >> 31 || !len)
@@ -82,13 +77,11 @@ static void ario_name(mode* self, meta* x, char* name, u64i len, u64i off) {
   s->data = x;
 }
 
-// whether x goes before y: by member offset, then by place in defs, so that
-// the order is the same on every host
+// ties broken by place in defs, so the order is the same on every host
 static bool ario_less(const meta* x, const meta* y) {
   return x->slot < y->slot || (x->slot == y->slot && x < y);
 }
 
-// by[i] sinks into the heap of the n in by, below each larger child
 static void ario_sift(meta** by, u64i i, u64i n) {
   for(u64i c; (c = 2 * i + 1) < n; i = c) {
     if(c + 1 < n && ario_less(by[c], by[c + 1])) c++;
@@ -97,7 +90,7 @@ static void ario_sift(meta** by, u64i i, u64i n) {
   }
 }
 
-// heapsort of the n in by: in place, no recursion, n log n at worst
+// heapsort: in place, no recursion, n log n at worst
 static void ario_sort(meta** by, u64i n) {
   for(u64i i = n / 2; i--;) ario_sift(by, i, n);
   while(n > 1) {
@@ -106,8 +99,8 @@ static void ario_sort(meta** by, u64i n) {
   }
 }
 
-// the names of each member, of the n in defs, linked in a ring (meta.hide):
-// ario_pull takes them out of the table without a scan of it
+// each member's names linked in a ring through meta.hide, so that ario_pull
+// drops them from the table without a scan
 static void ario_ring(const mode* self, meta* defs, u64i n) {
   meta** by = self->heap(NULL, n * sizeof(meta*) + 1);
   u64i k = 0;
@@ -120,8 +113,7 @@ static void ario_ring(const mode* self, meta* defs, u64i n) {
   self->heap(by, 0);
 }
 
-// the symbol index of the archive f, the unit being joined, into its table.
-// Nothing is copied into text or data
+// only the symbol index is read: nothing goes into text or data
 void ario_load(mode* self, file* f) {
   const char* path = home(self)->path;
   if(f->tail - f->head < 8 || !alike(f->head, "!<arch>\n", 8))
@@ -136,7 +128,7 @@ void ario_load(mode* self, file* f) {
   byte* b = p.body;
   u64i  n, size = p.size;
   if(size < w) fail("bad archive index: %s\n", path);
-  if(!bsd) { // count, offsets, names
+  if(!bsd) {
     n = ario_word(b, w, 1);
     if(n > (size - w) / (w + 1)) fail("bad archive index: %s\n", path);
     char* name = (char*)b + w + n * w;
@@ -152,7 +144,7 @@ void ario_load(mode* self, file* f) {
     ario_ring(self, defs, n);
     return;
   }
-  u64i pairs = ario_word(b, w, 0); // bytes of (name, offset) pairs, names
+  u64i pairs = ario_word(b, w, 0);
   if(size < 2 * w || pairs > size - 2 * w) fail("bad archive index: %s\n", path);
   u64i strs = ario_word(b + w + pairs, w, 0);
   if(strs > size - 2 * w - pairs) fail("bad archive index: %s\n", path);
@@ -168,9 +160,8 @@ void ario_load(mode* self, file* f) {
   ario_ring(self, defs, n);
 }
 
-// take the member that defines archive name x, as a unit named
-// path(member), its body copied to be aligned for its headers. The names the
-// index maps to it leave the archive's table: the member's own table has them
+// joins the member as unit "path(member)", copied to align its headers. Its
+// names leave the archive's table: the member's own table has them
 void ario_pull(mode* self, meta* x) {
   unit*     a = self->units + x->unit;
   ario_part p = ario_read(a->path, a->code, a->code->head + x->slot);

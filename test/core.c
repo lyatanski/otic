@@ -1,15 +1,13 @@
 // vim: ts=2:sw=2
-// core's spec, the front end alone (core, link, util): the target, the
-// form and the host are mocks in mode. Each emit call is one byte of text,
-// its op, and a line of the trace ("move 42"), so a case reads what core asked
-// the target for. fail longjmps back here, so errors are checked in process
+// core's spec: target, form and host are mocks. Each emit call writes its op
+// as one byte of text and a line of the trace ("move 42")
 #include <setjmp.h>
 #include <stdarg.h>
 #include <string.h>
 #include "../core.h"
 
 static jmp_buf bail;
-static char    said[256]; // what fail said
+static char    said[256];
 #undef  fail
 #define fail(...) (snprintf(said, sizeof said, __VA_ARGS__), longjmp(bail, 1))
 
@@ -19,12 +17,11 @@ static char    said[256]; // what fail said
 #include "../link.c"
 #include "test.h"
 
-// the trace: each emit call, ", " between them
 static char  trace[8192];
 static u32i  traced;
-static u32i  calls[64]; // per op, the calls made
+static u32i  calls[64];
 static u32i  shows, packs, takes;
-static u64i  laid; // data bytes when shown: make frees data after show
+static u64i  laid; // make frees data after show
 
 #define OPS(X) X(move) X(load) X(stor) X(peek) X(addr) X(glob) X(site) X(read) \
   X(fill) X(push) X(pull) X(swap) X(cast) X(calc) X(when) X(jump) X(back)       \
@@ -50,7 +47,6 @@ static void note(file* text, byte op, char* fmt, ...) {
   if(text) *text->body++ = op;
 }
 
-// what a patch points at: the op emitted there
 static char* at(const file* text, const byte* x) {
   return x >= text->head && x < text->body? ops[*x]: "nowhere";
 }
@@ -72,7 +68,7 @@ static void mock_push(file* t)                         { note(t, op_push, ""); }
 static void mock_pull(file* t)                         { note(t, op_pull, ""); }
 static void mock_swap(file* t)                         { note(t, op_swap, ""); }
 static void mock_cast(file* t, bool wide)              { note(t, op_cast, wide? " long": " int"); }
-// a comparison op as written: "<=" for tokd('<', '='), its flags dropped
+// "<=" for tokd('<', '='), flags dropped
 static char* mock_op(u32i op, char* o) {
   o[0] = (char)op; o[1] = (char)(op >> 8); o[2] = (char)(op >> 16); o[3] = 0;
   return o;
@@ -116,7 +112,7 @@ static void mock_tmpk(file* t, u32i k)                 { note(t, op_take, k < HE
 static void mock_pass(file* t, u32i i)                 { note(t, op_pass, " %u", i); }
 static void mock_hail(file* t, osys os, u32i argc, u32i real) { (void)t; (void)os; (void)argc; (void)real; }
 
-// an operand of rop: r2 a register of a local, a2 an argument register
+// r2 a local's register, a2 an argument register
 static char* mock_reg(s32i x, s32i n, char* o) {
   if(x >= 0) sprintf(o, "r%d", x);
   else if(x == NUM) sprintf(o, "%d", n);
@@ -135,7 +131,7 @@ static void mock_step(file* t, s32i by, u32i scale, bool wide) {
   char b[16];
   note(t, op_step, "%s %s * %u", wide? ".w": "", mock_reg(by, 0, b), scale);
 }
-// a real operand: f2 the register of a real local, facc, ftmp
+// f2 a real local's register
 static char* mock_freg(s32i f, char* o) {
   if(f >= 0) sprintf(o, "f%d", f);
   else sprintf(o, f == ACC? "facc": "ftmp");
@@ -187,7 +183,6 @@ static const emit mock = {
 static file* mock_pack(mode* m)          { packs++; (void)m; return NULL; }
 static void  mock_take(mode* m, file* f) { takes++; (void)m; (void)f; }
 
-// the sources make may scan, by path
 typedef struct { char* path; char* src; } named;
 static named files[8];
 static u32i  filen;
@@ -207,7 +202,7 @@ static file* mock_scan(const char* path) {
 static void* mock_hold(void* p, size_t size)  { (void)p; return malloc(size); }
 static void* mock_drop(void* p, size_t size)  { (void)p; (void)size; return NULL; } // text: freed by the next make_
 static void* mock_heap(void* p, size_t size)  { if(size) return realloc(p, size); free(p); return NULL; }
-static u64i  tail8; // the last 8 bytes of data when shown
+static u64i  tail8;
 static void  mock_show(mode* m) {
   shows++;
   laid = m->data->body - m->data->head;
@@ -216,16 +211,15 @@ static void  mock_show(mode* m) {
 
 static mode self;
 
-// a source beside main.c, for link
 static void source(char* path, char* src) {
   files[filen++] = (named){path, src};
 }
 
 static byte libs; // what make_ asks for without main, reset after each
-static clib clibs; // the C library of a Linux image, reset after each
-static osys oses = os_linux; // the os of the form, reset after each
+static clib clibs; // reset after each
+static osys oses = os_linux; // reset after each
 
-// compile main.ot, src: 1 when make got to show, else 0 and said tells why
+// 1 when make got to show, else 0 and said tells why
 static int  make_(char* src) {
   free(self.text);
   memset(&self, 0, sizeof self);
@@ -254,33 +248,29 @@ static int  make_(char* src) {
   return 1;
 }
 
-// the trace has this run of calls, else it is shown
 static bool has(const char* run) {
   if(strstr(trace, run)) return 1;
   printf("    want %s\n    in   %s\n", run, trace);
   return 0;
 }
-// the trace is exactly calls, else it is shown
 static bool is(const char* all) {
   if(!strcmp(trace, all)) return 1;
   printf("    want %s\n    got  %s\n", all, trace);
   return 0;
 }
 
-// the calls of op whose code is still in text: the trace keeps the dropped ones
+// calls of op still in text: the trace keeps dropped ones
 static u32i left(byte op) {
   u32i n = 0;
   for(const byte* p = self.text->head; p < self.text->body; p++) n += *p == op;
   return n;
 }
 
-// src compiles, else why not is shown
 static bool compiles(char* src) {
   if(make_(src)) return 1;
   printf("    failed: %s", said);
   return 0;
 }
-// src fails with why
 static bool rejects(char* src, const char* why) {
   if(!make_(src) && strstr(said, why)) return 1;
   printf("    want %s\n    got  %s\n", why, said[0]? said: "no error\n");
@@ -776,7 +766,7 @@ spec("core") {
     it("grows past any count of names, types, data, code, calls and breaks") {
       static char src[1 << 20];
       u32i n = 0;
-      for(u32i i = 0; i < 1000; i++) // a name, an array type and i + 1 bytes each
+      for(u32i i = 0; i < 1000; i++)
         n += sprintf(src + n, "byte a%u[%u] = {%u};\n", i, i + 1, i % 100);
       n += sprintf(src + n, "long last = 19088743;\nint main() {\n  int t = 0;\n");
       for(u32i i = 0; i < 300; i++) n += sprintf(src + n, "  t = t + f();\n");

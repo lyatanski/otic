@@ -1,7 +1,6 @@
 // vim: ts=2:sw=2
-// the form specs: a form alone, the front end it asks (mode.core) a mock. A
-// case lays out text and data, packs them and reads the image back, or builds
-// an object and takes it. fail longjmps back, so errors are checked in process
+// a form alone, mode.core mocked; fail longjmps back, so errors are checked
+// in process
 #include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,17 +8,16 @@
 #include "../core.h"
 
 static jmp_buf bail;
-static char    said[256]; // what fail said
+static char    said[256];
 #undef  fail
 #define fail(...) (snprintf(said, sizeof said, __VA_ARGS__), longjmp(bail, 1))
 
 #include "../util.c"
 
 static mode  ours;
-static unit  units[2]; // the root and the object being joined
+static unit  units[2]; // the root, the object being joined
 static byte  texts[1 << 14], datas[1 << 12];
 
-// what the form asked of the mock core
 static struct { u32i calls; u64i at, org; } docked;
 static u32i  laid, asked;
 static meta* asks[8];
@@ -42,8 +40,8 @@ static u32i  mock_lay(mode* self, u32i size, bool zero, u32i align) {
   return off;
 }
 
-// the names: one table for every unit, in item.data what the name means in
-// the unit being joined; elsewhere, what another unit defines
+// one table for every unit: item.data is the name in the unit being joined,
+// elsewhere what another unit defines
 static item  items[32];
 static meta* elsewhere[32];
 static u32i  itemn;
@@ -64,7 +62,6 @@ static meta* mock_find(mode* m, u32i at, item* name) {
 static u32i  mock_heft(const meta* x) { return x->kind == pend? 2: x->lib? 1: x->weak? 3: 4; }
 static u32i  mock_ask(mode* m, meta* x) { (void)m; asks[asked] = x; return asked++; }
 
-// another unit defines name as x
 static meta  others[8];
 static u32i  defn;
 static inline void define(char* name, meta x) {
@@ -76,7 +73,7 @@ static inline void define(char* name, meta x) {
 
 static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
 
-// a library's public definitions and references, as sign and knit list them
+// what sign and knit list
 static meta* signs[8];
 static cord  knits[8];
 static u32i  signn, cordn;
@@ -93,8 +90,7 @@ static u32i  mock_knit(mode* m, cord** out) {
   return cordn;
 }
 
-// a fresh mode for cpu: code and data as given, main at main bytes into code
-// (a library: then set main to NULL)
+// main: an offset into code; a library then sets ours.main to NULL
 static void  start(chip cpu, const char* code, u32i size, const char* data, u32i dsize, u32i main) {
   static meta* imps[4]; // a case fills them in place
   static file* text = (file*)texts;
@@ -122,7 +118,7 @@ static void  start(chip cpu, const char* code, u32i size, const char* data, u32i
   };
 }
 
-// the image, or NULL and said tells why
+// NULL: said tells why
 static file* packed(form f) {
   static file* out;
   free(out);
@@ -131,7 +127,7 @@ static file* packed(form f) {
   return out = f.pack(&ours);
 }
 
-// the bytes at p are want, in hex, else both are shown
+// p == want in hex, else prints both
 static bool  bytes(const byte* p, const char* want) {
   char got[256] = "";
   u32i n = 0;

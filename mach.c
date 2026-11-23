@@ -1,11 +1,9 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-// macOS executable: dyld calls main through LC_MAIN and exits with its result
-// through libSystem, so the boot stub (a Linux syscall) is never run. Data and
-// bss follow text in __DATA, on a page of their own. arm64 macOS only runs
-// signed code: an ad-hoc signature, a SHA-256 of each 4 KB page before it,
-// ends the file. Without main, a library: a dylib, or with -s an object.
+// dyld calls main through LC_MAIN and exits through libSystem, so the boot stub
+// (a Linux syscall) never runs. arm64 macOS only runs signed code: an ad-hoc
+// signature, a SHA-256 of each 4 KB page, ends the file.
 
 enum { mh_magic = 0xfeedfacf, mh_object = 1, mh_exec = 2, mh_dylib = 6 };
 enum { mh_noundefs = 0x1, mh_dyldlink = 0x4, mh_twolevel = 0x80, mh_noreexport = 0x100000,
@@ -15,11 +13,10 @@ enum {
   lc_segment = 0x19, lc_signature = 0x1d, lc_build = 0x32, lc_dyld_info = 0x80000022,
   lc_main = 0x80000028,
 };
-enum { s_regular, s_zerofill = 0x1, s_code = 0x80000400 }; // section flags: data, bss, instructions
-// symbol types and flags: external, defined in a section, a weak reference or
-// definition, and a name dyld looks up in every image (flat)
+enum { s_regular, s_zerofill = 0x1, s_code = 0x80000400 };
+// n_flat: dyld looks the name up in every image
 enum { n_ext = 0x1, n_sect = 0xe, n_weak_ref = 0x40, n_weak_def = 0x80, n_flat = 0xfe00 };
-enum { x64_unsigned, x64_signed }; // relocation types
+enum { x64_unsigned, x64_signed };
 static const struct { u32i type, sub; } mach_cpu[] = {
   [cpu_ia64] = {0x01000007, 3}, [cpu_arm8] = {0x0100000c, 0},
 };
@@ -43,9 +40,8 @@ typedef struct { u32i cmd, size, rebase, nrebase, bind, nbind, weak, nweak, lazy
 typedef struct { u32i strx; byte type, sect; u16i desc; u64i value; } nl64;
 typedef struct { s32i addr; u32i info; } mrel; // info: symbol, pc-relative, length, extern, type
 
-// the load commands of an executable, in file order: none needs padding.
-// With imports, the binds' (LC_DYLD_INFO_ONLY) and a dylib per library
-// besides libSystem follow, then the signature's
+// an executable's load commands in file order, none padded. LC_DYLD_INFO_ONLY,
+// a dylib per extra library and the signature's follow
 typedef struct {
   mach_mh mh;
   seg64 zero, text; sec64 code; seg64 data; sec64 vars[2]; seg64 link;
@@ -104,13 +100,11 @@ static void sha256(const byte* msg, u64i len, byte* out) {
   for(int i = 0; i < 8; i++) out = be32(out, h[i]);
 }
 
-// the bytes of an ad-hoc signature of the image's first limit bytes
 static u32i  mach_sigsz(u64i limit) {
   return (20 + 88 + sizeof(mach_name) + 32 * ((limit + 4095) >> 12) + 15) & ~15;
 }
 
-// sign the image at o, its first limit bytes, the signature at limit: text
-// the size of __TEXT, exe for an executable
+// signs o's first limit bytes, the signature at limit; text: __TEXT's size
 static void  mach_seal(byte* o, u64i limit, u64i text, bool exe) {
   const u32i slots = (u32i)((limit + 4095) >> 12);
   const u32i cdsz = 88 + sizeof(mach_name) + 32 * slots;
@@ -134,15 +128,14 @@ static byte* uleb(byte* at, u64i v) {
   return at;
 }
 
-static u32i  mach_log(u64i step) { // log2 of an alignment
+static u32i  mach_log(u64i step) {
   u32i k = 0;
   while(((u64i)1 << k) < step) k++;
   return k;
 }
 
-// the dylib of library l of a load, into out when given: its length, 0 for c
-// and m, which libSystem has. As written when it has a slash or a dot, else
-// lib<name>.dylib, which dyld looks for in its fallback paths
+// into out when given: its length, 0 for c and m (in libSystem). As written
+// with a slash or dot, else lib<name>.dylib, found in dyld's fallback paths
 static u32i  mach_lib(const meta* l, char* out) {
   const char* s = l->name->name + 1; // without the quotes
   u32i n = (u32i)l->name->size - 2;
@@ -154,18 +147,16 @@ static u32i  mach_lib(const meta* l, char* out) {
   return n + 9;
 }
 
-// LC_UUID with the 16 bytes of uuid, at c: past it
+// LC_UUID: past it
 static byte* mach_uuid_cmd(byte* c, const byte* uuid) {
   const u32i head[2] = {0x1b, 24};
   return copy(copy(c, head, sizeof head), uuid, 16);
 }
 
-// the segments and sections of an image, for its debug bundle: __TEXT at org,
-// its section at org + top, the bytes of __TEXT, then __DATA with the data
-// (size bytes), bss from bss to end, and vmsz in all
+// for the debug bundle: __TEXT at org, its section at org + top, text bytes of
+// __TEXT, then __DATA with size bytes of data, bss from bss to end, vmsz in all
 typedef struct { u64i org, top, code, text, size, bss, end, vmsz; u32i lg; } mach_geo;
 
-// an identifier for the image, which its debug bundle repeats: from its text and data
 static void  mach_uuid(const mode* self, byte* out) {
   byte a[32], b[32];
   sha256(self->text->head, self->text->body - self->text->head, a);
@@ -173,11 +164,8 @@ static void  mach_uuid(const mode* self, byte* out) {
   for(u32i i = 0; i < 16; i++) out[i] = a[i] ^ b[i + 16];
 }
 
-// -g: the debug bundle of the image, beside it as <out>.dSYM, which lldb reads:
-// a file of type MH_DSYM with the segments of the image holding no bytes, so
-// that its addresses mean the same, the same UUID, and a __DWARF segment with
-// the sections. The frames are left to the debugger: it unwinds by the frame
-// pointer
+// <out>.dSYM for lldb: an MH_DSYM with the image's segments empty (so addresses
+// match), the same UUID, and __DWARF. No frames: lldb unwinds by frame pointer
 static void  mach_dsym(mode* self, const mach_geo* g, const byte* uuid) {
   static const char names[4][16] = {"__debug_info", "__debug_abbrev", "__debug_line", "__debug_aranges"};
   const u64i page = 0x4000;
@@ -249,9 +237,8 @@ static void  mach_dsym(mode* self, const mach_geo* g, const byte* uuid) {
   self->sides = 2;
 }
 
-// the rebases of an image, from mode.heap, their size in *n: each address in
-// data (one that starts a global) is moved by dyld with the image. Data
-// starts segment seg (__DATA). A weak name nothing defines stays 0
+// from mode.heap, size in *n: each address in data (segment seg) that starts a
+// global. A weak name nothing defines stays 0
 static byte* mach_rebase(mode* self, u32i seg, u64i* n) {
   cord* cords;
   u32i  ncord = self->core.knit(self, &cords), k = 0;
@@ -272,9 +259,7 @@ static byte* mach_rebase(mode* self, u32i seg, u64i* n) {
   return reb;
 }
 
-// an executable: its imports are bound by dyld through their slots, after
-// bss in __DATA, each to the library of its load (its ordinal, libSystem
-// first), the rebases then the binds in __LINKEDIT before the signature
+// import slots after bss, each bound to its library's ordinal (libSystem 1)
 static file* mach_exec(mode* self) {
   const u64i org = 0x100000000, page = 0x4000; // arm64 pages are 16 KB
   const u64i step = self->core.gap(self);
@@ -298,7 +283,7 @@ static file* mach_exec(mode* self) {
   const u64i info = self->impn || nreb? sizeof(mach_info): 0;
   const u64i top  = sizeof(mach_head) + info + dylibs + sizeof(mach_blob) + (self->debug? 24: 0);
   const u64i code = self->text->body - self->text->head;
-  const u64i text = (top + code + page - 1) & ~(page - 1); // __TEXT, __DATA, the signature
+  const u64i text = (top + code + page - 1) & ~(page - 1);
   const u64i size = self->data->body - self->data->head;
   const u64i bss  = (size + step - 1) & ~(step - 1), slots = bss + ((self->zero + 7) & -8);
   const u64i end  = slots + 8 * self->impn;
@@ -312,7 +297,6 @@ static file* mach_exec(mode* self) {
     mach_dsym(self, &(mach_geo){org, top, code, text, size, bss, end, vmsz, lg}, uuid);
   }
 
-  // the binds: each slot to its name in the library of its ordinal
   byte* bind = self->heap(NULL, binds), *b = bind;
   if(self->impn) {
     *b++ = 0x51; // type: pointer
@@ -383,28 +367,27 @@ static file* mach_exec(mode* self) {
   return out;
 }
 
-// a name a library leaves undefined: weak when every reference to it is
+// weak only when every reference to it is
 typedef struct { item* name; bool weak; } mach_und;
 
-// the symbols of a library: its public definitions, then the names it leaves
-// undefined, each once (the imports first, in slot order), and the bytes of
-// their names, each with C's underscore before it and a NUL after it
+// unds each once, the imports first in slot order; strs: name bytes, each with
+// C's underscore before and a NUL after
 typedef struct {
   meta**    defs;
   mach_und* unds;
   u32i      ndef, nund, cund;
-  dex       undx; // the undefined ones, by spelling
+  dex       undx; // unds by spelling
   u64i      strs;
 } mach_syms;
 
-// the index of name among the undefined ones, added when new
-// whether undefined name i of the syms ctx[0] is spelled as the item ctx[1]
+// ctx: {mach_syms*, item*}
 static bool  mach_same(const void* ctx, u32i i) {
   const mach_syms* t = ((const void**)ctx)[0];
   const item* name = ((const void**)ctx)[1];
   return t->unds[i].name->size == name->size && alike(t->unds[i].name->name, name->name, name->size);
 }
 
+// index of name in unds, added when new
 static u32i  mach_need(const mode* self, mach_syms* t, item* name, bool weak) {
   const void* ctx[] = {t, name};
   u32i* at = dsee(self, &t->undx, clue(name->name, name->size), mach_same, ctx);
@@ -416,7 +399,6 @@ static u32i  mach_need(const mode* self, mach_syms* t, item* name, bool weak) {
   return t->nund - 1;
 }
 
-// the definitions, and the imports as undefined names
 static void  mach_sign(mode* self, mach_syms* t) {
   *t = (mach_syms){.strs = 1};
   t->ndef = self->core.sign(self, &t->defs);
@@ -424,9 +406,7 @@ static void  mach_sign(mode* self, mach_syms* t) {
   for(u32i i = 0; i < self->impn; i++) mach_need(self, t, self->imps[i]->name, 0);
 }
 
-// sym, the symbols of t, their names in str after a NUL: a definition in
-// section 1 (text), 2 (data) or 3 (bss) at its address there, an undefined
-// name with the flags und
+// sections 1 text, 2 data, 3 bss; und: the desc flags of undefined names
 static void  mach_put(const mode* self, const mach_syms* t, nl64* sym, byte* str,
                       u64i text, u64i data, u64i bss, u16i und) {
   u64i at = 1;
@@ -452,8 +432,7 @@ static void  mach_put(const mode* self, const mach_syms* t, nl64* sym, byte* str
   }
 }
 
-// the section of seat s in an object, 1 text, 2 data (then the import slots,
-// at slots) or 3 bss, and its address there: data at data, bss at bss
+// section 1 text, 2 data (import slots at slots) or 3 bss, its address in *addr
 static u32i  mach_part(const mode* self, seat s, u64i data, u64i slots, u64i bss, u64i* addr) {
   if(s.at) { *addr = s.at - self->text->head; return 1; }
   if(s.off & ZERO) { *addr = bss + (s.off & ~ZERO); return 3; }
@@ -461,13 +440,9 @@ static u32i  mach_part(const mode* self, seat s, u64i data, u64i slots, u64i bss
   return 2;
 }
 
-// a static library: the image as one x86-64 object, its sections text, data
-// (then the import slots) and bss at their addresses in one segment, laid out
-// in the file as in memory. The form takes no objects, so every reference is
-// a global of the source: a lea in text, relocated to its section or to the
-// name nothing defines, or an address in data that starts a global, and the
-// slots are relocated by their names. arm64 objects have no relocation for
-// its globals (movz and movk) in this form
+// a static library as one x86-64 object, one segment laid out as in memory.
+// Mach-O input objects are not taken, so every reference is a lea in text or
+// an address in data. arm64 has no relocation for movz/movk globals here
 static file* mach_relo(mode* self) {
   if(self->arch.cpu != cpu_ia64) fail("an arm64 object is not supported in this form yet\n");
   const u64i step = self->core.gap(self);
@@ -517,7 +492,7 @@ static file* mach_relo(mode* self) {
   mrel* r = (mrel*)(o + rels), *d = (mrel*)(o + rdat);
   for(cord* c = cords; c < cords + ncord; c++) {
     u64i to = 0;
-    if(c->kind == cd_wide) { // its address: the name's plus the addend, or one in its section
+    if(c->kind == cd_wide) {
       if(c->name)
         *d++ = (mrel){(s32i)c->site.off, (t.ndef + mach_need(self, &t, c->name, c->weak)) | 3 << 25 | 1 << 27
                           | x64_unsigned << 28};
@@ -530,10 +505,10 @@ static file* mach_relo(mode* self) {
     }
     u64i at = c->site.at - self->text->head + 3; // lea rax, [rip+x]: x at 3
     s32i v = 0;
-    if(c->name) // extern: the name, the distance from the lea's end
+    if(c->name)
       *r = (mrel){(s32i)at, (t.ndef + mach_need(self, &t, c->name, c->weak)) | 1 << 24 | 2 << 25 | 1 << 27
                       | x64_signed << 28};
-    else { // its section: the distance there, which the linker moves with it
+    else { // section-relative: the linker adjusts the stored distance
       u32i sec = mach_part(self, c->aim, data, slots, bss, &to);
       v = (s32i)(to - (at + 4));
       *r = (mrel){(s32i)at, sec | 1 << 24 | 2 << 25 | x64_signed << 28};
@@ -541,7 +516,7 @@ static file* mach_relo(mode* self) {
     copy(o + base + at, &v, sizeof(v));
     r++;
   }
-  for(u32i i = 0; i < self->impn; i++, d++) // a slot: the address of its name
+  for(u32i i = 0; i < self->impn; i++, d++)
     *d = (mrel){(s32i)(slots + 8 * i), (t.ndef + i) | 3 << 25 | 1 << 27 | x64_unsigned << 28};
   mach_put(self, &t, (nl64*)(o + syms), o + strs, 0, data, bss, 0);
   self->heap(cords, 0);
@@ -551,16 +526,13 @@ static file* mach_relo(mode* self) {
   return out;
 }
 
-// a before b, NUL ended names, by their bytes
 static bool  mach_less(const byte* a, const byte* b) {
   for(; *a && *a == *b; a++, b++);
   return *a < *b;
 }
 
-// the export trie of a dylib at at: the root with an edge to each of the n
-// symbols by its whole name, each to a node with its address. dyld follows the
-// first edge that begins the name it looks for, so a name comes before those
-// that are its prefixes: by name, last first. Its end
+// a root with one edge per whole name: its end. dyld follows the first edge
+// that prefixes the name sought, so names are sorted descending
 static byte* mach_trie(const mode* self, byte* at, const nl64* sym, u32i n, byte* str) {
   u32i* by = self->heap(NULL, n * sizeof(u32i) + 1);
   u64i  node = 1;
@@ -592,12 +564,8 @@ static byte* mach_trie(const mode* self, byte* at, const nl64* sym, u32i n, byte
   return at;
 }
 
-// a shared library, position independent: __TEXT from address 0 with the
-// headers and text, __DATA with data, bss and the import slots, __LINKEDIT with
-// the rebases of data, the binds of the slots, the export trie, the symbols
-// and the signature. An
-// import is bound to whichever loaded image defines it, as on Linux: the
-// program links its libraries. Its install name is @rpath/ and its file name
+// imports bind flat to whichever image defines them, as on Linux: the program
+// links the libraries. Install name: @rpath/<file name>
 static file* mach_dyno(mode* self) {
   const u64i page = 0x4000, step = self->core.gap(self);
   const u64i code = self->text->body - self->text->head;
@@ -620,7 +588,7 @@ static file* mach_dyno(mode* self) {
   self->core.dock(self, text - top, top);
   byte uuid[16];
 
-  // __LINKEDIT: rebases, binds, trie, symbols and their names, made before it is laid out
+  // __LINKEDIT's contents, made before it is laid out
   u64i  nreb;
   byte* reb = mach_rebase(self, 1, &nreb);
   const u64i rebs = (nreb + 7) & -8;
@@ -709,7 +677,6 @@ static file* mach_dyno(mode* self) {
   return out;
 }
 
-// an executable, or without main a library: a dylib, or static as an object
 file* mach_pack(mode* self) {
   if(self->debug && !self->main && self->libs == lb_relo) fail("-g is not supported for an object yet\n");
   if(self->main) return mach_exec(self);

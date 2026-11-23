@@ -41,7 +41,7 @@ void  ario_pull(mode*, meta*);
 #else // __x86_64__
 #define base ia64
 #endif
-// a Linux host's C library: glibc, bionic on Android, else musl
+// a Linux host's C library
 #if defined(__ANDROID__)
 #define CLIB cl_bionic
 #elif defined(__linux__) && !defined(__GLIBC__)
@@ -57,7 +57,6 @@ void  ario_pull(mode*, meta*);
 #define host elfs
 #endif
 
-// realloc, failing instead of NULL; free when size is 0
 void* heap(void* memory, size_t size) {
   if(!size) { free(memory); return NULL; }
   if(!(memory = realloc(memory, size))) fail("out of memory\n");
@@ -90,13 +89,13 @@ void* hold(void* memory, size_t size) {
 #else
   memory = mmap(memory, size,
     PROT_READ | PROT_WRITE,
-    MAP_ANONYMOUS | MAP_PRIVATE, /*fd=*/-1, /*offset=*/0);
+    MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if(memory == MAP_FAILED) fail("cannot map %zu bytes\n", size);
   return memory;
 #endif
 }
 
-// W^X: the pages held writable turn executable, and no longer writable
+// W^X: writable pages become executable and read-only
 void prep(void* memory, size_t size) {
 #ifdef _WIN32
   DWORD old;
@@ -112,7 +111,6 @@ void prep(void* memory, size_t size) {
 #endif
 }
 
-// the pages prep made executable, writable again
 void thaw(void* memory, size_t size) {
 #ifdef _WIN32
   DWORD old;
@@ -133,8 +131,8 @@ void* drop(void* memory, size_t size) {
   return NULL;
 }
 
-// the library s of a load ("c" is libc: otic's own on Unix), as given or
-// decorated (m: libm.so, libm.dylib, m.dll)
+// s as given or decorated (m: libm.so, libm.dylib, m.dll); "c" is the libc
+// otic itself links on Unix
 void* bring(const item* s) {
   char  name[256];
   int   n = (int)s->size - 2; // without the quotes
@@ -169,10 +167,9 @@ bool  have(const item* s) {
   return bring(s) != NULL;
 }
 
-// the address of each import in its slot, from the libraries it loads. On
-// Windows a name may be exported behind an underscore: spell makes the import
-// that name, for a program written to load it. An import that the host lacks
-// fails, unless soft: its slot stays as it was
+// fills each import slot. On Windows a name may be exported behind an
+// underscore: spell renames the import so a written program loads it. A
+// missing import fails unless soft, which leaves its slot as it was
 void  plug(const mode* self, u64i* slot, bool spell, bool soft) {
   char  name[256];
   for(u32i i = 0; i < self->impn; i++) {
@@ -211,19 +208,18 @@ void  plug(const mode* self, u64i* slot, bool spell, bool soft) {
   }
 }
 
-// Compile-time code (#) runs in one image for the whole compilation, so that
-// what a # does to its globals and its heap is there for the next: text, data,
-// bss and the import slots at fixed places of one region. Each # copies the
-// text over again, docked (dock patches text in place: it is put back clean
-// after), and the data laid since the last. One image for the process: a mode
-// that makes code for the host has it, else the mirror of one that does not
-#define IMGT (64u << 20) // text, then data, bss and the slots after it
+// # code runs in one image for the whole compilation, so what a # does to its
+// globals and heap is there for the next: text, data, bss and import slots at
+// fixed places of one region. Each # recopies the docked text (dock patches
+// text in place, so it is restored clean after) and the data laid since the
+// last. The host mode owns it, or the mirror of a foreign one
+#define IMGT (64u << 20)
 #define IMGD (32u << 20)
 #define IMGB (32u << 20)
 #define IMGS (64u << 10)
 static byte* image;
-static u32i  warm;  // bytes of data the image has
-static const char* where; // the # that runs: if its code crashes
+static u32i  warm;  // bytes of data already in the image
+static const char* where; // the # running, reported if it crashes
 static u64i  atline;
 
 #ifndef _WIN32
@@ -233,7 +229,6 @@ static void  crash(int sig) {
 }
 #endif
 
-// the result bits of the function at entry in text, a real's too
 u64i  eval(mode* self, byte* entry, bool real) {
   u64i  code = self->text->body - self->text->head;
   u64i  size = self->data->body - self->data->head;
@@ -271,7 +266,7 @@ u64i  eval(mode* self, byte* entry, bool real) {
 }
 
 typedef int (*func)(void);
-// the image: text, then data, bss and the import slots on pages of their own
+// text, then data, bss and the import slots, on pages of their own
 void  exec(mode* self) {
   if(self->boot != self->main) fail("cannot run a program with a C library, write it with -e\n");
 #ifdef _WIN32 // a Win64 caller: only main's hail keeps rdi and rsi, as it wants
@@ -292,7 +287,7 @@ void  exec(mode* self) {
   printf("%d\n", return_code);
 }
 
-// the bytes of out into the file at path, which is freed
+// frees out
 static void store(mode* self, const char* path, file* out) {
   FILE* fp = fopen(path, "wb");
   if(!fp) fail("cannot write: %s\n", path);
@@ -301,9 +296,8 @@ static void store(mode* self, const char* path, file* out) {
   self->heap(out, 0);
 }
 
-// a program written for the host, with its C library: each import is looked
-// up as running it would, so that one its library lacks fails now rather than
-// when the program loads
+// a program for the host and its C library has its imports looked up now, so
+// a missing one fails here rather than when the program loads
 void  save(mode* self) {
   if(self->impn && self->main && self->form.os == host.os && self->arch.cpu == base.cpu
      && (self->form.os != os_linux || self->clib == CLIB)) {
@@ -315,7 +309,7 @@ void  save(mode* self) {
   store(self, self->outp, out);
   for(u32i i = 0; i < self->sides; i++) {
     char* path = self->side[i].path;
-    for(char* c = path; *c; c++) { // the directories of the path
+    for(char* c = path; *c; c++) { // make the directories of the path
       if(*c != '/') continue;
       *c = 0;
       mkdir(path, 0755);
@@ -326,9 +320,8 @@ void  save(mode* self) {
   }
 }
 
-// for code that makes another target's: a mode of the host for the same
-// source, built as running it here would (libraries as exec has them), whose
-// # run and left their results in its tape
+// for a foreign target: a host mode for the same source, built as exec would
+// (libraries included), whose # runs leave their results in its tape
 mode* mirror(mode* from) {
   mode* self = zero(from, sizeof(mode));
   *self = (mode){
@@ -377,7 +370,6 @@ static void help(mode* m, const opts* self, const char* para) {
   exit(0);
 }
 
-// x is the string y, none when y is NULL
 static bool is(const char* x, const char* y) {
   return y && alike(x, y, slen(y) + 1);
 }
@@ -428,7 +420,7 @@ static void seek(mode* self, const opts* opt, const char* para) {
   self->dirs[self->dirn++] = para;
 }
 
-// the source: its link and load lines name the objects and libraries
+// the source; its link and load lines name the objects and libraries
 static void apos(mode* self, const opts* opt, const char* para) {
   (void)opt;
   self->name = para;

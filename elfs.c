@@ -7,8 +7,7 @@ enum { ev_none, ev_curr };
 enum { et_none, et_relo, et_exec, et_dyno, et_core };
 enum { em_ia64 = 62, em_arm8 = 183 };
 static const u16i elfs_mach[] = { [cpu_ia64] = em_ia64, [cpu_arm8] = em_arm8 };
-// the loader of a program, glibc's, musl's or bionic's: it relocates the image
-// and binds its imports
+// PT_INTERP by clib: glibc, musl, bionic
 static char* const elfs_loader[][3] = {
   [cpu_ia64] = {"/lib64/ld-linux-x86-64.so.2", "/lib/ld-musl-x86_64.so.1", "/system/bin/linker64"},
   [cpu_arm8] = {"/lib/ld-linux-aarch64.so.1", "/lib/ld-musl-aarch64.so.1", "/system/bin/linker64"},
@@ -77,25 +76,19 @@ typedef struct { u64i offset; u32i type, sym; s64i addend; } rela64;
 #define GONE ((seat){NULL, ~0u}) // a section left out
 #define flop(fmt, ...) fail("%s: " fmt, home(self)->path __VA_OPT__(,) __VA_ARGS__)
 
-// string at in table tab, "" past its end; the object is NUL terminated
+// "" past the table's end; the object is NUL terminated
 static char* elfs_str(byte* o, const sh64* tab, u64i at) {
   return tab && at < tab->size? (char*)o + tab->offset + at: "";
 }
 
-// the name of symbol s, string table str, in the table of the unit being
-// joined: NULL when it has none
 static item* elfs_name(mode* self, byte* o, const sh64* str, const sym64* s) {
   char* at = elfs_str(o, str, s->name);
   u64i  len = slen(at);
   return len? self->core.name(self, self->unit, at, len): NULL;
 }
 
-// a relocatable object, the unit being joined, aligned for its headers and
-// NUL ended: it can go once taken, its names have their own bytes. Its code
-// goes after text, its data and bss are laid out, its globals defined in its
-// table, its undefined names ask for the archive members that define them,
-// and its references are hooked for dock. Only x86-64 so far: no
-// thread-locals or constructors
+// f: aligned for its headers and NUL ended; it may be freed after, as names
+// are copied. References are hooked for dock. Only x86-64 so far
 void elfs_take(mode* self, file* f) {
   u64i  size = f->tail - f->head;
   byte* o = f->head;
@@ -117,14 +110,13 @@ void elfs_take(mode* self, file* f) {
        || sh[i].size >> 30 || sh[i].link >= n)
       flop("bad section\n");
 
-  // sections: code after text, the rest in data or bss
   seat* put = self->heap(NULL, n * sizeof(seat) + 1);
   for(u32i i = 0; i < n; i++) {
     const sh64* s = sh + i;
     u64i  a = s->align? s->align: 1;
     put[i] = GONE;
     if(!(s->flags & SHF_ALLOC) || s->type == SHT_NOTE || s->type == SHT_X86_64_UNWIND)
-      continue; // unwind tables and notes are not used
+      continue;
     if(s->flags & SHF_TLS) flop("thread-local storage is not supported\n");
     if(s->type == SHT_INIT_ARRAY || s->type == SHT_FINI_ARRAY || s->type == SHT_PREINIT_ARRAY)
       flop("constructors are not supported\n");
@@ -142,9 +134,8 @@ void elfs_take(mode* self, file* f) {
     }
   }
 
-  // globals: functions taking any arguments, or data. A weak or tentative
-  // (common) one is left out when another unit defines the name, and a strong
-  // one replaces it
+  // a weak or common global is dropped when another unit defines the name; a
+  // strong one replaces it
   const sym64* sym = NULL;
   const sh64*  str = NULL;
   u64i   nsym = 0;
@@ -193,8 +184,8 @@ void elfs_take(mode* self, file* f) {
     if(m && m->kind == pend) self->core.ask(self, m);
   }
 
-  // references: by name to globals, which a later definition may replace.
-  // Room for all of them first, so that hooks fits a large object
+  // references go by name: a later definition may replace a global. hooks is
+  // grown once up front for a large object
   u64i  refs = self->hookn;
   for(u32i i = 0; i < n; i++) if(sh[i].type == SHT_RELA) refs += sh[i].size / sizeof(rela64);
   if(refs >> 31) flop("too many relocations\n");
@@ -264,28 +255,26 @@ enum { PT_LOAD = 1, PT_DYNAMIC, PT_INTERP, PT_NOTE, PT_SHLIB, PT_PHDR, PT_GNU_ST
 
 typedef struct { s64i tag; u64i val; } dyn64;
 
-// a name a library leaves undefined: weak when every reference to it is
+// weak only when every reference to it is
 typedef struct { item* name; bool weak; byte type; } elfs_und;
 
-// the symbols of a library: its public definitions, then the names it leaves
-// undefined, each once (the imports first, in slot order), and the bytes of
-// their names with a NUL after each
+// unds each once, the imports first in slot order; strs: name bytes, NUL ended
 typedef struct {
   meta**    defs;
   elfs_und* unds;
   u32i      ndef, nund, cund;
-  dex       undx; // the undefined ones, by spelling
+  dex       undx; // unds by spelling
   u64i      strs;
 } elfs_syms;
 
-// the index of name among the undefined ones, added when new
-// whether undefined name i of the syms ctx[0] is spelled as the item ctx[1]
+// ctx: {elfs_syms*, item*}
 static bool  elfs_same(const void* ctx, u32i i) {
   const elfs_syms* t = ((const void**)ctx)[0];
   const item* name = ((const void**)ctx)[1];
   return t->unds[i].name->size == name->size && alike(t->unds[i].name->name, name->name, name->size);
 }
 
+// index of name in unds, added when new
 static u32i  elfs_need(const mode* self, elfs_syms* t, item* name, bool weak, byte type) {
   const void* ctx[] = {t, name};
   u32i* at = dsee(self, &t->undx, clue(name->name, name->size), elfs_same, ctx);
@@ -297,8 +286,7 @@ static u32i  elfs_need(const mode* self, elfs_syms* t, item* name, bool weak, by
   return t->nund - 1;
 }
 
-// the definitions of a library (a program has none: nothing links to it), and
-// the imports as undefined names
+// a program exports nothing: nothing links to it
 static void  elfs_sign(mode* self, elfs_syms* t) {
   *t = (elfs_syms){.strs = 1};
   if(!self->main) t->ndef = self->core.sign(self, &t->defs);
@@ -307,7 +295,6 @@ static void  elfs_sign(mode* self, elfs_syms* t) {
     elfs_need(self, t, self->imps[i]->name, 0, self->imps[i]->kind == call? STT_FUNC: STT_OBJECT);
 }
 
-// the name of s at str + *at, NUL ended: its offset
 static u32i  elfs_word(byte* str, u64i* at, const item* s) {
   u32i o = (u32i)*at;
   str[o + s->size] = 0;
@@ -316,11 +303,8 @@ static u32i  elfs_word(byte* str, u64i* at, const item* s) {
   return o;
 }
 
-// sym, the symbols of t from first on, their names in str past its NUL, a
-// definition in text (a function at its entry for C code), data or bss at its
-// address there and in section tsec, dsec or bsec. A shared library (dyno)
-// reaches its globals directly: they are protected, so that no program copies
-// them away from it
+// names go in str past its NUL. A shared library (dyno) reaches its globals
+// directly, so they are protected: no program may copy them away from it
 static void  elfs_syms_put(const mode* self, const elfs_syms* t, sym64* sym, byte* str, bool dyno,
                            u64i text, u64i data, u64i bss, u16i tsec, u16i dsec, u16i bsec) {
   u64i at = 1;
@@ -342,15 +326,14 @@ static void  elfs_syms_put(const mode* self, const elfs_syms* t, sym64* sym, byt
                    .bind = t->unds[i].weak? STB_WEAK: STB_GLOBAL};
 }
 
-// the offset of the k-th name in a string table of NUL separated names
 static u32i  elfs_nth(const char* s, u32i k) {
   u32i i = 1;
   while(k--) i += (u32i)slen(s + i) + 1;
   return i;
 }
 
-// the section of seat s in a library object, 1 text, 2 data or 3 bss, and
-// its offset there. The import slots follow data at slots
+// section 1 text, 2 data or 3 bss, the offset there in *off; the import slots
+// follow data at slots
 static u16i  elfs_part(const mode* self, seat s, u64i slots, u64i* off) {
   if(s.at) { *off = s.at - self->text->head; return 1; }
   if(s.off & ZERO) { *off = s.off & ~ZERO; return 3; }
@@ -358,10 +341,8 @@ static u16i  elfs_part(const mode* self, seat s, u64i slots, u64i* off) {
   return 2;
 }
 
-// a static library: the image as one relocatable object, text, data (then the
-// import slots) and bss its sections. Symbols: the three sections, the public
-// definitions, then the names left undefined. A reference within a section is
-// patched, one across sections or to a name nothing defines is relocated
+// a static library as one object. A reference within a section is patched;
+// one across sections or to an undefined name is relocated
 static file* elfs_relo(mode* self) {
   static char names[] = "\0.text\0.data\0.bss\0.symtab\0.strtab\0.rela.text\0.rela.data\0.shstrtab";
   enum { s_text = 1, s_data, s_bss, s_sym, s_str, s_rtext, s_rdata, s_names, s_all };
@@ -379,7 +360,7 @@ static file* elfs_relo(mode* self) {
   const u32i first = 1 + s_bss; // past the null symbol and those of the sections
   const u32i nsym = first + t.ndef + t.nund;
 
-  // relocations, of text and of data: two per glob on arm8, one per slot
+  // of text and of data: two per glob on arm8, one per slot
   u32i    nrel[2] = {0};
   rela64* rel[2];
   for(u32i k = 0; k < 2; k++) rel[k] = self->heap(NULL, (2 * ncord + self->impn) * sizeof(rela64) + 1);
@@ -399,13 +380,13 @@ static file* elfs_relo(mode* self) {
       copy(at, &(u64i){0}, 8);
       RELA(ss, so, arm? R_AARCH64_ABS64: R_X86_64_64, sym, to + c->add);
     }
-    else if(ts == ss) { // within a section: the distance is known
+    else if(ts == ss) {
       s64i d = (s64i)to + c->add - (s64i)so;
       s32i r = (s32i)d;
       if(r != d) fail("object reference too far\n");
       copy(at, &r, sizeof(r));
     }
-    else if(c->name && c->got) { // the lea a GOT load: back to the load
+    else if(c->name && c->got) { // undo elfs_take's GOT lea
       at[-2] = 0x8b;
       RELA(ss, so, R_X86_64_GOTPCREL, sym, c->add);
     }
@@ -418,8 +399,6 @@ static file* elfs_relo(mode* self) {
 #undef RELA
   self->heap(cords, 0);
 
-  // the file: header, text, data, symbols, their names, relocations, the
-  // section names and headers
   sh64 sh[s_all] = {{0},
     {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_EXECINSTR, .size = code, .align = step},
     {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_WRITE, .size = slots + 8 * self->impn, .align = step},
@@ -473,10 +452,9 @@ static file* elfs_relo(mode* self) {
   return out;
 }
 
-// the file the loader opens for library l of a load, into out when given: its
-// length. As written when it has a dot ("libz.so.1"), glibc's soname for c
-// and m, else lib<name>.so: musl's loader takes libc.so and libm.so as itself,
-// and bionic's libraries are named so
+// into out when given: its length. As written with a dot ("libz.so.1"), glibc's
+// soname for c and m, else lib<name>.so: musl's loader takes libc.so and
+// libm.so as itself, and bionic's libraries are named so
 static u32i  elfs_file(const meta* l, clib c, char* out) {
   static const char* const glibc[][2] = {{"c", "libc.so.6"}, {"m", "libm.so.6"}};
   const char* s = l->name->name + 1; // without the quotes
@@ -490,13 +468,11 @@ static u32i  elfs_file(const meta* l, clib c, char* out) {
   return n + 6;
 }
 
-// the names of the sections of debug information, after those of the image:
-// .debug_info .debug_abbrev .debug_line .debug_aranges .eh_frame .symtab .strtab
+// placed after the image's section names
 static const char elfs_dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.debug_aranges\0.eh_frame\0.symtab\0.strtab";
 
-// the symbols of a program with debug information: every function and global
-// the pass recorded, the static ones first, after the null symbol. Their
-// number, how many are local (the null one too), and the bytes of their names
+// -g symbols: the null one, then every recorded function and global, statics
+// first. locals counts the null one
 static void  elfs_dsize(const mode* self, u32i* nsym, u32i* locals, u64i* strs) {
   const dbg* d = self->dbg;
   *nsym = 1 + d->nfun + d->nglb;
@@ -506,8 +482,7 @@ static void  elfs_dsize(const mode* self, u32i* nsym, u32i* locals, u64i* strs) 
   for(u32i i = 0; i < d->nglb; i++) *locals += d->glbs[i].own, *strs += d->glbs[i].name->size + 1;
 }
 
-// sym and its names in str (elfs_dsize), the code at text, data and bss at
-// those addresses, in sections tsec, dsec and bsec
+// writes what elfs_dsize counted
 static void  elfs_dput(const mode* self, sym64* sym, byte* str, u64i text, u64i data, u64i bss,
                        u16i tsec, u16i dsec, u16i bsec) {
   const dbg* d = self->dbg;
@@ -530,15 +505,10 @@ static void  elfs_dput(const mode* self, sym64* sym, byte* str, u64i text, u64i 
   }
 }
 
-// an image, position independent: its dynamic tables, then text, in the first
-// segment, the dynamic section, data, bss and the import slots in a second,
-// writable one, 64 KB further in memory. A shared library (without main)
-// exports its public definitions, has its imports bound by the loader through
-// their slots, and its addresses in data relocated by the load address. A
-// program is the same image entered at the start of text, with no soname and
-// no exports, and names its loader (PT_INTERP), after the table describing itself
-// (PT_PHDR). Both name the libraries of their imports (DT_NEEDED). Neither can
-// have an address in code
+// a position-independent image: dynamic tables and text in one segment;
+// dynamic, data, bss and the import slots in a writable one 64 KB further in
+// memory. A program has no soname or exports, and adds PT_PHDR and PT_INTERP.
+// Neither can have an address in code
 static file* elfs_dyno(mode* self) {
   static char names[] = "\0.hash\0.dynsym\0.dynstr\0.rela.dyn\0.text\0.dynamic\0.data\0.bss\0.shstrtab";
   enum { s_hash = 1, s_sym, s_str, s_rel, s_text, s_dyn, s_data, s_bss, s_names, s_all };
@@ -572,7 +542,6 @@ static file* elfs_dyno(mode* self) {
   }
   const u64i strs = t.strs + (prog? 0: sonamen + 1) + needs, ndyn = (prog? 9: 10) + nneed;
 
-  // the first segment, then the second at rw in the file, data at dat
   const u64i tabs = sizeof(elfs_id) + sizeof(eh64);
   const u64i hash = (tabs + nph * sizeof(ph64) + ldsn + 7) & -8; // the loader's path before it
   const u64i dsym = (hash + 4 * (3 + nsym) + 7) & -8;
@@ -583,8 +552,7 @@ static file* elfs_dyno(mode* self) {
   const u64i dat  = (rw + ndyn * sizeof(dyn64) + step - 1) & ~(step - 1);
   const u64i bss  = ((size + step - 1) & ~(step - 1)), slots = bss + ((self->zero + 7) & -8);
   const u64i skew = 0x10000;
-  // debug information (-g) goes after the names of the sections, outside the
-  // segments: the loader never maps it
+  // -g: after the section names, outside the segments, so never mapped
   const u64i namesz = sizeof names + (self->debug? sizeof elfs_dnames: 0);
   const u32i nsh = s_all + (self->debug? 7: 0);
   enum { d_info, d_abbr, d_line, d_range, d_frame, d_sym, d_str, d_all };
@@ -679,7 +647,7 @@ static file* elfs_dyno(mode* self) {
   elfs_syms_put(self, &t, (sym64*)(o + dsym) + 1, o + dstr, 1, top, dat + skew, dat + skew + bss,
                 s_text, s_data, s_bss);
   copy(o + dstr + t.strs, soname, sonamen);
-  dyn64* d = (dyn64*)(o + rw); // a program has no soname
+  dyn64* d = (dyn64*)(o + rw);
   if(!prog) *d++ = (dyn64){DT_SONAME, t.strs};
   for(u64i k = 0, at = t.strs + (prog? 0: sonamen + 1); k < nneed; k++) {
     *d++ = (dyn64){DT_NEEDED, at};
@@ -723,8 +691,6 @@ static file* elfs_dyno(mode* self) {
   return out;
 }
 
-// a program or a shared library as one image, or without main a static
-// library, an object
 file* elfs_pack(mode* self) {
   if(self->debug && !self->main && self->libs == lb_relo) fail("-g is not supported for an object yet\n");
   return !self->main && self->libs == lb_relo? elfs_relo(self): elfs_dyno(self);

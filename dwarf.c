@@ -1,22 +1,18 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-// Debug information (-g), DWARF 5. The pass records as it goes: a row of the
-// line table at each statement, the locals with the block they are in, the
-// epilogues, each function when its body is done, each global, and a DIE for
-// each type the first time something of that type is recorded (meta.die is
-// its number, its place in dbg.offs). A form asks for the sections once the
-// image is laid out and the addresses are known: one compilation unit for the
-// whole program, one file of the line table for each unit of the pass. Names
-// are inline strings, so there are no string sections
+// DWARF 5 for -g. The pass records rows, locals, blocks, epilogues, functions,
+// globals, and a DIE per type when first used (meta.die: its index in
+// dbg.offs); dwarf_pack builds the sections once addresses are known: one
+// compilation unit, a line-table file per unit, inline strings only
 
-enum { // tags
+enum {
   DW_TAG_array_type = 0x01, DW_TAG_formal_parameter = 0x05, DW_TAG_lexical_block = 0x0b,
   DW_TAG_member = 0x0d, DW_TAG_pointer_type = 0x0f, DW_TAG_compile_unit = 0x11,
   DW_TAG_structure_type = 0x13, DW_TAG_subroutine_type = 0x15, DW_TAG_subrange_type = 0x21,
   DW_TAG_base_type = 0x24, DW_TAG_subprogram = 0x2e, DW_TAG_variable = 0x34,
 };
-enum { // attributes
+enum {
   DW_AT_location = 0x02, DW_AT_name = 0x03, DW_AT_byte_size = 0x0b, DW_AT_bit_size = 0x0d,
   DW_AT_stmt_list = 0x10, DW_AT_low_pc = 0x11, DW_AT_high_pc = 0x12, DW_AT_language = 0x13,
   DW_AT_comp_dir = 0x1b, DW_AT_producer = 0x25, DW_AT_prototyped = 0x27, DW_AT_count = 0x37,
@@ -24,7 +20,7 @@ enum { // attributes
   DW_AT_encoding = 0x3e, DW_AT_external = 0x3f, DW_AT_frame_base = 0x40, DW_AT_type = 0x49,
   DW_AT_data_bit_offset = 0x6b,
 };
-enum { // forms
+enum {
   DW_FORM_addr = 0x01, DW_FORM_data8 = 0x07, DW_FORM_string = 0x08, DW_FORM_data1 = 0x0b,
   DW_FORM_udata = 0x0f, DW_FORM_ref4 = 0x13, DW_FORM_sec_offset = 0x17, DW_FORM_exprloc = 0x18,
   DW_FORM_flag_present = 0x19,
@@ -33,7 +29,7 @@ enum { DW_ATE_boolean = 2, DW_ATE_float = 4, DW_ATE_signed = 5, DW_ATE_unsigned 
 enum { DW_OP_addr = 0x03, DW_OP_fbreg = 0x91, DW_OP_call_frame_cfa = 0x9c };
 enum { DW_LANG_C99 = 0x0c };
 enum { DW_LNS_copy = 1, DW_LNS_advance_pc, DW_LNS_advance_line, DW_LNS_set_file };
-enum { // call frames
+enum {
   DW_CFA_advance_loc = 0x40, DW_CFA_offset = 0x80, DW_CFA_advance_loc1 = 0x02,
   DW_CFA_advance_loc2 = 0x03, DW_CFA_advance_loc4 = 0x04, DW_CFA_remember_state = 0x0a,
   DW_CFA_restore_state = 0x0b, DW_CFA_def_cfa = 0x0c, DW_CFA_def_cfa_register = 0x0d,
@@ -95,9 +91,7 @@ static const dwabb abbs[] = {
 #undef A_FRAME
 #undef A_WHERE
 
-// ---- bytes
-
-// v as n bytes, little endian
+// n bytes of v, little endian
 static void  dw_put(const mode* self, blob* b, u64i v, u32i n) {
   while(n--) {
     b->p = swell(self, b->p, b->n, &b->c, 1, 256);
@@ -129,17 +123,13 @@ static void  dw_patch(blob* b, u32i at, u64i v, u32i n) {
   for(u32i i = 0; i < n; i++, v >>= 8) b->p[at + i] = (byte)v;
 }
 
-// ---- types
-
-// whether the spelling of name is s
 static bool  dw_isit(const item* name, const char* s) {
   return name && name->size == slen(s) && alike(name->name, s, name->size);
 }
 
-// the number of type t in the debug information, made with its DIE when new, 0
-// for void. A DIE goes after those of the types it is made of, and refers to
-// them (and to itself, through a pointer) by number: dwarf_pack patches the
-// places
+// the DIE number of t, made when new, 0 for void. A DIE follows those of its
+// parts and refers to them (and itself, through a pointer) by number, which
+// dwarf_pack patches
 static u32i  dw_tyid(mode* self, meta* t) {
   if(!t || (t->kind == base && !t->size)) return 0;
   if(t->kind == bitf) return dw_tyid(self, t->type);
@@ -206,8 +196,6 @@ static u32i  dw_tyid(mode* self, meta* t) {
   return id;
 }
 
-// ---- what the pass records
-
 static dbg*  dw_note(const mode* self) { return self->debug? self->dbg: NULL; }
 static u32i  dw_here(const mode* self) { return (u32i)(self->text->body - self->text->head); }
 
@@ -237,7 +225,7 @@ void  dwarf_trim(mode* self, const byte* mark) {
   while(d->nend && d->ends[d->nend - 1].lo >= at) d->nend--;
 }
 
-// a function begins at the entry of its code, called at line
+// a function's entry, declared at line
 void  dwarf_open(mode* self, u64i line) {
   dbg* d = dw_note(self);
   if(!d) return;
@@ -299,8 +287,6 @@ void  dwarf_glob(mode* self, item* name, meta* type, u32i slot, bool own, u64i l
   d->glbs[d->nglb++] = (dwglb){name, t, self->unit, (u32i)line, slot, type->size, own};
 }
 
-// ---- the sections
-
 // the DIEs of a function's block (0: the function), its locals and the blocks
 // inside, the ones with no local at all left out
 static u32i  dw_count(const dbg* d, const dwfun* f, u32i block) {
@@ -338,10 +324,9 @@ static void  dw_fill(mode* self, const dwfun* f, u32i block, blob* b, u32i shift
   }
 }
 
-// .eh_frame: one CIE for the fixed shape of every frame, and an FDE for each
-// function: the frame pointer is saved and set up by the first two
-// instructions (push rbp; mov rbp, rsp, or stp x29, x30, [sp, #-16]!; mov x29,
-// sp), and an epilogue takes it down again
+// .eh_frame: one CIE for every frame's fixed shape, an FDE per function: the
+// first two instructions save and set the frame pointer (push rbp; mov rbp,
+// rsp, or stp x29, x30, [sp, #-16]!; mov x29, sp), an epilogue undoes it
 static void  dw_frames(mode* self, blob* b, u64i text) {
   const dbg* d = self->dbg;
   const bool arm = self->arch.cpu == cpu_arm8;
@@ -401,8 +386,7 @@ static void  dw_frames(mode* self, blob* b, u64i text) {
   dw_put(self, b, 0, 4); // the end
 }
 
-// .debug_line: the files are the units of the pass, a row in one sequence for each
-// statement
+// .debug_line: a file per unit of the pass, one sequence, a row per statement
 static void  dw_lines(mode* self, blob* b, u64i text, u64i code) {
   const dbg* d = self->dbg;
   static const byte lens[] = {0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1};
@@ -448,7 +432,6 @@ static void  dw_lines(mode* self, blob* b, u64i text, u64i code) {
   dw_patch(b, 0, b->n - 4, 4);
 }
 
-// the sections of the image whose text, data and bss are at those addresses
 void  dwarf_pack(mode* self, u64i text, u64i data, u64i bss, dwarf* out) {
   dbg* d = self->dbg;
   const u64i code = self->text->body - self->text->head;

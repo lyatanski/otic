@@ -13,23 +13,19 @@ typedef union {
   struct { uint32_t rd  : 5, imm :16, hw  : 2, _   : 6, opc : 2, sf  : 1; } dati;
   struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, _   : 7; } brur;
   struct { uint32_t cond: 4, o0  : 1, imm :19, o1  : 1,          _   : 7; } brci;
-  //struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, op  : 7; } ldst;
-  //struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, op  : 7; } rdat;
-  //struct { uint32_t op4 : 5, rn  : 5, op3 : 6, op2 : 5, opc : 4, op  : 7; } sdat;
-
   uint32_t n;
 } arm8_form;
 
-#define X (1u << 31) // sf: the 64-bit form of an instruction
+#define X (1u << 31) // sf: the 64-bit form
 #define form(FMT, OPC, ...) (FMT ## _ ## OPC | (arm8_form){.FMT={__VA_ARGS__}}.n)
 
 typedef enum {
     COND_EQ = 0x0,
     COND_NE = 0x1,
     COND_CS = 0x2,     /* Unsigned greater or equal */
-    COND_HS = COND_CS, /* ALIAS greater or equal */
+    COND_HS = COND_CS,
     COND_CC = 0x3,     /* Unsigned less than */
-    COND_LO = COND_CC, /* ALIAS Lower */
+    COND_LO = COND_CC,
     COND_MI = 0x4,     /* Negative */
     COND_PL = 0x5,     /* Zero or greater */
     COND_VS = 0x6,     /* Overflow */
@@ -45,53 +41,47 @@ typedef enum {
 } arm8_cond;
 
 typedef enum {
-  // Compare and branch (immediate)
   I3201_CBZ       = 0x34000000,
   I3201_CBNZ      = 0x35000000,
 
-  // Conditional branch (immediate)
   I3202_B_C       = 0x54000000,
 
-  // Unconditional branch (immediate)
   I3206_B         = 0x14000000,
   I3206_BL        = 0x94000000,
 
-  // Unconditional branch (register)
   brur_br        = 0xd61f0000,
   brur_blr       = 0xd63f0000,
   brur_ret       = 0xd65f0000,
 
-  // AdvSIMD load/store single structure
   I3303_LD1R      = 0x0d40c000,
 
-  // Load literal for loading the address at pc-relative offset
   I3305_LDR       = 0x58000000,
   I3305_LDR_v64   = 0x5c000000,
   I3305_LDR_v128  = 0x9c000000,
 
-  // Load/store register
-  I3312_STRB      = 0x38000000, // 8 << 30,
-  I3312_STRH      = 0x38000000, // 16 << 30,
-  I3312_STRW      = 0x38000000, // 32 << 30,
-  I3312_STRX      = 0x38000000, // 64 << 30,
+  // the size goes in bits 30-31, see arm8_disp
+  I3312_STRB      = 0x38000000,
+  I3312_STRH      = 0x38000000,
+  I3312_STRW      = 0x38000000,
+  I3312_STRX      = 0x38000000,
 
-  I3312_LDRB      = 0x38400000, // 8 << 30,
-  I3312_LDRH      = 0x38400000, // 16 << 30,
-  I3312_LDRW      = 0x38400000, // 32 << 30,
-  I3312_LDRX      = 0x38400000, // 64 << 30,
+  I3312_LDRB      = 0x38400000,
+  I3312_LDRH      = 0x38400000,
+  I3312_LDRW      = 0x38400000,
+  I3312_LDRX      = 0x38400000,
 
-  I3312_LDRSBW    = 0x38c00000, // 8 << 30,
-  I3312_LDRSHW    = 0x38c00000, // 16 << 30,
+  I3312_LDRSBW    = 0x38c00000,
+  I3312_LDRSHW    = 0x38c00000,
 
-  I3312_LDRSBX    = 0x38800000, // 8 << 30,
-  I3312_LDRSHX    = 0x38800000, // 16 << 30,
-  I3312_LDRSWX    = 0x38800000, // 32 << 30,
+  I3312_LDRSBX    = 0x38800000,
+  I3312_LDRSHX    = 0x38800000,
+  I3312_LDRSWX    = 0x38800000,
 
-  I3312_LDRVS     = 0x3c400000, // 32 << 30,
-  I3312_STRVS     = 0x3c000000, // 32 << 30,
+  I3312_LDRVS     = 0x3c400000,
+  I3312_STRVS     = 0x3c000000,
 
-  I3312_LDRVD     = 0x3c400000, // 64 << 30,
-  I3312_STRVD     = 0x3c000000, // 64 << 30,
+  I3312_LDRVD     = 0x3c400000,
+  I3312_STRVD     = 0x3c000000,
 
   I3312_LDRVQ     = 0x3cc00000,
   I3312_STRVQ     = 0x3c800000,
@@ -99,65 +89,52 @@ typedef enum {
   I3312_TO_I3310  = 0x00200800,
   I3312_TO_I3313  = 0x01000000,
 
-  // Load/store register pair instructions
   I3314_LDP       = 0x28400000,
   I3314_STP       = 0x28000000,
 
-  // Add/subtract immediate instructions
   I3401_ADDI      = 0x11000000,
   I3401_ADDSI     = 0x31000000,
   I3401_SUBI      = 0x51000000,
   I3401_SUBSI     = 0x71000000,
 
-  // Bitfield instructions
   I3402_BFM       = 0x33000000,
   I3402_SBFM      = 0x13000000,
   I3402_UBFM      = 0x53000000,
 
-  // Extract instruction
   I3403_EXTR      = 0x13800000,
 
-  // Logical immediate instructions
   I3404_ANDI      = 0x12000000,
   I3404_ORRI      = 0x32000000,
   I3404_EORI      = 0x52000000,
 
-  // Move wide immediate instructions
   dati_movn      = 0x12800000,
   dati_movz      = 0x52800000,
   dati_movk      = 0x72800000,
 
-  // PC relative addressing instructions
   I3406_ADR       = 0x10000000,
   I3406_ADRP      = 0x90000000,
 
-  // Add/subtract shifted register instructions (without a shift)
   I3502_ADD       = 0x0b000000,
   I3502_ADDS      = 0x2b000000,
   I3502_SUB       = 0x4b000000,
   I3502_SUBS      = 0x6b000000,
 
-  // Add/subtract shifted register instructions (with a shift)
   I3502S_ADD_LSL  = 0x0b000000,
 
-  // Add/subtract with carry instructions
   I3503_ADC       = 0x1a000000,
   I3503_SBC       = 0x5a000000,
 
-  // Conditional select instructions
   I3506_CSEL      = 0x1a800000,
   I3506_CSINC     = 0x1a800400,
   I3506_CSINV     = 0x5a800000,
   I3506_CSNEG     = 0x5a800400,
 
-  // Data-processing (1 source) instructions
   I3507_CLZ       = 0x5ac01000,
   I3507_RBIT      = 0x5ac00000,
   I3507_REV16     = 0x5ac00400,
   I3507_REV32     = 0x5ac00800,
   I3507_REV64     = 0x5ac00c00,
 
-  // Data-processing (2 source) instructions
   I3508_LSLV      = 0x1ac02000,
   I3508_LSRV      = 0x1ac02400,
   I3508_ASRV      = 0x1ac02800,
@@ -167,11 +144,9 @@ typedef enum {
   I3508_UDIV      = 0x1ac00800,
   I3508_SDIV      = 0x1ac00c00,
 
-  // Data-processing (3 source) instructions
   I3509_MADD      = 0x1b000000,
   I3509_MSUB      = 0x1b008000,
 
-  // Logical shifted register instructions (without a shift)
   I3510_AND       = 0x0a000000,
   I3510_BIC       = 0x0a200000,
   I3510_ORR       = 0x2a000000,
@@ -180,21 +155,17 @@ typedef enum {
   I3510_EON       = 0x4a200000,
   I3510_ANDS      = 0x6a000000,
 
-  // Logical shifted register instructions (with a shift)
   I3502S_AND_LSR  = 0x0a400000,
 
-  // AdvSIMD copy
   I3605_DUP       = 0x0e000400,
   I3605_INS       = 0x4e001c00,
   I3605_UMOV      = 0x0e003c00,
 
-  // AdvSIMD modified immediate
   I3606_MOVI      = 0x0f000400,
   I3606_MVNI      = 0x2f000400,
   I3606_BIC       = 0x2f001400,
   I3606_ORR       = 0x0f001400,
 
-  // AdvSIMD shift by immediate
   I3614_SSHR      = 0x0f000400,
   I3614_SSRA      = 0x0f001400,
   I3614_SHL       = 0x0f005400,
@@ -202,7 +173,6 @@ typedef enum {
   I3614_USHR      = 0x2f000400,
   I3614_USRA      = 0x2f001400,
 
-  // AdvSIMD three same
   I3616_ADD       = 0x0e208400,
   I3616_AND       = 0x0e201c00,
   I3616_BIC       = 0x0e601c00,
@@ -231,7 +201,6 @@ typedef enum {
   I3616_UQSUB     = 0x2e202c00,
   I3616_USHL      = 0x2e204400,
 
-  // AdvSIMD two-reg misc
   I3617_CMGT0     = 0x0e208800,
   I3617_CMEQ0     = 0x0e209800,
   I3617_CMLT0     = 0x0e20a800,
@@ -241,7 +210,6 @@ typedef enum {
   I3617_ABS       = 0x0e20b800,
   I3617_NEG       = 0x2e20b800,
 
-  // System instructions
   NOP             = 0xd503201f,
   DMB_ISH         = 0xd50338bf,
   DMB_LD          = 0x00000100,
@@ -253,7 +221,7 @@ void arm8_put(file* data, uint32_t inst) {
   *(uint32_t*)data->body = inst; data->body += 4;
 }
 
-// the word distance from at to dest in a field of bits, signed
+// the signed word distance from at to dest, as a field of bits
 static u32i arm8_span(const void* at, const void* dest, int bits) {
   s64i d = ((const byte*)dest - (const byte*)at) >> 2;
   if(d < -((s64i)1 << (bits - 1)) || d >= (s64i)1 << (bits - 1)) fail("jump too far: %lld words\n", (long long)d);
@@ -273,7 +241,7 @@ static void arm8_less(file* data, int rd, int rn, u32i off) {
 }
 
 void arm8_imm(file* data, int rd, uint32_t num) {
-  arm8_put(data, form(dati, movz, .imm=num & 0xffff, .rd=rd));      // movz wd, #lo
+  arm8_put(data, form(dati, movz, .imm=num & 0xffff, .rd=rd));
   if(num >> 16)
     arm8_put(data, 0x72a00000 | (num >> 16) << 5 | rd);             // movk wd, #hi, lsl 16
 }
@@ -295,8 +263,8 @@ void arm8_pull(file* data) {
   arm8_put(data, 0xf84107e0);                                       // ldr x0, [sp], #16
 }
 
-// scratch k is x9 + k: temporaries, free between calls; from HELD up, the
-// register of locals k - HELD, x19 + k - HELD, kept by calls
+// scratch k is x9 + k, free between calls; from HELD up, x19 + k - HELD,
+// a register of locals, kept by calls
 static int arm8_held(u32i k) { return k < HELD? 9 + (int)k: r19 + (int)(k - HELD); }
 
 void arm8_keep(file* data) {
@@ -322,10 +290,10 @@ void arm8_disp(file* data, uint32_t inst, u32i size, int rt, int rn, s32i off) {
   arm8_put(data, (size == 8? 3u: size >> 1) << 30 | inst | (off & 0x1ff) << 12 | rn << 5 | rt);
 }
 
-// the slot reaches 256 bytes below the frame pointer, further through x16
+// x29 + slot: past -256 through x16
 void arm8_slot(file* data, uint32_t inst, u32i size, int rt, s32i slot) {
   if(slot >= -256) { arm8_disp(data, inst, size, rt, r29, slot); return; }
-  arm8_less(data, r16, r29, 0u - (u32i)slot);                           // x16 = x29 - -slot
+  arm8_less(data, r16, r29, 0u - (u32i)slot);
   arm8_disp(data, inst, size, rt, r16, 0);
 }
 
@@ -340,11 +308,11 @@ void arm8_fill(file* data, u32i size) {
 }
 
 void arm8_addr(file* data, s32i slot) {
-  arm8_less(data, r0, r29, 0u - (u32i)slot);                           // x0 = x29 - -slot
+  arm8_less(data, r0, r29, 0u - (u32i)slot);
 }
 
-// x0 = pc + a 32-bit distance, patched by site: a negative distance, to code
-// before it, makes the add a sub
+// x0 = pc + a 32-bit distance, patched by site: a negative one makes the add
+// a sub
 void arm8_glob(file* data) {
   arm8_put(data, (u32i)I3406_ADR | r0);                             // adr x0, .
   arm8_put(data, X | dati_movz | r16);                              // movz x16, #lo
@@ -369,18 +337,17 @@ void arm8_args(file* data, u32i i) {
 }
 
 void arm8_pass(file* data, u32i i) {
-  if(i) arm8_put(data, X | I3510_ORR | r0 << 16 | 31 << 5 | i);    // mov xi, x0: acc is x0
+  if(i) arm8_put(data, X | I3510_ORR | r0 << 16 | 31 << 5 | i);    // mov xi, x0
 }
 
-// the machine register of an operand of rop: a local's is x19 + r, kept by a
-// function called, or a spare from 10 up: x2-x7, arguments not in acc or
-// tmp, x2 taken by %; acc x0, tmp x1, argument i xi
+// the register of a rop operand: local r x19 + r, kept by calls; spares from
+// 10 up x2-x7, x2 taken by %; acc x0, tmp x1, argument i xi
 static int arm8_reg(s32i x) {
   return x >= 10? r2 + x - 10: x >= 0? r19 + x: x == ACC? r0: x == TMP? r1: ARG - x;
 }
 
-// to op= by. A constant below 4K is added, subtracted or compared as it is,
-// another one goes through x16, or straight to its register when moved
+// to op= by: a constant below 4K is added, subtracted or compared as is,
+// another goes through x16, or straight to to when moved
 void arm8_rop(file* data, u32i op, s32i to, s32i by, s32i n) {
   u32i o = op & ~(WIDE | TEST);
   int  d = arm8_reg(to), s = by != NUM? arm8_reg(by): o == '='? d: r16;
@@ -421,9 +388,9 @@ void arm8_open(file* data) {
 void arm8_size(file* data, byte* func, s32i size) {
   uint32_t* sub = (uint32_t*)func + 2;
   if(size <= 0xfff) { *sub |= size << 10; return; }
-  *sub = I3206_B | arm8_span(sub, data->body, 26);                  // b grow
-  arm8_less(data, 31, 31, size);                                    // grow: sp -= size
-  arm8_put(data, I3206_B | arm8_span(data->body, sub + 1, 26));     // b back
+  *sub = I3206_B | arm8_span(sub, data->body, 26);
+  arm8_less(data, 31, 31, size);
+  arm8_put(data, I3206_B | arm8_span(data->body, sub + 1, 26));
 }
 
 // Linux syscall: number in x8, arguments in x0-x5
@@ -462,7 +429,7 @@ void arm8_bcnd(file* data, u32i op, bool hold) {
 // x % 2^k is x - (x + 2^k - 1 >> k << k)
 static void arm8_pow2(file* data, bool rem, bool w, s32i k) {
   u32i x = w? X: 0, n = w? 64: 32, sbfm = w? 0x93400000: 0x13000000; // asr is sbfm #k, #n - 1
-  if(!k) { if(rem) arm8_imm(data, r0, 0); return; }                 // x / 1, x % 1
+  if(!k) { if(rem) arm8_imm(data, r0, 0); return; }
   arm8_put(data, sbfm | (n - 1) << 16 | (n - 1) << 10 | r0 << 5 | r16);    // asr w16, w0, #n - 1
   u32i to = rem? r16: r0;
   arm8_put(data, I3502_ADD | x | 1 << 22 | r16 << 16 | (n - k) << 10 | r0 << 5 | to); // add to, w0, w16, lsr #n - k
@@ -495,7 +462,7 @@ void arm8_calc(file* data, u32i op, bool cnst, s32i num) {
       break;
     case tokd('<', '<'): arm8_put(data, I3508_LSLV | w1); break;
     case tokd('>', '>'): arm8_put(data, I3508_ASRV | w1); break;
-    default: // comparison: cmp w0, w1, then cset w0, cc unless TEST
+    default: // cmp w0, w1, then cset w0, cc unless TEST
       arm8_put(data, I3502_SUBS | w1 | 31);
       if(!(op & TEST)) arm8_flag(data, op);
   }
@@ -506,12 +473,10 @@ static void arm8_fmov(file* data, bool in, int d, int x) {
   arm8_put(data, in? 0x9e670000 | x << 5 | d: 0x9e660000 | d << 5 | x);
 }
 
-// the d register of a real operand: facc d0, ftmp d1, the register of real
-// local r d8 + r, which AAPCS64 keeps, the spares from 8 d20 + r - 8, which
-// it does not. Real scratch k is d16 + k
+// facc d0, ftmp d1, real local r d8 + r (AAPCS64 keeps it), spares from 8
+// d20 + r - 8 (not kept); real scratch k is d16 + k
 static int arm8_d(s32i f) { return f >= 8? 12 + (int)f: f >= 0? 8 + (int)f: f == ACC? 0: 1; }
 
-// to op= by: fmov, fadd fsub fmul fdiv, or fcmp
 void arm8_fop(file* data, u32i op, s32i to, s32i by) {
   u32i o = op & ~(WIDE | TEST | REAL);
   int  d = arm8_d(to), s = arm8_d(by);
@@ -576,7 +541,6 @@ void arm8_fpull(file* data) {
   arm8_put(data, 0xfc4107e0);                                       // ldr d0, [sp], #16
 }
 
-// d0 = (double)w0 or x0, or x0 = (long)d0 truncated
 void arm8_turn(file* data, bool real, bool wide) {
   if(real) arm8_put(data, wide? 0x9e620000: 0x1e620000);           // scvtf d0, x0 or w0
   else arm8_put(data, 0x9e780000);                                  // fcvtzs x0, d0
@@ -584,7 +548,7 @@ void arm8_turn(file* data, bool real, bool wide) {
 
 void arm8_when(file* data, bool nz) {
   arm8_put(data, X | (nz? I3201_CBNZ: I3201_CBZ) | r0);             // cb(n)z x0, patched by mend
-  arm8_put(data, (u32i)NOP);                                              // as for bcnd
+  arm8_put(data, (u32i)NOP);                                        // as for bcnd
 }
 
 void arm8_jump(file* data) {
@@ -592,17 +556,17 @@ void arm8_jump(file* data) {
 }
 
 void arm8_loop(file* data, const byte* dest) {
-  arm8_put(data, I3206_B | arm8_span(data->body, dest, 26));       // b dest
+  arm8_put(data, I3206_B | arm8_span(data->body, dest, 26));
 }
 
 void arm8_done(file* data) {
   arm8_put(data, 0x910003bf);                                       // mov sp, x29
   arm8_put(data, 0xa8c17bfd);                                       // ldp x29, x30, [sp], #16
-  arm8_put(data, form(brur, ret, .rn=r30));                         // ret
+  arm8_put(data, form(brur, ret, .rn=r30));
 }
 
 void arm8_bare(file* data) {
-  arm8_put(data, form(brur, ret, .rn=r30));                         // ret
+  arm8_put(data, form(brur, ret, .rn=r30));
 }
 // prev is the end of a b, or of a cb(n)z or b.cc and its nop: past 1M, the
 // latter become the opposite branch over a b
@@ -679,9 +643,9 @@ byte* arm8_ffi(file* data, const byte* func, u32i argc, u32i fixed, u32i real, o
   return at;
 }
 
-// AAPCS64 passes the integers in x0-x7 everywhere, otic's way, and the reals
-// in d0-d7, each in order: each moves to the x register of its place. A real
-// result goes back in d0, through a frame
+// AAPCS64 callers pass integers in x0-x7, otic's way, and reals in d0-d7,
+// each in order: each moves to the x register of its place. A real result
+// goes back in d0, through a frame
 void arm8_hail(file* data, osys os, u32i argc, u32i real) {
   (void)os;
   u32i ints = 0, flts = 0;
@@ -693,10 +657,10 @@ void arm8_hail(file* data, osys os, u32i argc, u32i real) {
   if(!(real >> RETS & 1)) return;
   arm8_put(data, 0xa9bf7bfd);                                       // stp x29, x30, [sp, #-16]!
   arm8_put(data, 0x910003fd);                                       // mov x29, sp
-  arm8_put(data, (u32i)I3206_BL | 4);                                     // bl the function, past what follows
+  arm8_put(data, (u32i)I3206_BL | 4);                               // bl the function, past what follows
   arm8_fmov(data, 1, 0, r0);                                        // fmov d0, x0
   arm8_put(data, 0xa8c17bfd);                                       // ldp x29, x30, [sp], #16
-  arm8_put(data, form(brur, ret, .rn=r30));                         // ret
+  arm8_put(data, form(brur, ret, .rn=r30));
 }
 
 const emit arm8 = {

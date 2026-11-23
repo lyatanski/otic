@@ -1,10 +1,7 @@
 // vim: ts=2:sw=2
-// otic's spec: each case is written to bins/ and compiled by the otic binary in
-// $OTIC (default bins/one) in a child process (fail() exits, code may crash),
-// run in memory and as an executable written with `-e` (ELF, Mach-O
-// or PE). Constant operands are folded, so the cases that test generated code
-// take their operands from locals. It tests the target it is built for, which
-// must be otic's: for arm8, cross-build both.
+// otic runs in a child process ($OTIC, default bins/one): fail() exits, code may
+// crash. Constants fold, so codegen cases take operands from locals. Tests the
+// target it is built for, which must be otic's: for arm8, cross-build both.
 #include "test.h"
 #include <stdbool.h> /* bool before C23 */
 
@@ -43,7 +40,7 @@
 #define pick(x86, arm) (x86)
 #define WRITE "1"
 #endif
-#ifdef __linux__ // syscall() is the Linux ABI
+#ifdef __linux__ // syscall() numbers are Linux's
 #define linux_it it
 #else
 #define linux_it xit
@@ -53,12 +50,12 @@
 #else
 #define unix_it xit
 #endif
-#if defined(_WIN32) && defined(_M_ARM64) // arm64 msvcrt exports no environ, nor _environ
+#if defined(_WIN32) && defined(_M_ARM64) // arm64 msvcrt exports no environ
 #define environ_it xit
 #else
 #define environ_it it
 #endif
-#if defined(__linux__) && defined(__x86_64__) // objects: x86-64 ELF only so far
+#if defined(__linux__) && defined(__x86_64__) // objects: x86-64 ELF only
 #define elfs_it it
 #else
 #define elfs_it xit
@@ -67,9 +64,8 @@
 enum { bad = INT_MIN, odd }; // compile error, no result (crash, timeout, ...)
 
 static char src_at[64], exe_at[64];
-static char* dirs_at[3]; // -p directories for the cases, NULL ended
+static char* dirs_at[3]; // -p directories, NULL ended
 
-// head (NULL ended) then a -p for each of dirs_at, in args
 static char** with(char** args, char** head) {
   char** a = args;
   while(*head) *a++ = *head++;
@@ -78,8 +74,7 @@ static char** with(char** args, char** head) {
   return args;
 }
 
-// run args[0] with stdout on fd for at most 5s: its exit status, or -1 when
-// it was killed (on Windows, its NTSTATUS is shown)
+// args[0] with stdout on fd, for at most 5s: its exit status, -1 when killed
 #ifdef _WIN32
 static int  spawn(int fd, char** args) {
   fflush(NULL);
@@ -118,9 +113,9 @@ static char* otic(void) {
   return path? path: "bins/one";
 }
 
-static char said[96]; // what otic said when it failed
+static char said[96]; // otic's message when it failed
 
-// `otic` alone: the value main returned, as printed on the last line
+// `otic` alone: main's value, printed on the last line
 static int  jit(void) {
   int fd[2];
   if(pipe(fd)) return odd;
@@ -139,7 +134,7 @@ static int  jit(void) {
   return sscanf(last, "%d", &value) == 1? value: odd;
 }
 
-// `otic -e`: the written executable's exit code, its stdout on fd
+// `otic -e`, then the executable's exit code, its stdout on fd
 static int  exe(int fd) {
   int null = open(NULL_DEV, O_WRONLY);
   unlink(exe_at);
@@ -159,7 +154,6 @@ static char* shown(int value, char* buf) {
   return buf;
 }
 
-// src at src_at, its executable to be at exe_at: 0 when it cannot be written
 static bool written(const char* src) {
   mkdir("bins", 0755);
   sprintf(src_at, "bins/" TAG "-%03zu.ot", test_count);
@@ -171,8 +165,7 @@ static bool written(const char* src) {
   return 1;
 }
 
-// compile src both ways: NULL when exec gives run and -e gives want, else why
-// not
+// NULL when exec gives run and -e gives want, else why not
 static char* tried(const char* src, int run, int want) {
   if(!written(src)) return "cannot write the case to bins/";
 
@@ -183,7 +176,7 @@ static char* tried(const char* src, int run, int want) {
   if(got == run) { got = exe(1); how = "exe"; }
   else want = run;
   if(got == want) return NULL;
-  bool told = got == bad && how[3] == 'c'; // exec failed: with what otic said
+  bool told = got == bad && how[3] == 'c'; // exec failed: add otic's message
   snprintf(why, sizeof why, "%s: want %s, got " TEST_COLOR_FAIL("%s") "%s%.*s",
            how, shown(want, w), shown(got, g), told? ": ": "", told? (int)strcspn(said, "\n"): 0, said);
   return why;
@@ -193,17 +186,14 @@ static char* tried(const char* src, int run, int want) {
 #define expect(want, src) saw(want, want, src)
 // only(want, src): exec rejects it, the executable from -e returns want
 #define only(want, src) saw(bad, want, src)
-// here(run, src): a program calling imports. exec returns run, and so does
-// the executable from -e, its imports bound by the system's loader
+// here(run, src): calls imports; exec and the -e executable (system loader) return run
 #define here(run, src) saw(run, run, src)
-// lost(src): an import is not in its library: exec rejects it, and so does
-// -e, which looks the imports of a program for the host up as exec does
+// lost(src): an import is not in its library; exec and -e (resolving as exec does) reject it
 #define lost(src) saw(bad, bad, src)
 #define saw(run, want, src) \
   if((error = tried(src, run, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
-// src written with -e: NULL when the executable printed want to a pipe and
-// exited with 0, else why not
+// NULL when the -e executable printed want and exited 0, else why not
 static char* printed(const char* src, const char* want) {
   static char out[64], why[128];
   int fd[2];
@@ -213,7 +203,7 @@ static char* printed(const char* src, const char* want) {
   n = (int)read(fd[0], out, sizeof out - 1);
   close(fd[0]);
   out[n > 0? n: 0] = 0;
-  for(char *r = out, *w = out; ; r++) // msvcrt's stdout is text: each \n ends in \r\n
+  for(char *r = out, *w = out; ; r++) // msvcrt's stdout is text: \r\n
     if(*r != '\r' || r[1] != '\n') { if(!(*w++ = *r)) break; }
   if(!code && !strcmp(out, want)) return NULL;
   snprintf(why, sizeof why, "want \"%s\" and 0, got " TEST_COLOR_FAIL("\"%s\" and %d"), want, out, code);
@@ -222,7 +212,7 @@ static char* printed(const char* src, const char* want) {
 #define prints(want, src) \
   if((error = printed(src, want))) location = "at " __FILE__ ":" TEST_STRING(__LINE__);
 
-// a module at bins/name.ot, beside the cases, for link "name"
+// for link "name"
 static void module(const char* name, const char* src) {
   char at[64];
   snprintf(at, sizeof at, "bins/%s.ot", name);
@@ -230,10 +220,8 @@ static void module(const char* name, const char* src) {
   if(fp) { fputs(src, fp); fclose(fp); }
 }
 
-// bins/name.a, a member per source in src (NULL ended), each compiled by the
-// host's cc without a stack protector (it calls libc) into bins/name-i.o: its
-// path, or NULL when it could not be built. The sources are not .ot files, so
-// link "name-i" finds the object
+// bins/name.a, or NULL: a member bins/name-i.o per src (NULL ended), by cc without
+// a stack protector (it calls libc). No name-i.ot, so link "name-i" finds the object
 static char* archive(const char* name, char** src) {
   static char at[64];
   char cmd[512], run[640];
@@ -253,9 +241,8 @@ static char* archive(const char* name, char** src) {
   return system(cmd)? NULL: at;
 }
 
-// src as a library written by otic, bins/libname.so, or with -s (stat)
-// bins/name.o, then the C program drv built with it by the host's cc (with
-// cflags) and run: its exit code, bad when otic failed, odd when cc did
+// src as bins/libname.so (stat: -s, bins/name.o), then drv built with it by cc
+// and run: its exit code, bad when otic failed, odd when cc did
 static int  library(const char* name, const char* src, bool stat, const char* cflags, const char* drv) {
   char at[64], out[64], cmd[512];
   snprintf(at, sizeof at, "bins/%s.ot", name);
@@ -282,8 +269,7 @@ static int  library(const char* name, const char* src, bool stat, const char* cf
   return code < 0? odd: code;
 }
 
-// 1 when clang and ld64.lld can build Mach-O programs here, else 0: its cases
-// are skipped. x86-64 hosts only, so it runs once
+// clang and ld64.lld can build Mach-O here; x86-64 hosts only, so it runs once
 static int  apple(void) {
   static int ok = -1;
 #if defined(__x86_64__) || defined(_M_X64)
@@ -294,11 +280,8 @@ static int  apple(void) {
   return ok;
 }
 
-// src as a Mach-O library written by otic for arch (ia64 or arm8),
-// bins/libname.dylib, or with -s (stat) bins/name.o, then the C program drv
-// compiled by clang and linked with it by ld64.lld against a stub of
-// libSystem: 0 when it links, bad when otic failed, odd when the build did.
-// Nothing here runs macOS code
+// library() for Mach-O on arch (ia64 or arm8), drv linked by ld64.lld against a
+// libSystem stub, never run: 0 when it links, bad when otic failed, odd when the build did
 static int  machlib(const char* name, const char* src, bool stat, char* arch, const char* drv) {
   char  at[64], out[64], cmd[512];
   char* cpu = arch[0] == 'a'? "arm64": "x86_64";
@@ -329,8 +312,7 @@ static int  machlib(const char* name, const char* src, bool stat, char* arch, co
   return system(cmd)? odd: 0;
 }
 
-// src written as bins/name.ot and built for arch and form with -e into
-// bins/name.out: its bytes in out (size), 0 when otic failed
+// src built for arch and form: its bytes in out, their count, 0 when otic failed
 static long built(const char* src, const char* name, const char* arch, const char* form, char* out, long cap) {
   char at[64], to[64];
   mkdir("bins", 0755);
@@ -350,8 +332,7 @@ static long built(const char* src, const char* name, const char* arch, const cha
   return n;
 }
 
-// a and b built for arch and form (another target than this one: what a #
-// runs in is a host mode, whose results the build takes) come out the same
+// a # runs in a host mode, whose results a build for another target takes
 static bool alikes(const char* a, const char* b, const char* arch, const char* form) {
   static char x[1 << 16], y[1 << 16];
   long n = built(a, "ct-a", arch, form, x, sizeof x), m = built(b, "ct-b", arch, form, y, sizeof y);
@@ -359,14 +340,14 @@ static bool alikes(const char* a, const char* b, const char* arch, const char* f
 }
 #define twins(a, b, arch, form) check(alikes(a, b, arch, form))
 
-// 25-statement bodies: their branches are over 127 bytes on x86
+// 25 statements: branches over 127 bytes on x86
 #define RET5 "return 1; return 1; return 1; return 1; return 1; "
 #define ADD5 "s += 1; s += 1; s += 1; s += 1; s += 1; "
 #define ARR8 "{ int a[2]; } { int a[2]; } { int a[2]; } { int a[2]; } "\
              "{ int a[2]; } { int a[2]; } { int a[2]; } { int a[2]; } "
 #define ARR64 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8 ARR8
 
-// fmt with each %s a body of n "s += 1; ": over 1M of code for 70000 on arm8
+// each %s of fmt n "s += 1; ": over 1M of code for 70000 on arm8
 static const char* bulk(const char* fmt, unsigned n) {
   static char src[1 << 21];
   static char body[(1 << 20) - 64];
@@ -376,7 +357,6 @@ static const char* bulk(const char* fmt, unsigned n) {
   return all < (int)sizeof src? src: "too long for bulk"; // a case that fails to compile
 }
 
-// the output of cmd (stdout and stderr) in out, NUL ended: its exit status
 static int  captured(const char* cmd, char* out, int cap) {
   char run[1024];
   snprintf(run, sizeof run, "%s >bins/capture.txt 2>&1", cmd);
@@ -388,8 +368,7 @@ static int  captured(const char* cmd, char* out, int cap) {
   return code;
 }
 
-// out with each run of blanks squeezed to one space: readelf pads its columns by
-// version (GNU gives a section index 4, LLVM's 5), so match the fields, not the padding
+// readelf pads columns by version (section index: GNU 4, LLVM 5): match fields only
 static void squeezed(char* out) {
   char* to = out;
   for(char* at = out; *at; ++at) {
@@ -399,14 +378,13 @@ static void squeezed(char* out) {
   *to = 0;
 }
 
-// 1 when llvm-dwarfdump and llvm-objdump can read what a program carries, on any host
 static int  llvms(void) {
   static int ok = -1;
   if(ok < 0) ok = !system("llvm-dwarfdump --version >" NULL_DEV " 2>&1 && llvm-objdump --version >" NULL_DEV " 2>&1");
   return ok;
 }
 
-// 1 when readelf can read what a Linux program carries
+// llvms() and readelf, on Linux
 static int  dwarfs(void) {
   static int ok = -1;
 #ifdef __linux__
@@ -417,7 +395,7 @@ static int  dwarfs(void) {
   return ok;
 }
 
-// 1 when lldb can run a program here (macOS: it may not be let trace)
+// macOS may not let lldb trace
 static int  lldbs(void) {
   static int ok = -1;
 #ifdef __APPLE__
@@ -432,7 +410,7 @@ static int  lldbs(void) {
   return ok;
 }
 
-// 1 when gdb can run a program here (a sandbox may not let it trace)
+// a sandbox may not let gdb trace
 static int  gdbs(void) {
   static int ok = -1;
 #ifdef __linux__
@@ -447,9 +425,7 @@ static int  gdbs(void) {
   return ok;
 }
 
-// src at bins/name.ot, built with -g and -e for arch (ia64 or arm8) and form
-// (NULL: the host's, the host's arch whatever arch says) into bins/name EXE:
-// 0 when it was written, else otic's exit status
+// form NULL: the host's form and arch, whatever arch says; otic's exit status
 static int  debugged(const char* name, const char* src, const char* arch, const char* form) {
   char at[64], to[64];
   mkdir("bins", 0755);
@@ -467,7 +443,7 @@ static int  debugged(const char* name, const char* src, const char* arch, const 
   return code;
 }
 
-// the sources of the cases of debug information
+// line numbers, for the checks
 #define DBG_NODES "struct vec { int x; int y; };\n"          /* 1 */ \
   "struct node { int v; node* next; };\n"                    /* 2 */ \
   "int g = 5;\n"                                             /* 3 */ \
@@ -600,7 +576,7 @@ spec(TAG) {
       expect(53, "int main() {\n"
                  "  return (2 && 3) + (0 && 1) * 2 + (0 || 5) * 4 + (0 || 0) * 8\n"
                  "       + (1 && 0 || 1) * 16 + (1 || 0 && 0) * 32;\n}\n");
-    it("short-circuits") // the right side must not run: 1 / 0 traps on x86-64
+    it("short-circuits") // 1 / 0 traps on x86-64
       expect(2, "int main() { return (0 && 1 / 0) + (1 || 1 / 0) + 1; }\n");
     it("computes unary operators")
       expect(5, "int main() { return -(-5) + ~0 + !0 + !7; }\n");
@@ -644,7 +620,7 @@ spec(TAG) {
       expect(53, "int main() {\n  int z = 0, one = 1, two = 2, three = 3, five = 5;\n"
                  "  return (two && three) + (z && one) * 2 + (z || five) * 4 + (z || z) * 8\n"
                  "       + (one && z || one) * 16 + (one || z && z) * 32;\n}\n");
-    it("short-circuits") // the right side must not run: x / 0 traps on x86-64
+    it("short-circuits") // x / 0 traps on x86-64
       expect(2, "int main() { int z = 0, one = 1; return (z && one / z) + (one || one / z) + 1; }\n");
     it("computes unary operators")
       expect(5, "int main() { int five = 5, z = 0, seven = 7; return -(-five) + ~z + !z + !seven; }\n");
@@ -814,7 +790,7 @@ spec(TAG) {
                 "while(i < 6) { s = s * 2 + a[i]; i += 1; }\nreturn s;\n}\n");
   }
 
-  context("leaf functions") { // calling nothing: spare registers, no frame when every local has one
+  context("leaf functions") { // no frame when every local has a register
     it("keeps its parameters and locals in spare registers")
       expect(101, "int f6(int a, int b, int c, int d, int e, int g) { int s = a - 2 * b; s += 3 * c - 4 * d; return s + 5 * e - 6 * g; }\n"
                   "long mix(long h, long v) { h = h ^ v; h = h * 31; return h ^ (h >> 7); }\n"
@@ -881,7 +857,7 @@ spec(TAG) {
                 "int main() { long x = f(); return (x < 0) + !g() * 2; }\n");
   }
 
-  context("overloads") { // one name, parameters of other counts or kinds (int, long, real)
+  context("overloads") {
     #define OV2 "int f(int a) { return 1; }\nint f(real a) { return 2; }\n"
     it("picks an overload by the kind of each argument")
       expect(213, "int f(int a) { return 1; }\nint f(long a) { return 2; }\nint f(real a) { return 3; }\n"
@@ -1429,7 +1405,7 @@ spec(TAG) {
       expect(bad, "link \"zzz\";\nint main() { return 0; }\n");
   }
 
-  context("objects") { // built by cc: an object, or the members of an archive
+  context("objects") {
     elfs_it("calls between members") {
       archive("libar-pull", (char*[]){
         "int twice(int);\nint quad(int x) { return twice(twice(x)); }\n",
@@ -1594,7 +1570,7 @@ spec(TAG) {
       check(library("lb-ado", src, 1, "", drv) == 15);
     }
     elfs_it("keeps one copy of a global of a shared library") {
-      // a program built without -fPIC copies a global out of the library: protected, it may not
+      // a non-PIC program copies the global; protected, it may not
       char* src = "int count = 5;\nint bump() { count += 1; return count; }\n";
       char* drv = "extern int count; int bump(void);\n"
                   "int main() { count = 10; return bump() * 10 + (count == 11); }\n";
@@ -1632,7 +1608,7 @@ spec(TAG) {
     #undef LIB
   }
 
-  context("Mach-O libraries") { // linked by ld64.lld, not run: skipped without clang and lld
+  context("Mach-O libraries") { // linked, not run
     #define USE "int twice(int); int total(int); extern int count;\n" \
                 "int main() { return twice(4) * 10 + total(3) + count; }\n"
     #define LIB "link \"lib-part\";\nint count = 1;\n" \
@@ -1672,8 +1648,8 @@ spec(TAG) {
     #undef LIB
   }
 
-  context("debug information") { // -g: DWARF 5 in an ELF program, read by llvm-dwarfdump and gdb
-    it("writes a program that runs as it does without -g") { // in every form: the loader must take it
+  context("debug information") { // DWARF 5
+    it("writes a program that runs as it does without -g") { // the loader must take it
       check(debugged("dbg-run", DBG_NODES, NULL, NULL) == 0);
       chmod("bins/dbg-run" EXE, 0755);
       check(spawn(1, (char*[]){"bins/dbg-run" EXE, NULL}) == 17);
@@ -1681,7 +1657,7 @@ spec(TAG) {
     it("checks what the host form wrote with llvm-dwarfdump", llvms()) {
       char out[1 << 14];
       check(debugged("dbg-host", DBG_NODES, NULL, NULL) == 0);
-#ifdef __APPLE__ // the bundle holds it
+#ifdef __APPLE__
       captured("llvm-dwarfdump --verify bins/dbg-host.dSYM/Contents/Resources/DWARF/dbg-host", out, sizeof out);
 #else
       captured("llvm-dwarfdump --verify bins/dbg-host" EXE, out, sizeof out);
@@ -1694,7 +1670,7 @@ spec(TAG) {
       chmod("bins/dbg-lldb", 0755);
       captured("lldb -b -o 'breakpoint set -f dbg-lldb.ot -l 9' -o run -o bt -o 'frame variable' -o 'frame variable *n'"
                " bins/dbg-lldb", out, sizeof out);
-      if(!strstr(out, "dbg-lldb.ot:9")) fputs(out, stdout); // what lldb said
+      if(!strstr(out, "dbg-lldb.ot:9")) fputs(out, stdout);
       check(strstr(out, "dbg-lldb.ot:9"));
       check(strstr(out, "frame #1") && strstr(out, "main"));
       check(strstr(out, "(int) step = 2"));
@@ -1719,7 +1695,7 @@ spec(TAG) {
       check(debugged("dbg-arm", DBG_NODES, "arm8", "elfs") == 0);
       captured("llvm-dwarfdump --verify bins/dbg-arm", out, sizeof out);
       check(strstr(out, "No errors"));
-      // llvm-dwarfdump, not readelf: llvm-readelf (Termux's readelf) has no --debug-dump
+      // llvm-readelf (Termux's readelf) has no --debug-dump
       captured("llvm-dwarfdump --debug-frame bins/dbg-arm", out, sizeof out);
       check(strstr(out, "DW_CFA_def_cfa_register: W29") || strstr(out, "DW_CFA_def_cfa_register: X29"));
       check(debugged("dbg-x86", DBG_NODES, "ia64", "elfs") == 0);
@@ -1800,7 +1776,7 @@ spec(TAG) {
         captured("llvm-dwarfdump --verify bins/dbg-pe", out, sizeof out);
         check(strstr(out, "No errors"));
         captured("llvm-dwarfdump --name=main bins/dbg-pe", out, sizeof out);
-        check(strstr(out, "DW_AT_low_pc\t(0x00000001400010")); // the image base and the text section
+        check(strstr(out, "DW_AT_low_pc\t(0x00000001400010")); // image base + text section
         captured("llvm-objdump -h bins/dbg-pe", out, sizeof out);
         check(strstr(out, ".debug_info") && strstr(out, ".debug_line") && strstr(out, ".eh_frame"));
         captured("llvm-objdump -t bins/dbg-pe", out, sizeof out);
@@ -1912,7 +1888,7 @@ spec(TAG) {
       expect(3, "int main() { return syscall(" WRITE ", 1, \"\", 0) + 3; }\n");
   }
 
-  context("compile time") { // # runs a call while compiling, in a host image
+  context("compile time") { // # runs a call in a host image
     it("gives a constant for an array size")
       expect(9, "int sq(int x) { return x * x; }\nint t[#sq(3)];\nint main() { return sizeof t / sizeof t[0]; }\n");
     it("gives a constant for an initializer and a condition")

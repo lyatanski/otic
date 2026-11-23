@@ -7,15 +7,13 @@
 
 #define CODE "\xb8\x07\x00\x00\x00\xc3" "\xb8\x2a\x00\x00\x00\xc3" // f, main
 #define HEAD 0x200  // the headers, a file alignment
-#define TRVA 0x1000 // text
+#define TRVA 0x1000
 #define DRVA 0x2000 // the imports, then data
-// the import table of kernel32!ExitProcess alone: two directory entries, a
-// lookup table of two, the hint and name, the DLL's name, to 8 bytes; its
-// slot, then data, to 16 bytes
+// kernel32!ExitProcess alone: two directory entries, a lookup table of two,
+// hint and name, the DLL's name, to 8 bytes; its slot, then data, to 16 bytes
 #define IAT ((2 * 20 + 2 * 8 + 14 + 13 + 7) & -8)
 #define IDAT ((IAT + 8 + 15) & -16)
 
-// the directory entry i of the image, and the name its lookup entry k points to
 static pe32_desc* desc_(file* out, u32i i) {
   pe32_head* h = (pe32_head*)out->head;
   return (pe32_desc*)(out->head + h->data.off + h->opt.dir[1].addr - DRVA) + i;

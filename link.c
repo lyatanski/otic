@@ -1,10 +1,9 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-// path without empty and . segments, and with dir/.. folded, so that a source
-// file has one name: its size
+// drops empty and . segments and folds dir/.., so a source file has one name
 u64i  tidy(char* path, u64i size) {
-  u64i n = 0, keep = 0; // bytes kept, the first keep of them a root / or ../s
+  u64i n = 0, keep = 0; // the first keep bytes are a root / or ../s
   if(size && path[0] == '/') n = keep = 1;
   for(u64i i = n, j; i < size; i = j + 1) {
     for(j = i; j < size && path[j] != '/'; j++);
@@ -23,8 +22,8 @@ u64i  tidy(char* path, u64i size) {
   return n;
 }
 
-// the file name with end e (".ot", ".o", or ".a" as libname.a) in dir, or
-// beside this source when dir is NULL, joined as a unit: 0 when it is not there
+// joins s with end e (".ot", ".o", or ".a" as libname.a) from dir, or beside
+// this source when dir is NULL: 0 when it is not there
 static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
   static char* const ends[] = {".ot", ".o", ".a"};
   const char* at = dir? dir: home(self)->path;
@@ -40,27 +39,25 @@ static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
     for(u32i i = n; i-- > b; ) p[i + 3] = p[i];
     copy(p + b, "lib", 3);
   }
-  u32i w = e? 2: 3; // the length of the end
+  u32i w = e? 2: 3;
   copy(p + n + lib, ends[e], w + 1);
   if(land(self, path, d + n + lib + w, NULL, (byte)(un_code + e))) return 1;
   self->heap(path, 0);
   return 0;
 }
 
-// the host's shared library s, as the library of the next imports
+// the host's library s, for the imports that follow
 static bool  shared(mode* self, item* s) {
   if(!self->have || !self->have(s)) return 0;
   home(self)->from = rack(self, s);
   return 1;
 }
 
-// link "name": the first of name.ot, name.o and libname.a beside this source,
-// then name.ot and name.o in the library directories (mode.dirs), each in
-// order, then the host's shared library name, as load "name" takes it, and
-// libname.a in the library directories: the archive first when writing a
-// file, as a C library linked in cannot run in memory. Code in a directory
-// comes before the host's library, so running and writing a file pick the
-// same module
+// link "name": name.ot, name.o, libname.a beside this source, then name.ot and
+// name.o in mode.dirs, then the host's library and libname.a in mode.dirs,
+// the archive first when writing a file (a C library linked in cannot run in
+// memory). Directories come before the host's library so that running and
+// writing a file pick the same module
 void  haul(mode* self, item* s) {
   bool run = self->libs == lb_none;
   for(u32i e = 0; e < 3; e++) if(nigh(self, s, NULL, e)) return;
@@ -72,7 +69,6 @@ void  haul(mode* self, item* s) {
   flaw(self, "cannot find %.*s\n", nick(s));
 }
 
-// x added to the units, at its line 1: its index
 u32i  nest(mode* self, unit x) {
   self->units = swell(self, self->units, self->unitn, &self->unitc, sizeof(unit), 16);
   self->units[self->unitn] = x;
@@ -80,14 +76,13 @@ u32i  nest(mode* self, unit x) {
   return self->unitn++;
 }
 
-// the same name, maybe in the tables of two units
 bool  akin(const item* x, const item* y) {
   return x == y || (x->size == y->size && alike(x->name, y->name, x->size));
 }
 
-// how x defines its name to the other units: 0 not at all (a static, a
-// local), 1 declared (an import, a prototype of C code), 2 in an archive
-// member not pulled yet, 3 weak (or tentative), 4 defined
+// how x defines its name to other units: 0 not at all (static, local), 1
+// declared (import, C prototype), 2 in an unpulled archive member, 3 weak (or
+// tentative), 4 defined
 u32i  heft(const meta* x) {
   if(x->own || x->kind == data) return 0;
   if(x->kind == pend) return 2;
@@ -95,11 +90,9 @@ u32i  heft(const meta* x) {
   return x->weak? 3: 4;
 }
 
-// what name, in the table of unit at, means there: its own meaning unless
-// that is weak, else the public one of the other units in join order: the
-// first definition, else the first weak one, else the first archive name,
-// else the first declaration. Last the builtins of the root. At 0: the public
-// meaning of the spelling of name. Only the units with the name are visited
+// unit at's own meaning of name unless weak, else the other units' in join
+// order by heft (first definition, weak, archive name, declaration), else the
+// root's builtin. At 0: the public meaning of name's spelling
 meta* find(mode* self, u32i at, item* name) {
   meta* x = at? name->data: NULL;
   if(x && !x->weak) return x;
@@ -116,12 +109,13 @@ meta* find(mode* self, u32i at, item* name) {
   return root? root->data: NULL;
 }
 
-// ask for the member that defines archive name x: it is pulled by reel. The
-// index of the ask, for a seat (WANT)
 static bool  asked(const void* ctx, u32i i) {
   const mode* self = ((const void**)ctx)[0];
   return self->asks[i] == ((const void**)ctx)[1];
 }
+
+// the member defining archive name x is pulled later by reel. The index of
+// the ask, for a seat (WANT)
 u32i  ask(mode* self, meta* x) {
   const void* ctx[] = {self, x->name};
   u32i* at = dsee(self, &self->askx, (u64i)(uintptr_t)x->name, asked, ctx);
@@ -132,8 +126,7 @@ u32i  ask(mode* self, meta* x) {
   return self->askn++;
 }
 
-// pull the members asked for, and those their undefined names ask for in
-// turn. Only between functions or when the run ends: take appends to text
+// only between functions or when the run ends: take appends to text
 void  reel(mode* self) {
   for(; self->askd < self->askn; self->askd++) {
     meta* x = self->asks[self->askd]->data; // NULL once its member is in
@@ -141,9 +134,8 @@ void  reel(mode* self) {
   }
 }
 
-// the library named by the string s: one for every unit that names it, made
-// when new. It is bound to its spelling like any name, but outside the scopes
-// of the pile: the first unit to name it keeps it for the whole run
+// one per library name for all units, bound outside the scopes of the pile:
+// the first unit to name it keeps it for the whole run
 meta* rack(mode* self, item* s) {
   meta* x = find(self, 0, s);
   if(x) return x;
@@ -152,7 +144,6 @@ meta* rack(mode* self, item* s) {
   return x;
 }
 
-// the seat of the slot of import x, made when it is first used
 u32i  port(mode* self, meta* x) {
   if(!x->slot) {
     self->imps = swell(self, self->imps, self->impn, &self->impc, sizeof(meta*), 16);
@@ -162,12 +153,10 @@ u32i  port(mode* self, meta* x) {
   return SLOT | (x->slot - 1);
 }
 
-// bind the forward calls from fix `from` on whose function is known, as
-// their unit sees it, or, for C code, its definition: the rest stay pending,
-// or fail when all sources are parsed (last). An overloaded name fails: a
-// call picks an overload by the types of its arguments, known only where the
-// overloads are. A function bound by its name is marked: it may not be
-// overloaded after
+// binds forward calls from fix `from` on whose function is now known; the rest
+// stay pending, or fail when last. An overloaded name fails: overloads are
+// picked by argument types, known only where they are. A function bound by
+// name is marked so it may not be overloaded after
 void  tie(mode* self, u32i from, bool last) {
   u32i keep = from, unit = self->unit;
   u64i line = home(self)->line;
@@ -188,21 +177,18 @@ void  tie(mode* self, u32i from, bool last) {
   home(self)->line = line;
 }
 
-// m is a global, or with code a function with a body, but not an import
 static bool real(const meta* m, bool code) {
   return m && !m->lib && (m->kind == glob || (code && m->kind == call && m->addr));
 }
 
-// where what name, in the table of unit at, means when the run ends is
 seat  goal(mode* self, u32i at, item* name, bool code) {
   meta* m = find(self, at, name);
   if(!real(m, code)) fail("undefined: %.*s\n", nick(name));
   return m->kind == call? (seat){m->addr, 0}: (seat){NULL, m->slot};
 }
 
-// where s is from the start of text, with data at at, bss at bss and the
-// import slots after it, or fore bytes before data, or at slotat when that is
-// set. Ask i is for a global that a member pulled since defines
+// offset of s from text, data at at, bss at bss. Import slots after bss, fore
+// bytes before data, or at slotat when set. A WANT seat resolves its ask
 u64i  pose(mode* self, seat s, u64i at, u64i bss) {
   return s.at? (u64i)(s.at - self->text->head): s.off & ZERO? bss + (s.off & ~ZERO):
          s.off & SLOT? (self->slotat? self->slotat: self->fore? at - self->fore: bss + ((self->zero + 7) & -8)) + 8 * (s.off & ~SLOT):
@@ -241,10 +227,8 @@ void  dock(mode* self, u64i at, u64i org) {
   }
 }
 
-// the public definitions of the image, for a library's symbol table: what
-// each spelling means to the other units, when it is a function with a body
-// or a global, defined or weak, and not an import. An overload is listed by
-// its symbol (dub), not by the name it shares
+// a library's exports: defined or weak, not imports. An overload is listed by
+// its symbol (dub), not the name it shares
 u32i  sign(mode* self, meta*** out) {
   meta** all = NULL;
   u32i   n = 0, cap = 0;
@@ -270,9 +254,8 @@ static item* want(mode* self, seat* aim) {
   return NULL;
 }
 
-// the references of the image, left for the linker of a library object: the
-// globals of the source (mode.aims), then those of object code and the
-// addresses that start globals (mode.hooks). A name nothing defines stays a name
+// references for a library object's linker: mode.aims, then mode.hooks. An
+// undefined name stays a name
 u32i  knit(mode* self, cord** out) {
   cord* all = self->heap(NULL, (self->seats + self->hookn) * sizeof(cord) + 1), *c = all;
   for(seat* s = self->aims; s < self->aims + self->seats; s++, c++) {

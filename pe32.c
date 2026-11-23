@@ -1,24 +1,18 @@
 // vim: ts=2:sw=2
 #include "core.h"
 
-// Windows executable (PE32+): Windows has no stable syscalls, so a stub after
-// the code exits through a DLL. Without imports, kernel32's ExitProcess:
-// exit(main()). With them, msvcrt starts it as a C program: __getmainargs
-// gives main its argc and argv, and msvcrt's exit flushes stdio. The image has
-// no absolute address in code: the addresses that start globals, in data,
-// are moved with the image by the base relocations of .reloc. The writable
-// section holds
-// the import table, the import slots, then data and bss: the slots are the
-// import address table, in the file, each holding its lookup entry until the
-// loader binds it (Windows skips a table whose first entry is 0).
+// Windows has no stable syscalls, so a stub after the code exits through a DLL:
+// kernel32's ExitProcess, or with imports msvcrt (__getmainargs for argc/argv,
+// exit to flush stdio). Addresses in data move by .reloc. The writable section
+// holds the import table, the slots (the IAT, each holding its lookup entry
+// until bound: Windows skips a table whose first entry is 0), data and bss.
 
-// the machine, and the Windows version the image asks for, as MSVC writes it:
-// arm64 Windows did not load one that asked for 10.0 (invalid image format)
+// OS versions as MSVC writes them: arm64 Windows rejected 10.0 (invalid image
+// format)
 static const struct { u16i arch, os[2]; } pe32_cpu[] = {
   [cpu_ia64] = {0x8664, {6, 0}}, [cpu_arm8] = {0xaa64, {6, 2}}, // Vista, Windows 8
 };
 
-// byte offset of a member: its address in a struct placed at 0
 #define offs(type, member) ((u64i)&((type*)0)->member)
 
 typedef struct {
@@ -28,7 +22,7 @@ typedef struct {
   u32i flags;
 } pe32_sect;
 
-// DOS header without a DOS stub, then the PE headers: none needs padding
+// no DOS stub; no padding needed
 typedef struct {
   struct { u16i magic; byte rest[58]; u32i next; } dos;
   u32i seal;
@@ -48,14 +42,13 @@ typedef struct {
   pe32_sect text, data;
 } pe32_head;
 
-// an import directory entry: its lookup table, its DLL's name, its first slot
+// look: lookup table, name: DLL name, bind: first slot
 typedef struct { u32i look, time, chain, name, bind; } pe32_desc;
 
-// an import of the image: its name and the file of its DLL
 typedef struct { const char* name; u32i size; const char* dll; u32i dlln; } pe32_imp;
 
-// the DLL file of library l of a load: msvcrt.dll for c and m, as written
-// when it has a dot, else with .dll after it. Into out when given: its length
+// msvcrt.dll for c and m, as written with a dot, else name.dll. Into out when
+// given: its length
 static u32i pe32_dll(const meta* l, char* out) {
   const char* s = l->name->name + 1; // without the quotes
   u32i n = (u32i)l->name->size - 2;
@@ -74,9 +67,8 @@ static u32i pe32_adrp(u32i pc, u32i to) {
 }
 static u32i pe32_ldr(u32i to) { return 0xf9400210 | (to & 0xfff) >> 3 << 10; }
 
-// the stub: exit(main()) through ExitProcess, its slot at iat, or with crt
-// through msvcrt, the slots of __getmainargs and exit at iat and iat + 8. Its
-// size, or with a buffer, written at rva
+// exit(main()): ExitProcess's slot at iat, or with crt __getmainargs and exit
+// at iat and iat + 8. Its size; written when at is given, placed at rva
 static u32i pe32_boot(byte* at, chip cpu, u32i rva, u32i main, u32i iat, bool crt) {
   if(cpu == cpu_ia64 && !crt) {
     s32i call = main - (rva + 9), load = iat - (rva + 17);
@@ -132,9 +124,8 @@ static u32i pe32_boot(byte* at, chip cpu, u32i rva, u32i main, u32i iat, bool cr
   return sizeof(code);
 }
 
-// the base relocations of the image, each 8-byte address at an rva of
-// at[n], sorted: a block per 4 KB page, its entries padded to 4 bytes. Into
-// out when given: their size
+// at: sorted rvas of 8-byte addresses. A block per 4 KB page, entries padded to
+// 4 bytes. Into out when given: their size
 static u32i pe32_base(const u32i* at, u32i n, byte* out) {
   u32i size = 0;
   for(u32i i = 0, k; i < n; i = k) {
@@ -151,11 +142,9 @@ static u32i pe32_base(const u32i* at, u32i n, byte* out) {
   return size;
 }
 
-// the COFF symbols of a program with debug information, one of 18 bytes for
-// each function and global the pass recorded, into rec when given: a name of
-// more than 8 bytes goes into str, which is at at in the string table. The
-// values are offsets in .text, or in .data, where bss follows data at bss.
-// The bytes of str used
+// -g COFF symbols, 18 bytes each, into rec when given. Names over 8 bytes go
+// in str, at offset at of the string table; bss is in .data at bss. The bytes
+// of str used
 static u32i pe32_dsyms(const mode* self, byte* rec, byte* str, u32i at, u32i idat, u32i bss) {
   const dbg* d = self->dbg;
   u32i used = 0;
@@ -191,8 +180,7 @@ file* pe32_pack(mode* self) {
   const chip cpu = self->arch.cpu;
   const bool crt = self->impn != 0;
 
-  // the imports, the stub's last: a directory entry for each run of them
-  // from one DLL, each with its lookup table, then the names they point to
+  // the stub's imports last; a directory entry per run from one DLL
   const u32i nimp = self->impn + (crt? 2: 1);
   pe32_imp* imp = self->heap(NULL, nimp * sizeof(pe32_imp));
   for(u32i i = 0; i < self->impn; i++) {
@@ -220,7 +208,7 @@ file* pe32_pack(mode* self) {
   const u32i code = (u32i)(self->text->body - self->text->head);
   const u32i boot = up(code, 16); // the stub after the code
   const u32i text = boot + pe32_boot(NULL, cpu, 0, 0, 0, crt);
-  const u32i ndbg = self->debug? 5: 0; // sections of debug information: .debug_info .debug_abbrev .debug_line .debug_aranges .eh_frame
+  const u32i ndbg = self->debug? 5: 0; // one per dnames
   // the addresses in data, by their offset there (a weak name nothing defines is 0)
   cord* cords;
   u32i  ncord = self->core.knit(self, &cords), nbase = 0;
@@ -245,9 +233,8 @@ file* pe32_pack(mode* self) {
   self->fore = idat - slot; // dock places the slots there
   self->core.dock(self, drva + idat - trva, org + trva);
 
-  // debug information (-g) after the data: sections the loader may drop, whose
-  // names are in the string table after the symbols' table, which a COFF file
-  // has at the end. Addresses are those the image asks to be loaded at
+  // -g: discardable sections after the data, named through the COFF string
+  // table at the end of the file. Addresses assume the preferred base
   static const char dnames[] = ".debug_info\0.debug_abbrev\0.debug_line\0.debug_aranges\0.eh_frame";
   dwarf dw = {0};
   pe32_sect dsec[5] = {{.vmsz = 0}};

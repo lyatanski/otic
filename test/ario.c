@@ -1,13 +1,11 @@
 // vim: ts=2:sw=2
-// ario's spec: archives built in memory, loaded into a front end whose form
-// is a mock that records the members it takes. fail longjmps back here, so
-// errors are checked in process
+// ario's spec: archives built in memory; the mock form records members taken
 #include <setjmp.h>
 #include <string.h>
 #include "../core.h"
 
 static jmp_buf bail;
-static char    said[256]; // what fail said
+static char    said[256];
 #undef  fail
 #define fail(...) (snprintf(said, sizeof said, __VA_ARGS__), longjmp(bail, 1))
 
@@ -18,11 +16,10 @@ static char    said[256]; // what fail said
 #include "../ario.c"
 #include "test.h"
 
-// the archive being built
 static byte  arch[4096];
 static u32i  archn;
 
-// a number of w bytes at at, big endian (GNU) or little endian (BSD)
+// big endian (GNU) or little endian (BSD)
 static void  put(byte* at, u32i w, u64i v, bool big) {
   for(u32i i = 0; i < w; i++) at[big? w - 1 - i: i] = (byte)(v >> 8 * i);
 }
@@ -32,8 +29,7 @@ static void  begin(void) {
   archn = 8;
 }
 
-// a member: its header name, as written, and size bytes of body, padded to an
-// even size. Where its header is
+// padded to an even size; returns its header's offset
 static u32i  member(const char* name, const void* body, u32i size) {
   char h[64];
   u32i at = archn;
@@ -45,8 +41,7 @@ static u32i  member(const char* name, const void* body, u32i size) {
   return at;
 }
 
-// a BSD member with a long name, "#1/n": the name, NUL padded to n bytes,
-// opens the body
+// BSD "#1/n": the name, NUL padded to n bytes, opens the body
 static u32i  longer(const char* name, u32i n, const void* body, u32i size) {
   char h[16];
   byte b[1024] = {0};
@@ -56,8 +51,8 @@ static u32i  longer(const char* name, u32i n, const void* body, u32i size) {
   return member(h, b, n + size);
 }
 
-// the body of a GNU index of w-byte numbers: count, n offsets (0 until
-// aimed), the n names. Where its offsets are
+// GNU index body: count, n offsets (0 until pointed), the n names. Returns
+// where its offsets are
 static byte* gnu(const char* head, u32i w, u32i n, char* names) {
   byte b[1024] = {0};
   u32i size = w + n * w, len;
@@ -67,9 +62,8 @@ static byte* gnu(const char* head, u32i w, u32i n, char* names) {
   return arch + member(head, b, size) + 60 + w;
 }
 
-// the body of a BSD index of w-byte numbers: bytes of the pairs, the (name,
-// offset) pairs, bytes of the names, the names. With a long header name when
-// head is "#1/". Where its pairs are
+// BSD index body: bytes of pairs, (name, offset) pairs, bytes of names, the
+// names; a long header name when head is "#1/". Returns where its pairs are
 static byte* bsd(const char* head, u32i w, u32i n, const char* names) {
   byte b[1024] = {0};
   u32i strs = 0, len;
@@ -84,21 +78,19 @@ static byte* bsd(const char* head, u32i w, u32i n, const char* names) {
   return arch + longer(head + 3, 20, b, size) + 60 + 20 + w;
 }
 
-// the offsets of an index: name i is defined by the member at at[i]
+// name i is defined by the member at at[i]
 static void  point(byte* offs, u32i w, u32i stride, bool big, u32i n, const u32i* at) {
   for(u32i i = 0; i < n; i++) put(offs + i * stride + (big? 0: w), w, at[i], big);
 }
 
-// the front end: the root and the archive, its members taken by the mock form
 static mode  self;
-// a member taken: its path, kind and body, whether it was NUL ended, at the
-// start of its file and apart from the archive (unit 1)
+// fresh: at the start of its file and apart from the archive (unit 1)
 typedef struct { const char* path; byte kind; char body[64]; u64i size; bool nul, fresh; } took_t;
 static took_t taken[8];
 static u32i  takes;
 
 static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
-// a copy of the member: the core frees it once taken
+// copies: the core frees f once taken
 static void  mock_take(mode* m, file* f) {
   took_t* t = taken + takes++;
   const file* a = m->units[1].code;
@@ -120,7 +112,6 @@ static void  start(void) {
   nest(&self, (unit){.kind = un_root, .path = "main.ot"});
 }
 
-// the archive built so far joined as lib.a: 1, else 0 and said tells why
 static bool  loads(void) {
   file* f = malloc(sizeof(file) + archn);
   f->body = f->head;
@@ -136,13 +127,11 @@ static bool  rejects(const char* why) {
   return 0;
 }
 
-// what name means in the archive's table
 static meta* named(const char* name) {
   item* s = hsee(self.units + 1, name, strlen(name), clue(name, strlen(name)));
   return s? s->data: NULL;
 }
 
-// the member that defines name taken: 1, else 0 and said tells why
 static bool  pulls(const char* name) {
   meta* x = named(name);
   if(!x) { printf("    %s is not in the table\n", name); return 0; }
@@ -151,7 +140,6 @@ static bool  pulls(const char* name) {
   return 1;
 }
 
-// the member last taken is path with body
 static bool  took(const char* path, const char* body) {
   if(takes && !strcmp(taken[takes - 1].path, path) && taken[takes - 1].kind == un_memb) {
     const took_t* t = taken + takes - 1;

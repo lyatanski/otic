@@ -1,14 +1,12 @@
 // vim: ts=2:sw=2
-// link's spec: the units and their names, met without a parse. The tables are
-// filled by hand, the files link looks for are mocks of the host, and the
-// target only records the calls it binds and the globals it points. fail
-// longjmps back here, so errors are checked in process
+// link's spec, without a parse: tables filled by hand, host files mocked, and
+// the target only records the calls it binds and the globals it points
 #include <setjmp.h>
 #include <string.h>
 #include "../core.h"
 
 static jmp_buf bail;
-static char    said[256]; // what fail said
+static char    said[256];
 #undef  fail
 #define fail(...) (snprintf(said, sizeof said, __VA_ARGS__), longjmp(bail, 1))
 
@@ -18,7 +16,7 @@ static char    said[256]; // what fail said
 #include "../link.c"
 #include "test.h"
 
-// what the mocks were asked, ", " between: "scan dir/vec.ot", "link 3 9"
+// what the mocks were asked: "scan dir/vec.ot, link 3 9"
 static char  trace[1024];
 static u32i  traced;
 
@@ -32,13 +30,11 @@ static void  note(char* what, const char* arg, s64i a, s64i b) {
 
 static byte  texts[256];
 static file* text = (file*)texts;
-// where p is in text
 static s64i  in(const byte* p) { return p? p - text->head: -1; }
 
 static void  mock_link(const file* t, byte* at, const byte* to) { (void)t; note("link", NULL, in(at), in(to)); }
 static void  mock_site(const file* t, byte* glob, s64i dist) { (void)t; note("site", NULL, in(glob), dist); }
 
-// the files there are, by path
 static char* there[8];
 static u32i  theren;
 static file* mock_scan(const char* path) {
@@ -61,12 +57,12 @@ static void  mock_load(mode* m, file* f) { (void)m; (void)f; }
 static void  mock_pull(mode* m, meta* x) {
   note("pull", NULL, x->name->size, 0);
   x->kind = call; // its member defines it
-  if(x->type) ask(m, x->type); // and asks for another
+  if(x->type) ask(m, x->type);
 }
 
 static mode  self;
 
-// a fresh front end: the root and main.ot in dir, being parsed
+// the root and path, being parsed
 static void  start(char* path) {
   free(self.units);
   free(self.asks);
@@ -92,20 +88,17 @@ static void  start(char* path) {
   self.unit = nest(&self, (unit){.kind = un_code, .path = path});
 }
 
-// the trace is exactly calls, else it is shown
 static bool  is(const char* all) {
   if(!strcmp(trace, all)) return 1;
   printf("    want %s\n    got  %s\n", all, trace);
   return 0;
 }
-// it failed with why
 static bool  says(const char* why) {
   if(strstr(said, why)) return 1;
   printf("    want %s\n    got  %s\n", why, said[0]? said: "no error\n");
   return 0;
 }
 
-// path, tidy'd, is want
 static bool  tidies(const char* path, const char* want) {
   char buf[64];
   u64i n = tidy(strcpy(buf, path), strlen(path));
@@ -114,7 +107,7 @@ static bool  tidies(const char* path, const char* want) {
   return 0;
 }
 
-// link name, a string as written: the unit it joined, 0 when it failed
+// name as written: the unit it joined, 0 when it failed
 static u32i  hauls(char* name) {
   u32i n = self.unitn;
   if(setjmp(bail)) return 0;
@@ -122,20 +115,20 @@ static u32i  hauls(char* name) {
   return self.unitn > n? self.unitn - 1: self.unit;
 }
 
-// where pose puts the seat {at, off}, text at 100 and bss at 200: outside the
-// spec, whose setjmp would have gcc warn its seat might be clobbered
+// text at 100, bss at 200. Outside the spec, whose setjmp would have gcc warn
+// the seat might be clobbered
 static u64i  posed(byte* at, u32i off) {
   return pose(&self, (seat){at, off}, 100, 200);
 }
 
-// name in the table of unit at meaning x, else nothing
+// meaning x unless NULL
 static item* say(u32i at, char* name, meta* x) {
   item* s = hget(&self, at, name, strlen(name));
   if(x) { s->data = x; x->name = s; x->unit = at; }
   return s;
 }
 
-// the kinds of meaning, a function at its offset in text, returning an int
+// a function's addr is its offset in text
 static meta whole = {.kind = base, .size = 4};
 #define DEF  {.kind = call, .type = &whole, .addr = text->head + 1}
 #define WEAK {.kind = call, .addr = text->head + 2, .weak = 1}
@@ -253,7 +246,6 @@ spec("link") {
 
   context("find") {
     item* s;
-    // main.ot, then a.ot, b.ot and c.ot
     #define UNITS start("main.ot"); for(u32i k = 0; k < 3; k++) nest(&self, (unit){.path = "x.ot"})
     it("takes the unit's own meaning") {
       UNITS;

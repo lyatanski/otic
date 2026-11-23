@@ -1,13 +1,10 @@
 #include "core.h"
-//prologue
-//epilogue
 
 typedef struct { byte enc:3, x64:1; } regs;
 typedef struct {
   regs base;
   regs indx;
   byte scale;
-  //byte sibb;
   union {
     s32i off4;
     char off1;
@@ -33,36 +30,22 @@ R(ir8, 0); R(ir9, 1); R(ir10, 2); R(ir11, 3); R(ir12, 4); R(ir13, 5); R(ir14, 6)
 #undef  R
 #undef  r
 
-/* REX:
- *   W - 64 Bit Operand Size
- *   R - extension of the ModR/M reg field
- *   X - extension of the SIB index field
- *   B - extension of the ModR/M rm field, SIB base field or Opcode reg field
- */
+// REX: w 64-bit operand, r ModR/M reg, x SIB index, b ModR/M rm, SIB base or
+// opcode reg
 typedef struct { byte b:1, x:1, r:1, w:1, _:4; } rexs;
 #define rex(...)   (*(byte*)&(rexs){._=4, __VA_ARGS__})
 
-/* ModR/M:
- *   mod:
- *     0 - Register/Memory with no offset
- *     1 - Register/Memory with 1 byte offset
- *     2 - Register/Memory with 4 byte offset
- *     3 - Register/Register
- */
+// mod: 0 memory, 1 with a disp8, 2 with a disp32, 3 register
 typedef struct { byte rm:3, reg:3, mod:2; } modrms;
 #define modrm(...) (*(byte*)&(modrms){__VA_ARGS__})
 
 typedef struct { byte base:3, idx:3, ss:2; } sibs;
 #define sib(...)   (*(byte*)&(sibs){__VA_ARGS__})
 
-// some instructions have the following bit pattern xxxxxxDS where:
-//   S - size of the operand 8/32
-//   D - direction RM -> 1 / MR -> 0
+// the low opcode bits of some instructions: S operand size 8/32, D direction
+// (1: reg <- r/m)
 typedef struct { byte size:1, rm:1, _:6; } bitss;
 #define bits(...)  (*(byte*)&(bitss){__VA_ARGS__})
-
-//byte mspe[] = {           rcx, rdx, ir8, ir9 };
-//byte elfs[] = { rdi, rsi, rdx, rcx, ir8, ir9 };
 
 // the low bytes of v: an immediate or displacement is emitted truncated
 #define BODY(type) { type val = (type)v;                                     \
@@ -75,12 +58,10 @@ void io(file* text, u64i v) BODY(u64i)
 #undef  BODY
 
 void ia64_push(file* text, para src) {
-  //if(src.reg.x64) ib(text, rex(.b=1));
   ib(text, 0x50 + src.reg.enc);
 }
 
 void ia64_pop(file* text, para dst) {
-  //if(src.reg.x64) ib(text, rex(.b=1));
   ib(text, 0x58 + dst.reg.enc);
 }
 
@@ -115,7 +96,7 @@ void ia64_mov(file* text, para dst, para src) {
     ib(text, 0x88 | bits(.rm=swap, .size=(size > 1)));
     ib(text, modrm(.mod=mod, .reg=src.reg.enc, .rm=dst.reg.enc));
     if(mem == dst.type) {
-      // sib.idx == rsp (aka. 0b100) is used for no index register
+      // sib.idx 100 (rsp) means no index
       if(rsp.reg.enc == dst.mem.base.enc || rsp.reg.enc != dst.mem.indx.enc)
         ib(text, sib(.base=dst.mem.base.enc, .idx=dst.mem.indx.enc, .ss=dst.mem.scale));
       if(1 == mod) ib(text, dst.mem.off1);
@@ -148,7 +129,7 @@ void ia64_mend(const file* text, byte* prev) {
 
 void ia64_jump(file* text) {
   ib(text, 0xe9);
-  id(text, 0); // reserve space for distance
+  id(text, 0); // patched by mend
 }
 
 void ia64_loop(file* text, const byte* dest) {
@@ -171,8 +152,7 @@ void ia64_jmpc(file* text, cond oper, s32i offs) {
 
 typedef enum { test, not = 2, neg, umul, smul, udiv, sdiv } aext;
 void ia64_aext(file* text, aext op, para src) {
-  // dst is ax/eax/rax
-  // for div remainder in dx/edx/rdx
+  // dst is eax, div leaves the remainder in edx
   int size = 4;
   if(size > 4) ib(text, rex(.w=1));
   ib(text, 0xf6 | !!(size > 1));
@@ -196,7 +176,7 @@ void ia64_##op(file* text, para dst, para src) {                              \
     ia64_ical(text, op, dst, src);                                            \
   }                                                                           \
   else {                                                                      \
-    ib(text, code | bits(.rm=0, .size=(size > 1)));   /* dst op= src */     \
+    ib(text, code | bits(.rm=0, .size=(size > 1)));                         \
     ib(text, modrm(.mod=3, .reg=src.reg.enc, .rm=dst.reg.enc));               \
   }                                                                           \
 }
@@ -252,13 +232,13 @@ void ia64_cond(file* text, u32i op, bool hold) {
 // ((x + edx) & 2^k - 1) - edx
 static void ia64_pow2(file* text, bool rem, bool w, s32i k) {
 #define W if(w) ib(text, rex(.w=1))
-  if(!k) { if(rem) ia64_xor(text, eax, eax); return; }                // x / 1, x % 1
+  if(!k) { if(rem) ia64_xor(text, eax, eax); return; }
   W; ib(text, 0x99);                                                   // cdq, cqo
-  W; ia64_shft(text, shr, edx, (para){imm, .imm8 = (w? 64: 32) - k}); // shr edx, 32 - k
-  W; ia64_add(text, eax, edx);                                         // add eax, edx
-  if(!rem) { W; ia64_shft(text, sar, eax, (para){imm, .imm8 = k}); return; } // sar eax, k
-  W; ia64_and(text, eax, (para){imm, .imm8 = ((s64i)1 << k) - 1});    // and eax, 2^k - 1
-  W; ia64_sub(text, eax, edx);                                         // sub eax, edx
+  W; ia64_shft(text, shr, edx, (para){imm, .imm8 = (w? 64: 32) - k});
+  W; ia64_add(text, eax, edx);
+  if(!rem) { W; ia64_shft(text, sar, eax, (para){imm, .imm8 = k}); return; }
+  W; ia64_and(text, eax, (para){imm, .imm8 = ((s64i)1 << k) - 1});
+  W; ia64_sub(text, eax, edx);
 #undef  W
 }
 
@@ -287,7 +267,7 @@ void ia64_calc(file* text, u32i op, bool cnst, s32i val) {
       break;
     case tokd('<', '<'): W; ia64_shft(text, shl, eax, src); break;
     case tokd('>', '>'): W; ia64_shft(text, sar, eax, src); break;
-    default: // comparison: cmp, then setcc al; movzx eax, al unless TEST
+    default: // cmp, then setcc al; movzx eax, al unless TEST
       W; ia64_cmp(text, eax, src);
       if(!(op & TEST)) ia64_flag(text, op);
   }
@@ -308,9 +288,8 @@ static void ia64_sse(file* text, byte pre, byte code, byte reg, byte rm) {
   ib(text, 0x0f); ib(text, code); ib(text, modrm(.mod=3, .reg=reg & 7, .rm=rm & 7));
 }
 
-// the xmm register of a real operand: facc xmm0, ftmp xmm1, the register of
-// real local r xmm8 + r, the spares from 8 xmm6 and xmm7, which Win64 keeps
-// (no spares there). Real scratch k is xmm2 + k, which Win64 does not keep
+// facc xmm0, ftmp xmm1, real local r xmm8 + r, spares from 8 xmm6 and xmm7,
+// which Win64 keeps (no spares there); real scratch k is xmm2 + k, not kept
 static byte ia64_xmm(s32i f) { return f >= 8? (byte)(6 + f - 8): f >= 0? (byte)(8 + f): f == ACC? 0: 1; }
 
 // to op= by: movapd, addsd subsd mulsd divsd, or ucomisd, which compares <
@@ -374,7 +353,6 @@ void ia64_fstow(file* text, u32i r, s32i slot, bool back, u32i size) {
 }
 void ia64_fat(file* text, bool store, s32i f)              { ia64_fmem(text, store, ia64_xmm(f), rax.reg.enc, 0); }
 
-// rax = (double)eax or rax into xmm0, or rax = (long)xmm0 truncated
 void ia64_turn(file* text, bool real, bool wide) {
   if(real) { ib(text, 0xf2); if(wide) ib(text, rex(.w=1)); iw(text, 0x2a0f); ib(text, 0xc0); } // cvtsi2sd xmm0, eax/rax
   else { ib(text, 0xf2); ib(text, rex(.w=1)); iw(text, 0x2c0f); ib(text, 0xc0); }               // cvttsd2si rax, xmm0
@@ -479,8 +457,8 @@ void ia64_pass(file* text, u32i i) {
 // the registers of locals: kept by a function called, in SysV and Win64
 static const byte ia64_kept[] = { 3, 12, 13, 14, 15 }; // rbx r12 r13 r14 r15
 
-// scratch k is r8 + k: SysV argument and C call registers, free between
-// calls; from HELD up, the register of locals k - HELD, kept by calls
+// scratch k is r8 + k, free between calls; from HELD up, the register of
+// locals k - HELD, kept by calls
 static byte ia64_held(u32i k) { return k < HELD? (byte)(8 + k): ia64_kept[k - HELD]; }
 
 void ia64_keep(file* text) {
@@ -530,15 +508,13 @@ void ia64_fpull(file* text) {
 // and rsi, its first arguments, then rdx, which division takes
 static const byte ia64_spare[] = { 7, 6, 2 };
 
-// the machine register of an operand of rop
 static byte ia64_reg(s32i x) {
   if(x >= (s32i)sizeof ia64_kept) return ia64_spare[x - (s32i)sizeof ia64_kept];
   return x >= 0? ia64_kept[x]: x == ACC? 0: x == TMP? 1: ia64_regs[ARG - x];
 }
 
-// to op= by: mov, the group add or and sub xor cmp by its /digit, or their
-// forms with a constant. A constant not below 0 is moved on 32 bits, which
-// clears the rest
+// to op= by: mov, or add or and sub xor cmp by /digit; a constant not below
+// 0 is moved on 32 bits, which clears the rest
 void ia64_rop(file* text, u32i op, s32i to, s32i by, s32i n) {
   u32i o = op & ~(WIDE | TEST);
   byte d = ia64_reg(to), s = by == NUM? 0: ia64_reg(by);
