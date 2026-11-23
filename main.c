@@ -163,10 +163,6 @@ void* bring(const item* s) {
 #endif
 }
 
-bool  have(const item* s) {
-  return bring(s) != NULL;
-}
-
 // fills each import slot. On Windows a name may be exported behind an
 // underscore: spell renames the import so a written program loads it. A
 // missing import fails unless soft, which leaves its slot as it was
@@ -332,7 +328,6 @@ mode* mirror(mode* from) {
     .arch = base,
     .form = host,
     .ario = {ario_load, ario_pull},
-    .have = have,
     .clib = CLIB,
     .name = from->name,
     .libs = lb_none,
@@ -453,7 +448,6 @@ int   main(int argc, char** argv) {
     .arch = base,
     .form = host,
     .ario = {ario_load, ario_pull},
-    .have = have,
     .clib = CLIB,
   };
   nest(&self, (unit){.kind = un_root}); // unit 0, the builtins

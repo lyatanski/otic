@@ -413,7 +413,6 @@ struct mode {
   poke  heap;
   pack  show;
   grab  scan;
-  bool  (*have)(const item*); // running: whether the host has shared library s
   // #: eval runs the C-ABI function at entry in an image of the code so far,
   // as host machine code, giving its result bits (a real's too). NULL for
   // another target: mirror then builds and runs a host mode for the same

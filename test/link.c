@@ -49,8 +49,6 @@ static file* mock_scan(const char* path) {
   }
   return NULL;
 }
-static bool  hosts; // the host has every shared library
-static bool  mock_have(const item* s) { note("have", NULL, s->size, 0); return hosts; }
 static void* mock_heap(void* p, size_t size) { if(size) return realloc(p, size); free(p); return NULL; }
 static void  mock_take(mode* m, file* f) { (void)m; (void)f; }
 static void  mock_load(mode* m, file* f) { (void)m; (void)f; }
@@ -76,9 +74,9 @@ static void  start(char* path) {
   text->body = text->head + 64;
   text->tail = texts + sizeof texts;
   trace[0] = said[0] = 0;
-  traced = theren = hosts = 0;
+  traced = theren = 0;
   self = (mode){
-    .name = path, .heap = mock_heap, .scan = mock_scan, .have = mock_have, .text = text,
+    .name = path, .heap = mock_heap, .scan = mock_scan, .text = text,
     .arch = {.link = mock_link, .site = mock_site},
     .form = {NULL, mock_take, os_linux}, .ario = {mock_load, mock_pull},
   };
@@ -183,13 +181,13 @@ spec("link") {
       check(hauls("\"../vec\"") == 2 && !strcmp(self.units[2].path, "vec.ot"));
       check(hauls("\"./../dir/../vec\"") == 1 && self.unitn == 3);
     }
-    it("looks in the library directories: sources and objects, the host, archives") {
+    it("looks in the library directories: sources and objects, then archives") {
       start("dir/main.ot");
       self.dirs[self.dirn++] = "lib";
       self.dirs[self.dirn++] = "/usr/";
-      check(!hauls("\"vec\"") && says("dir/main.ot:1: cannot find \"vec\""));
+      check(!hauls("\"vec\"") && says("dir/main.ot:1: cannot find \"vec\": link takes a source, an object or an archive, a shared library is a load"));
       check(is("scan dir/vec.ot, scan dir/vec.o, scan dir/libvec.a, scan lib/vec.ot, scan lib/vec.o, "
-               "scan /usr/vec.ot, scan /usr/vec.o, have 5 0, scan lib/libvec.a, scan /usr/libvec.a"));
+               "scan /usr/vec.ot, scan /usr/vec.o, scan lib/libvec.a, scan /usr/libvec.a"));
     }
     it("takes the first there") {
       start("dir/main.ot");
@@ -199,22 +197,11 @@ spec("link") {
       there[theren++] = "usr/libvec.a";
       check((u = hauls("\"vec\"")) == 2 && !strcmp(self.units[u].path, "usr/vec.o"));
     }
-    it("takes the host's library before an archive in a directory") {
+    it("takes an archive in a directory, never the host's library") {
       start("dir/main.ot");
       self.dirs[self.dirn++] = "lib";
       there[theren++] = "lib/libvec.a";
-      hosts = 1;
-      check(hauls("\"vec\"") == 1 && self.unitn == 2);
-      meta* lib = self.units[1].from;
-      check(lib && lib->kind == dlib && lib->name->size == 5);
-      check(is("scan dir/vec.ot, scan dir/vec.o, scan dir/libvec.a, scan lib/vec.ot, scan lib/vec.o, have 5 0"));
-    }
-    it("but not when it is not running") {
-      start("dir/main.ot");
-      self.have = NULL;
-      self.dirs[self.dirn++] = "lib";
-      there[theren++] = "lib/libvec.a";
-      check((u = hauls("\"vec\"")) == 2 && self.units[u].kind == un_arch);
+      check((u = hauls("\"vec\"")) == 2 && self.units[u].kind == un_arch && !self.units[1].from);
     }
   }
 

@@ -46,27 +46,15 @@ static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
   return 0;
 }
 
-// the host's library s, for the imports that follow
-static bool  shared(mode* self, item* s) {
-  if(!self->have || !self->have(s)) return 0;
-  home(self)->from = rack(self, s);
-  return 1;
-}
-
 // link "name": name.ot, name.o, libname.a beside this source, then name.ot and
-// name.o in mode.dirs, then the host's library and libname.a in mode.dirs,
-// the archive first when writing a file (a C library linked in cannot run in
-// memory). Directories come before the host's library so that running and
-// writing a file pick the same module
+// name.o in mode.dirs, then libname.a in mode.dirs. Static only: a shared
+// library is named by load
 void  haul(mode* self, item* s) {
-  bool run = self->libs == lb_none;
   for(u32i e = 0; e < 3; e++) if(nigh(self, s, NULL, e)) return;
   for(u32i i = 0; i < self->dirn; i++)
     for(u32i e = 0; e < 2; e++) if(nigh(self, s, self->dirs[i], e)) return;
-  if(run && shared(self, s)) return;
   for(u32i i = 0; i < self->dirn; i++) if(nigh(self, s, self->dirs[i], 2)) return;
-  if(!run && shared(self, s)) return;
-  flaw(self, "cannot find %.*s\n", nick(s));
+  flaw(self, "cannot find %.*s: link takes a source, an object or an archive, a shared library is a load\n", nick(s));
 }
 
 u32i  nest(mode* self, unit x) {

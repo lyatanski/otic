@@ -1373,7 +1373,7 @@ spec(TAG) {
       expect(3, "link \"pout\";\nint main() { return pout(); }\n");
       dirs_at[0] = NULL;
     }
-    it("prefers a module in a -p directory to a host library") {
+    it("links a module in a -p directory named as a host library") {
       mkdir("bins/plat-a", 0755);
       module("plat-a/m", "int m3() { return 3; }\n");
       dirs_at[0] = "bins/plat-a";
@@ -1409,8 +1409,8 @@ spec(TAG) {
     it("binds only the imports it uses")
       here(2, "load \"zzz\";\nint f(int);\nload \"c\";\nlong labs(long n);\n"
               "int main() { long v = -2; return labs(v); }\n");
-    it("takes a link of a shared library as its load")
-      here(6, "link \"c\";\nlong labs(long n);\nint main() { long v = -6; return labs(v); }\n");
+    it("rejects a link of a shared library: it takes a load")
+      expect(bad, "link \"c\";\nlong labs(long n);\nint main() { long v = -6; return labs(v); }\n");
     it("flushes what the native libc prints when main returns")
       prints("42 ok\n", "int printf(char* f, ...);\nint main() { int v = 42; printf(\"%d \", v); "
                         "printf(\"ok\\n\"); return 0; }\n");
@@ -1420,7 +1420,7 @@ spec(TAG) {
     unix_it("loads every library it imports from")
       prints("m\n", "load \"m\";\nint ilogb(long x);\nload \"c\";\nint puts(char* s);\n"
                      "int main() { long v = 1; ilogb(v); puts(\"m\"); return 0; }\n");
-    it("rejects a link of a library the host does not have")
+    it("rejects a link of a module that is nowhere")
       expect(bad, "link \"zzz\";\nint main() { return 0; }\n");
     it("calls a function of a load without declaring it")
       here(45, "load \"c\";\nint main() { return atoi(\"42\") + strlen(\"abc\"); }\n");
