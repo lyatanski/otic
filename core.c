@@ -502,7 +502,13 @@ void  bind(const mode* self, byte* at, const item* name, const meta* func, u32i 
   if(at) emit(self, link, at, func->addr);
 }
 
-s32i  room(mode* self, u32i size);
+// a function sift left without a frame spoils
+s32i  room(mode* self, u32i size) {
+  if(self->bare) self->spoil = 1;
+  self->slot += (size + 7) & -8;
+  if(self->deep < self->slot) self->deep = self->slot;
+  return -self->slot;
+}
 
 // C code on x86-64 but Windows clobbers the registers of real locals: before
 // the call those in scope go to fresh slots (returned, 0 if none), after it
@@ -1467,14 +1473,6 @@ void  bury(mode* self, u32i top) {
     x->name->data = x->hide;
     if(x->kind == data && x->slot >= 0) self->busy &= ~(1u << x->slot);
   }
-}
-
-// a function sift left without a frame spoils
-s32i  room(mode* self, u32i size) {
-  if(self->bare) self->spoil = 1;
-  self->slot += (size + 7) & -8;
-  if(self->deep < self->slot) self->deep = self->slot;
-  return -self->slot;
 }
 
 // the register sift gave name if t fits it and it is free, else frame slots
