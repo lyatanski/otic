@@ -894,7 +894,7 @@ meta* ilk(mode* self) {
 
 #define type(self) (same(self, "struct") || ilk(self))
 
-// sizeof's operand: the code of an expression is dropped
+// #sizeof's operand: the code of an expression is dropped
 s32i  gist(mode* self) {
   if(home(self)->talk.kind == '"') {
     s32i n = (s32i)quote(home(self)->talk.hash, NULL);
@@ -920,13 +920,47 @@ s32i  gist(mode* self) {
   t = atom(self).type;
   trim(self, mark);
 sized:
-  if(!t->size || t->kind == proc) flaw(self, "sizeof of a type without a size\n");
+  if(!t->size || t->kind == proc) flaw(self, "#sizeof of a type without a size\n");
   return (s32i)t->size;
 }
 
-void  fini(mode* self);
+// #offsetof(type, member): the bytes from the start of a struct type to
+// member, and on by .name into its members and [n] into its elements
+s32i  nook(mode* self) {
+  skip(self, '(');
+  if(!type(self)) flaw(self, "expected a type name after #offsetof(\n");
+  item* name;
+  meta* t = dims(self, coil(self, sort(self), &name));
+  if(name) flaw(self, "expected a type name, got '%.*s'\n", nick(name));
+  skip(self, ',');
+  s64i  off = 0;
+  for(bool dot = 1;; dot = 0) {
+    if(dot || twin(self, '.')) {
+      if(t->kind != list) flaw(self, "a member of no struct\n");
+      const meta* m = mate(self, t);
+      if(m->type->kind == bitf) flaw(self, "a bit-field has no offset\n");
+      off += m->slot;
+      t = m->type;
+    }
+    else if(twin(self, '[')) {
+      oper  n = expr(self, 1);
+      skip(self, ']');
+      if(t->kind != many) flaw(self, "an element of no array\n");
+      if(n.kind != vnum || n.ival < 0) flaw(self, "the index must be a constant, not below 0\n");
+      off += (s64i)n.ival * t->type->size;
+      t = t->type;
+    }
+    else break;
+  }
+  skip(self, ')');
+  if(off != (s32i)off) flaw(self, "#offsetof past 2 GB\n");
+  return (s32i)off;
+}
 
-// machine code a # emitted (link "otic"), in the function being compiled. It
+void  fini(mode* self);
+oper  nomen(mode* self, const item* name, const meta* var);
+
+// machine code a # emitted (emit), in the function being compiled. It
 // runs as a call would: a kept operand stays on the stack, and a leaf, whose
 // locals may be in registers a call changes, spoils. A mirror for another cpu
 // only keeps it on its tape
@@ -949,13 +983,14 @@ yield sharp(mode* self) {
   if(home(self)->talk.kind != ttag) flaw(self, "expected the name of a function after #\n");
   item* name = home(self)->talk.hash;
   meta* func = find(self, self->unit, name);
-  if(!func || func->kind != call) flaw(self, "no function '%.*s'\n", nick(name));
+  meta* hook = func && func->kind == glob && !func->unit? func: NULL; // a compiler function: #arch()
+  if(!hook && (!func || func->kind != call)) flaw(self, "no function '%.*s'\n", nick(name));
   chop(self);
   if(!twin(self, '(')) flaw(self, "expected ( after '%.*s': only a call runs at compile time\n", nick(name));
-  if(plural(func, name) && !self->dry) func = elect(self, name);
+  if(!hook && plural(func, name) && !self->dry) func = elect(self, name);
   if(self->frame != ~0u && func == self->func)
     flaw(self, "'%.*s' is being compiled, define it before running it\n", nick(name));
-  meta* t = func->type;
+  meta* t = hook? aimp(hook->type)->type: func->type;
   bool  text = t == tget(self, code) || (t->kind == refs && t->type == tget(self, char)), real = flot(self, t);
   if(!text && t->kind != base) flaw(self, "'%.*s' gives a result that cannot be used at compile time\n", nick(name));
   if(self->dry) { // typing an overloaded call's arguments: not run
@@ -983,7 +1018,8 @@ yield sharp(mode* self) {
   emit(self, hail, self->form.os, 0, (u32i)real << RETS);
   byte* addr = self->text->body;
   emit(self, open);
-  dial(self, name);
+  if(hook) ring(self, nomen(self, name, hook));
+  else dial(self, name);
   fini(self);
   emit(self, size, addr, (self->deep + 15) & -16);
   for(u32i i = fixs; i < self->fixs; i++)
@@ -1026,6 +1062,7 @@ yield sharp(mode* self) {
   for(u32i i = size; i < (u32i)(d->body - d->head); i++) d->head[i] = 0;
   d->body = d->head + size;
   self->zero = bss;
+  unlay(self, bss);
   for(u32i i = imps; i < self->impn; i++) self->imps[i]->slot = 0;
   self->impn = imps;
   self->slot = was.slot, self->deep = was.deep, self->lits = was.lits;
@@ -1043,21 +1080,27 @@ yield sharp(mode* self) {
 oper  nomen(mode* self, const item* name, const meta* var) {
   if(!var || (var->kind != data && var->kind != glob))
     flaw(self, "no variable '%.*s'\n", nick(name));
+  if(var->slot == UNLAID && var->kind == glob) ((meta*)var)->slot = (s32i)lay(self, 8, 1, 8); // a hook
   if(var->ext) { spot(self, port(self, (meta*)var)); emit(self, read, 8); return (oper){.kind = vmem, .type = var->type}; }
   return (oper){.kind = var->kind != data? vglo: var->slot < 0? vloc: vreg, .ival = var->slot, .type = var->type};
 }
 
-// #{ }: a call of the otic source's function fn (link "otic"), its argument
-// in acc when arg
-static oper  qcall(mode* self, const char* fn, bool arg) {
-  item* name = hget(self, self->api, (char*)fn, slen(fn));
+// #{ }: a call of the compiler through hook h, the C way, its argument in acc
+// when arg (a real's bits when real)
+static oper  qcall(mode* self, u32i h, bool arg, bool real) {
+  meta* hook = self->taps[h];
+  meta* f = aimp(hook->type);
+  if(arg) emit(self, push);
+  load(self, nomen(self, hook->name, hook));
+  s32i  slot = room(self, 8);
+  emit(self, stor, slot, 8);
   self->dials++;
   if(self->leaf) self->spoil = 1;
-  if(arg) emit(self, pass, 0);
-  byte* at = self->text->body;
-  emit(self, dial);
-  bind(self, at, name, name->data, arg, 0);
-  return acc(((meta*)name->data)->type);
+  s32i  kept = ferry(self, 0);
+  emit(self, addr, slot);
+  emit(self, ffi, NULL, (u32i)arg, (u32i)arg, (u32i)real | flot(self, f->type) << RETS, self->form.os);
+  if(kept) ferry(self, kept);
+  return acc(f->type);
 }
 
 // the source from up to to, as text of the quote
@@ -1067,7 +1110,7 @@ static void  qtext(mode* self, const byte* from, const byte* to) {
   copy(self->data->head + off, from, n);
   self->data->head[off + n] = 0;
   spot(self, off);
-  qcall(self, "otic_q_text", 1);
+  qcall(self, hk_text, 1, 0);
 }
 
 // x as text of the quote: a char* as it is (in a string literal: escaped),
@@ -1079,7 +1122,7 @@ static void  qput(mode* self, oper x, bool str) {
   if(!real && !text && (t->kind != base || !t->size)) flaw(self, "@ takes a char*, an integer or a real\n");
   x = load(self, x); // a real's bits, as otic passes it
   if(!real && !text && !wide(x.type)) sext(self, x);
-  qcall(self, real? (str? "otic_q_sreal": "otic_q_real"): text? (str? "otic_q_str": "otic_q_text"): str? "otic_q_snum": "otic_q_num", 1);
+  qcall(self, real? (str? hk_sreal: hk_real): text? (str? hk_str: hk_text): str? hk_snum: hk_num, 1, real);
 }
 
 #define LEAD(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z') || (c) == '_')
@@ -1110,14 +1153,13 @@ static oper  qsplice(mode* self) {
 }
 
 // #{ code }, after # at {: the code as a char*, built when it runs (while
-// compiling, by link "otic"): its source as written, and each @ splice's
+// compiling, through the hooks): its source as written, and each @ splice's
 // value, also in a string literal; @@ is an @
 oper  quasi(mode* self) {
-  if(!self->api) flaw(self, "#{ } needs link \"otic\"\n");
   if(self->frame == ~0u) flaw(self, "#{ } goes in a function\n");
   unit* u = home(self);
   u64i  line = u->line;
-  qcall(self, "otic_q_open", 0);
+  qcall(self, hk_open, 0, 0);
   const byte* seg = u->code->body; // its text from here is not given yet
   for(u32i depth = 1;;) {
     chop(self);
@@ -1148,7 +1190,7 @@ oper  quasi(mode* self) {
     }
   }
   chop(self);
-  return qcall(self, "otic_q_done", 0);
+  return qcall(self, hk_done, 0, 0);
 }
 
 // v, an int constant when it fits, else a long read from data. Its slot is
@@ -1183,10 +1225,11 @@ oper  atom(mode* self) {
       break;
     }
     case ttag: {
-      if(same(self, "sizeof")) { chop(self); return cnst(self, gist(self)); }
       item* name = home(self)->talk.hash;
-      chop(self);
       meta* var = find(self, self->unit, name);
+      if(!var && (same(self, "sizeof") || same(self, "offsetof")))
+        flaw(self, "'%.*s' runs while compiling: write #%.*s\n", nick(name), nick(name));
+      chop(self);
       bool  value = var && (var->kind == data || var->kind == glob); // a pointer called below
       if(!value && twin(self, '(')) { x = dial(self, name); break; }
       if(var && var->kind == call) { x = hand(self, name, var); break; }
@@ -1197,6 +1240,8 @@ oper  atom(mode* self) {
     case '#': {
       chop(self);
       if(home(self)->talk.kind == '{') return quasi(self);
+      if(same(self, "sizeof")) { chop(self); return cnst(self, gist(self)); }
+      if(same(self, "offsetof")) { chop(self); return cnst(self, nook(self)); }
       yield y = sharp(self);
       if(y.text && y.type == tget(self, code)) flaw(self, "code from # goes where a declaration does, not in an expression\n");
       if(y.text) { // a char*: its string, as a literal
@@ -2139,6 +2184,7 @@ void  sift(mode* self, u32i top, bool lone) {
       case ttag: name: {
         if(p == '.' || p == tokd('-', '>')) { arm = 0; break; } // a member
         it = u->talk.hash;
+        if(it == len) run = 0; // #sizeof calls nothing
         u32i  w = 1u << 3 * (loops < 3? loops: 3);
         if(open && (it == loop || it == when)) { cond = 1; if(it == loop && loops < 8) end[loops++] = depth, hold = 0, prec = 0; }
         const meta* m = !it->pick && !cond && it != ret && (p == '{' || p == '}' || p == ';')? find(self, self->unit, it): NULL;
@@ -2554,6 +2600,7 @@ void  decl(mode* self) {
       for(u32i i = size; d->head + i < d->body; i++) d->head[i] = 0;
       d->body = d->head + size;
       self->zero = bss;
+      unlay(self, bss);
       if(self->eval) {
         for(u32i i = tapen; i < self->tapen; i++) { self->heap(self->tape[i].text, 0); self->heap(self->tape[i].code, 0); }
         self->tapen = tapen;
@@ -2581,6 +2628,11 @@ void  decl(mode* self) {
       const meta* prev = find(self, self->unit, name);
       seed(self, .name=name, .type=type, .kind=glob, .own=own);
       hire(self, pin(self->pile, self->top - 1), prev, 0);
+      if(!twin(self, ',')) break;
+      continue;
+    }
+    if(!self->unit) { // a hook of the root (ground), laid once a source names it
+      seed(self, .name=name, .type=type, .kind=glob, .slot=UNLAID, .own=1, .weak=1);
       if(!twin(self, ',')) break;
       continue;
     }
@@ -2672,6 +2724,7 @@ meta* build(mode* self) {
   crux(self, real, .size=8);
   seed(self, .kind = refs, .name = sget(self, "code"), .type = tget(self, char), .size = 8); // source text: a char* by name
   self->bcode = pin(self->pile, self->top - 1);
+  ground(self);
 
   lead(self, self->name, NULL, un_code);
   reel(self);

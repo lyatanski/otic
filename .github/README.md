@@ -113,8 +113,11 @@ int main() {
   which C calls and otic code may name to call one or take its address; a
   name defined once keeps its plain symbol
 - statements: `when`/`else`, `while`, `break`, `skip`, `return`
-- `sizeof` of a type name or an operand (not computed); character literals
-  (`'a'`, `'\n'`) are numbers
+- `#sizeof` of a type name or an operand (not computed), and
+  `#offsetof(type, member)`: the bytes from the start of a struct to a member,
+  also on through its members and elements (`#offsetof(s, in.q[2].y)`). The
+  compiler gives both as constants where they are, with no code run, for
+  every target. Character literals (`'a'`, `'\n'`) are numbers
 - designators set one field or element and zero the rest: `{.y = 5}`,
   `{[2] = 7}` (as in `a` and `t` above); a compound literal builds a value
   in place: `&(vec){3, 4}`
@@ -159,31 +162,44 @@ int table[#fib(10)];        // 55 elements
 #getter("y", #fib(40))      // declares get_y, returning 102334155: its
                             // 331 million calls are made once, while compiling
 
-int main() { return get_x() + sizeof table / 4 + get_y() % 100; }   // 113
+int main() { return get_x() + #sizeof table / 4 + get_y() % 100; }  // 113
 ```
 
-- `link "otic"` gives code run by `#` the compiler's own functions (built in,
-  no file): `arch()` is the cpu being compiled for (0 `ia64`, 1 `arm8`, also
-  in a cross build), and `emit(code, n)` places n bytes of machine code where
-  the `#` is, in a function. They run there as a call would: they may change
-  the registers a C function may, and keep the others and the stack. A program
-  that calls these itself crashes: they are for `#` code only
-- it also walks the structs declared before the `#`: `type("vec")` is a
-  type's handle (0 when there is none), `members(t)` counts a struct's
-  members (-1 for no struct), `member(t, i, &f)` fills a `field` with member
-  i (`name`, `type`, `kind` as `'i' 'r' 'p' 'f' 'a' 's' 'b'`, `offset`,
-  `size`, `count`, `bit`, `width`; 0 past the end), `spell(t)` spells a type
-  (`"long[2][3]"`, `"int (*)(int, long)"`) and `offset("vec", "y")` is
-  offsetof
+- code run by `#` has the compiler's own functions, built in: function
+  pointers that a `#` points at the compiler before it runs. A source may
+  declare the same names for its own use, which hide them; a program that
+  names none of them carries nothing of them. They run as a call would: they
+  may change the registers a C function may, and keep the others and the
+  stack. A program that calls them itself crashes: they are for `#` code only.
+  A `#` may call one straight (`#arch()`). A type handle is good for the `#`
+  run that got it, and sees the types declared before that `#`
+
+| function | gives |
+| --- | --- |
+| `int arch()` | the cpu being compiled for: 0 `ia64`, 1 `arm8` (also in a cross build) |
+| `void emit(byte* b, int n)` | places n bytes of machine code where the `#` is, in a function |
+| `long type(char* name)` | a type's handle by its name (a struct, `int`, `code`...), 0 when there is none |
+| `int members(long t)` | the members of struct t, those of a member without a declarator among them; -1 for no struct |
+| `int member(long t, int i, field* f)` | fills `f` with member i of struct t; 0 past the end |
+| `char* spell(long t)` | t as a declaration spells it: `"long[2][3]"`, `"vec*"`, `"int (*)(int, long)"` |
+| `int offset(char* t, char* name)` | the offset of member name in the struct named t, an error when there is none |
+
+| `field` member | |
+| --- | --- |
+| `char* name` | the member's name |
+| `long type` | its type, for `members` and `spell` (a bit-field's: its integer type) |
+| `int kind` | `'i'` integer, `'r'` real, `'p'` pointer, `'f'` function pointer, `'a'` array, `'s'` struct, `'b'` bit-field |
+| `int offset` | bytes from the start of the struct (a bit-field: of its unit) |
+| `int size` | bytes (a bit-field: of its unit) |
+| `int count` | elements of an array, else 1 |
+| `int bit`, `int width` | a bit-field's first bit in its unit, and its width |
 
 ```c
-link "otic";
 void cli() { static byte c[1] = {0xfa}; emit(c, 1); }   // x86-64
 void halt() { while(1) { #cli(); } }
 
 struct regs { long rax; long rsp; long rip; };
-int sp() { return offset("regs", "rsp"); }
-int at_sp = #sp();                                     // 8
+int at_sp = #offsetof(regs, rsp);                      // 8
 ```
 
 - `#{ code }` is `code`, for a `#` to give as source: its text as
@@ -191,11 +207,10 @@ int at_sp = #sp();                                     // 8
   `@(expression)` spliced in, also inside string literals (escaped there);
   `@@` is an `@`. A `char*` or `code` splices as it is, an integer or a real as its
   literal; next to a name it pastes onto it (`show_@name`). The code must lex
-  as otic and its braces match. It needs `link "otic"`, and runs at compile
-  time only: the loop that builds a quote stays outside it
+  as otic and its braces match. It runs at compile time only, through the
+  compiler's functions: the loop that builds a quote stays outside it
 
 ```c
-link "otic";
 load "c";
 int printf(char* fmt, ...);
 

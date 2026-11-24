@@ -345,19 +345,19 @@ static bool alikes(const char* a, const char* b, const char* arch, const char* f
 }
 #define twins(a, b, arch, form) check(alikes(a, b, arch, form))
 
-// link "otic" helpers: mov eax or w0, 42 for the target cpu; and code that
+// compiler api helpers: mov eax or w0, 42 for the target cpu; and code that
 // sets every register a C function may change (not rbx, rsp, rbp; x0-x17)
-#define MOV42 "link \"otic\";\nvoid mov42() {\n" \
+#define MOV42 "void mov42() {\n" \
   "  static byte x86[5] = {0xb8, 42, 0, 0, 0};\n  static byte arm[4] = {0x40, 0x05, 0x80, 0x52};\n" \
   "  when(arch() == 0) emit(x86, 5); else emit(arm, 4);\n}\n"
-#define CLOBBER "link \"otic\";\nstatic byte buf[128];\nstatic int n;\n" \
+#define CLOBBER "static byte buf[128];\nstatic int n;\n" \
   "void b(int x) { buf[n] = x; n += 1; }\nvoid w(int x) { b(x); b(x >> 8); b(x >> 16); b(x >> 24); }\n" \
   "void clobber() {\n  n = 0;\n  int r = 0;\n  when(arch() == 0) while(r < 12) {\n" \
   "    when(r != 3 && r != 4 && r != 5) { when(r >= 8) b(0x41); b(0xb8 + (r & 7)); w(0x7777); }\n" \
   "    r += 1;\n  }\n  else while(r < 18) { w(0xd28eeee0 + r); r += 1; }\n  emit(buf, n);\n}\n"
 
 // a quote that sums a struct's members, each times its place
-#define QSUM "link \"otic\";\nstruct v { int a; int b; long c; };\n" \
+#define QSUM "struct v { int a; int b; long c; };\n" \
   "code summer(char* name) {\n  long t = type(name);\n  field f;\n  int i = 0;\n  code body = #{};\n" \
   "  while(member(t, i, &f)) { body = #{ @body s += p->@f.name * @(i + 1); }; i += 1; }\n" \
   "  return #{ long sum_@name(@name* p) { long s = 0; @body return s; } };\n}\n"
@@ -552,28 +552,51 @@ spec(TAG) {
       expect(bad, "int main() { return '\\");
   }
 
-  context("sizeof") {
+  context("#sizeof") {
     it("gives the size of a type name")
       expect(53, "struct v { int x; int y; };\nstruct n { int v; n* next; char tag; };\n"
-                 "int main() { return sizeof(int) + sizeof(long) + sizeof(char) + sizeof(n*)"
-                 " + sizeof(struct v) + sizeof(n); }\n");
+                 "int main() { return #sizeof(int) + #sizeof(long) + #sizeof(char) + #sizeof(n*)"
+                 " + #sizeof(struct v) + #sizeof(n); }\n");
     it("gives the size of an array type")
-      expect(24, "int main() { return sizeof(int[3][2]); }\n");
+      expect(24, "int main() { return #sizeof(int[3][2]); }\n");
     it("gives the size of an operand without computing it")
       expect(47, "int main() { int a = 2; long b[4]; char c = 1;\n"
-                 "  return sizeof a + sizeof(b) + sizeof c + sizeof(a = 9) - a + sizeof b[1]; }\n");
-    it("gives the count of an array with sizeof x / sizeof x[0]")
-      expect(5, "int t[5];\nint main() { return sizeof t / sizeof t[0]; }\n");
+                 "  return #sizeof a + #sizeof(b) + #sizeof c + #sizeof(a = 9) - a + #sizeof b[1]; }\n");
+    it("gives the count of an array with #sizeof x / #sizeof x[0]")
+      expect(5, "int t[5];\nint main() { return #sizeof t / #sizeof t[0]; }\n");
     it("gives the size of what a pointer points to")
-      expect(20, "struct n { int v; n* next; };\nint main() { n* p = 0; return sizeof *p + sizeof p->v; }\n");
+      expect(20, "struct n { int v; n* next; };\nint main() { n* p = 0; return #sizeof *p + #sizeof p->v; }\n");
     it("counts a string literal with its NUL")
-      expect(4, "int main() { return sizeof \"a\\nb\"; }\n");
+      expect(4, "int main() { return #sizeof \"a\\nb\"; }\n");
     it("drops the code of a call in its operand")
-      expect(4, "int n;\nint f() { n += 1; return 1; }\nint main() { return sizeof f() + n; }\n");
+      expect(4, "int n;\nint f() { n += 1; return 1; }\nint main() { return #sizeof f() + n; }\n");
     it("rejects a type without a size")
-      expect(bad, "int main() { return sizeof(void); }\n");
+      expect(bad, "int main() { return #sizeof(void); }\n");
     it("rejects a name in the type")
-      expect(bad, "int main() { return sizeof(int x); }\n");
+      expect(bad, "int main() { return #sizeof(int x); }\n");
+  }
+
+  context("#offsetof") {
+    it("gives the offset of a member as a constant")
+      expect(16, "struct r { byte a; long b; nu16 c; };\nint t[#offsetof(r, c)];\nint main() { return #sizeof t / 4; }\n");
+    it("walks into members by . and elements by [n]")
+      expect(40, "struct p { int x; int y; };\nstruct s { long k; struct { byte a; p q[3]; } in; };\n"
+                 "int main() { return #offsetof(s, in.q[2].y) + #offsetof(s, in.a) + #offsetof(struct s, k); }\n");
+    it("finds a member a struct member without a declarator gives")
+      expect(8, "struct b { long id; };\nstruct d { b; int c; };\nint main() { return #offsetof(d, c) + #offsetof(d, id); }\n");
+    it("takes a local of the same name as the member")
+      expect(4, "struct r { int a; int b; };\nint main() { int b = 9; return #offsetof(r, b); }\n");
+    it("rejects no member, a bit-field, an index past no array and one not constant") {
+      expect(bad, "struct r { int a; };\nint main() { return #offsetof(r, b); }\n");
+      expect(bad, "struct r { int a : 3; };\nint main() { return #offsetof(r, a); }\n");
+      expect(bad, "struct r { int a; };\nint main() { return #offsetof(r, a[1]); }\n");
+      expect(bad, "struct r { int a[2]; };\nint main() { int i = 1; return #offsetof(r, a[i]); }\n");
+      expect(bad, "int main() { return #offsetof(int, a); }\n");
+    }
+    it("rejects sizeof and offsetof without #") {
+      expect(bad, "int main() { return sizeof(int); }\n");
+      expect(bad, "struct r { int a; };\nint main() { return offsetof(r, a); }\n");
+    }
   }
 
   context("far branches") {
@@ -941,7 +964,7 @@ spec(TAG) {
                  "int main() { return f(#bump()) * 10 + c + #bump(); }\n");
     it("runs an overload at compile time")
       expect(25, "int sq(int x) { return x * x; }\nreal sq(real x) { return x * x; }\nint t[#sq(4)];\n"
-                 "int main() { return sizeof t / 4 + #sq(1.5) * 4; }\n");
+                 "int main() { return #sizeof t / 4 + #sq(1.5) * 4; }\n");
     it("builds what writing the constants would, for the host's other target")
       twins("int k() { return 3; }\n" OV2 "int main() { return f(#k()) + f(#k() + 0.5); }\n",
             "int k() { return 3; }\n" OV2 "int main() { return f(3) + f(3.5); }\n", pick("arm8", "ia64"), "elfs");
@@ -1220,8 +1243,8 @@ spec(TAG) {
                  "struct same { char k; pt p; long z; };\n"
                  "int main() { w v = {1, 2, 3, 4, 5}; w* p = &v; o* q = &v; pt* r = &q->x; same s;\n"
                  "  byte* vz = &v.z; byte* v0 = &v; byte* sz = &s.z; byte* s0 = &s;\n"
-                 "  return (v.k + v.x + v.y + v.z + p->b == 15) + (sizeof(o) == sizeof(same)) * 2\n"
-                 "    + (r->y == 3) * 4 + (vz - v0 == sz - s0) * 8 + (sizeof(w) == 32) * 16; }\n");
+                 "  return (v.k + v.x + v.y + v.z + p->b == 15) + (#sizeof(o) == #sizeof(same)) * 2\n"
+                 "    + (r->y == 3) * 4 + (vz - v0 == sz - s0) * 8 + (#sizeof(w) == 32) * 16; }\n");
     it("rejects a member name given twice")
       expect(bad, "struct s { int a; long a; };\nint main() { return 0; }\n");
     it("rejects a member name given twice through a struct member")
@@ -1942,7 +1965,7 @@ spec(TAG) {
 
   context("compile time") { // # runs a call in a host image
     it("gives a constant for an array size")
-      expect(9, "int sq(int x) { return x * x; }\nint t[#sq(3)];\nint main() { return sizeof t / sizeof t[0]; }\n");
+      expect(9, "int sq(int x) { return x * x; }\nint t[#sq(3)];\nint main() { return #sizeof t / #sizeof t[0]; }\n");
     it("gives a constant for an initializer and a condition")
       expect(42, "int dbl(int x) { return x + x; }\nint g = #dbl(21);\n"
                  "int main() { when(#dbl(1) == 2) return g; return 0; }\n");
@@ -2020,8 +2043,8 @@ spec(TAG) {
     it("rejects a function name without a call")
       expect(bad, "int f() { return 1; }\nint main() { return #f; }\n");
     it("builds what writing the constants would, for the host's other target") {
-      twins("int sq(int x) { return x * x; }\nint t[#sq(3)];\nint main() { return #sq(5) + sizeof t / 4; }\n",
-            "int sq(int x) { return x * x; }\nint t[9];\nint main() { return 25 + sizeof t / 4; }\n",
+      twins("int sq(int x) { return x * x; }\nint t[#sq(3)];\nint main() { return #sq(5) + #sizeof t / 4; }\n",
+            "int sq(int x) { return x * x; }\nint t[9];\nint main() { return 25 + #sizeof t / 4; }\n",
             pick("arm8", "ia64"), "elfs");
     }
     it("builds the same on every form") {
@@ -2046,15 +2069,17 @@ spec(TAG) {
                    "ct-a", pick("arm8", "ia64"), "elfs", (char[64]){0}, 64));
   }
 
-  context("compiler api") { // link "otic": arch and emit, for code run at compile time
+  context("compiler api") { // builtin function pointers for code run at compile time
     it("gives the cpu compiled for")
-      expect(pick(0, 1), "link \"otic\";\nint a() { return arch(); }\nint main() { return #a(); }\n");
+      expect(pick(0, 1), "int a() { return arch(); }\nint main() { return #a(); }\n");
     it("gives the target cpu in a cross build") {
-      twins("link \"otic\";\nint a() { return arch(); }\nint main() { return #a(); }\n",
-            "link \"otic\";\nint a() { return arch(); }\nint main() { return 1; }\n", "arm8", "elfs");
-      twins("link \"otic\";\nint a() { return arch(); }\nint main() { return #a(); }\n",
-            "link \"otic\";\nint a() { return arch(); }\nint main() { return 0; }\n", "ia64", "pe32");
+      twins("int a() { return arch(); }\nint main() { return #a(); }\n",
+            "int a() { return arch(); }\nint main() { return 1; }\n", "arm8", "elfs");
+      twins("int a() { return arch(); }\nint main() { return #a(); }\n",
+            "int a() { return arch(); }\nint main() { return 0; }\n", "ia64", "pe32");
     }
+    it("runs one of its functions straight from #")
+      expect(pick(3, 4), "int main() { return #arch() + 3; }\n");
     it("places machine code where the # is")
       expect(42, MOV42 "int answer() { #mov42(); return; }\nint main() { return answer(); }\n");
     it("keeps the locals and kept operands of the function across it")
@@ -2072,62 +2097,66 @@ spec(TAG) {
     }
     it("rejects machine code outside a function")
       expect(bad, MOV42 "#mov42();\nint main() { return 0; }\n");
-    it("is linked once")
-      expect(pick(3, 4), "link \"otic\";\nlink \"otic\";\nint a() { return arch() + 3; }\nint main() { return #a(); }\n");
     it("iterates the members of a struct")
-      expect(3024 % 256, "link \"otic\";\nstruct s { int a; real b; char* c; };\n"
+      expect(3024 % 256, "struct s { int a; real b; char* c; };\n"
                          "int walk() {\n  long t = type(\"s\");\n  field f;\n  int i = 0, k = members(t) * 1000;\n"
                          "  while(member(t, i, &f)) { k += f.offset; when(f.kind != \"irp\"[i] || f.size != 4 + 4 * (i > 0)) return 0; i += 1; }\n"
                          "  when(member(t, 3, &f)) return 0;\n  return k;\n}\n"
                          "int main() { return #walk() % 256; }\n");
     it("flattens a struct member without a declarator and walks into a nested struct")
-      expect(83, "link \"otic\";\nstruct b { int id; };\nstruct s { b; struct { nu16 a; byte c; } in; int k : 3, j : 5; };\n"
+      expect(83, "struct b { int id; };\nstruct s { b; struct { nu16 a; byte c; } in; int k : 3, j : 5; };\n"
                  "int walk() {\n  long t = type(\"s\");\n  field f, g;\n"
                  "  when(members(t) != 4 || !member(t, 1, &f) || f.kind != 's' || members(f.type) != 2) return 0;\n"
                  "  when(!member(f.type, 1, &g) || g.offset != 2 || !member(t, 3, &f) || f.kind != 'b') return 1;\n"
                  "  return f.offset * 10 + f.bit - 3 * f.width + 15;\n}\n"
                  "int main() { return #walk(); }\n");
     it("spells member types")
-      here(1, "link \"otic\";\nload \"c\";\nint strcmp(char* a, char* b);\n"
+      here(1, "load \"c\";\nint strcmp(char* a, char* b);\n"
               "struct s { char n[16]; long m[2][3]; int (*cb)(int, long, real); s* next; struct { int a; } in; };\n"
               "int same(int i, char* want) { long t = type(\"s\"); field f; member(t, i, &f); return !strcmp(spell(f.type), want); }\n"
               "int all() { return same(0, \"char[16]\") && same(1, \"long[2][3]\") && same(2, \"int (*)(int, long, real)\")\n"
               "  && same(3, \"s*\") && same(4, \"struct\") && !strcmp(spell(type(\"real\")), \"real\"); }\n"
               "int main() { return #all(); }\n");
     it("gives offsetof as a constant")
-      expect(29, "link \"otic\";\nstruct r { long a; int b; long c; byte d[5]; };\n"
+      expect(29, "struct r { long a; int b; long c; byte d[5]; };\n"
                  "int off(char* m) { return offset(\"r\", m); }\nbyte t[#off(\"c\") + #off(\"d\") - #off(\"b\") - 3];\n"
-                 "int main() { return sizeof t; }\n");
+                 "int main() { return #sizeof t; }\n");
     it("gives 0 for no type and -1 for a type that is no struct")
-      expect(9, "link \"otic\";\nint v;\nint f() { return (type(\"nosuch\") == 0) + (type(\"v\") == 0) * 2 + (members(type(\"int\")) == -1) * 6; }\n"
+      expect(9, "int v;\nint f() { return (type(\"nosuch\") == 0) + (type(\"v\") == 0) * 2 + (members(type(\"int\")) == -1) * 6; }\n"
                 "int main() { return #f(); }\n");
     it("rejects an offset of no member")
-      expect(bad, "link \"otic\";\nstruct r { long a; };\nint off() { return offset(\"r\", \"b\"); }\nint main() { return #off(); }\n");
+      expect(bad, "struct r { long a; };\nint off() { return offset(\"r\", \"b\"); }\nint main() { return #off(); }\n");
     it("sees only the structs declared before the #")
-      expect(0, "link \"otic\";\nint later() { return type(\"r\") != 0; }\nint x = #later();\nstruct r { long a; };\nint main() { return x; }\n");
+      expect(0, "int later() { return type(\"r\") != 0; }\nint x = #later();\nstruct r { long a; };\nint main() { return x; }\n");
     it("builds declarations from a quote with splices")
       expect(14, QSUM "#summer(\"v\")\nint main() { v x = {1, 2, 3}; return sum_v(&x); }\n");
     it("splices into string literals, escaped, and takes @@ as @")
-      here(1, "link \"otic\";\nload \"c\";\nint strcmp(char* a, char* b);\n"
+      here(1, "load \"c\";\nint strcmp(char* a, char* b);\n"
               "code gen() { int n = 7; char* odd = \"q\\\"b\\\\c\";\n"
               "  return #{ char* s = \"@n-@(n * 2) a@@b @odd\"; char* t = \"@(#{ x + y })\"; }; }\n#gen()\n"
               "int main() { return !strcmp(s, \"7-14 a@b q\\\"b\\\\c\") && !strcmp(t, \" x + y \"); }\n");
     it("splices numbers below 0 and reals as literals")
-      expect(19, "link \"otic\";\ncode gen() { int n = 0 - 5; real x = 2.0; real y = 0.0 - 0.5;\n"
+      expect(19, "code gen() { int n = 0 - 5; real x = 2.0; real y = 0.0 - 0.5;\n"
                  "  return #{ int a = 10-@n; real r = @x; real s = 4-@y; }; }\n#gen()\n"
                  "int main() { return a + r * 2 + s * 0; }\n");
     it("splices members through . and -> and pastes onto a name")
-      expect(42, "link \"otic\";\nstruct nm { char* id; int k; };\n"
+      expect(42, "struct nm { char* id; int k; };\n"
                  "code gen(nm* q) { return #{ int fn_@q->id() { return @q->k; } }; }\n"
                  "code top() { nm m = {\"x\", 42}; return gen(&m); }\n#top()\nint main() { return fn_x(); }\n");
-    it("rejects a quote without link \"otic\"")
-      expect(bad, "code g() { return #{ int x; }; }\nint main() { return 0; }\n");
+    it("lets a source shadow its names")
+      expect(14, "int type = 3;\nstruct field { int z; };\nint arch() { return 4; }\nint offset(int a) { return a; }\n"
+                 "int main() { field f = {2}; long member = 1; return type + f.z + arch() + offset(4) + member; }\n");
+    it("hides the functions #{ } calls")
+      expect(bad, "int main() { return q_done == 0; }\n");
+    it("adds nothing to a program that names none of it")
+      twins("int k() { return 3; }\nint main() { return #k(); }\n",
+            "int k() { return 3; }\nint main() { return 3; }\n", pick("ia64", "arm8"), "elfs");
     it("rejects a quote without its }")
-      expect(bad, "link \"otic\";\nint main() { return 0; }\ncode g() { return #{ int x;\n");
+      expect(bad, "int main() { return 0; }\ncode g() { return #{ int x;\n");
     it("rejects an @ of no variable, a space after @, and a pointer to no char") {
-      expect(bad, "link \"otic\";\ncode g() { return #{ int @nosuch; }; }\nint main() { return 0; }\n");
-      expect(bad, "link \"otic\";\ncode g() { char* n = \"a\"; return #{ int @ n; }; }\nint main() { return 0; }\n");
-      expect(bad, "link \"otic\";\ncode g() { int* p = 0; return #{ int @p; }; }\nint main() { return 0; }\n");
+      expect(bad, "code g() { return #{ int @nosuch; }; }\nint main() { return 0; }\n");
+      expect(bad, "code g() { char* n = \"a\"; return #{ int @ n; }; }\nint main() { return 0; }\n");
+      expect(bad, "code g() { int* p = 0; return #{ int @p; }; }\nint main() { return 0; }\n");
     }
     it("builds the same from a quote in a cross build") {
       twins(QSUM "#summer(\"v\")\nint main() { v x = {1, 2, 3}; return sum_v(&x); }\n",
@@ -2135,8 +2164,8 @@ spec(TAG) {
             "int main() { v x = {1, 2, 3}; return sum_v(&x); }\n", pick("arm8", "ia64"), "elfs");
     }
     it("gives the same offsets in a cross build") {
-      twins("link \"otic\";\nstruct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return #off(); }\n",
-            "link \"otic\";\nstruct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return 16; }\n",
+      twins("struct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return #off(); }\n",
+            "struct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return 16; }\n",
             pick("arm8", "ia64"), "elfs");
     }
   }

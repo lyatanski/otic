@@ -46,73 +46,40 @@ static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
   return 0;
 }
 
-// link "otic": the compiler's own functions, for code run at compile time.
-// The source below calls them through hooks that rig points at the compiler
-// before each # runs; a program keeps them null, so only # code may call them
-static const char otic_api[] =
-  "// a member of a struct, as member gives it\n"
+// the compiler's functions for code run at compile time, declared in the
+// root as function pointers (a source may shadow them). A global of the root
+// is a hook: no storage until a source names it, then 8 bytes of bss that rig
+// points at the compiler before each # runs. A program keeps them null, so
+// only # code may call them. The ones #{ } calls lose their names
+static const char otic_root[] =
   "struct field {\n"
   "  char* name;\n"
-  "  long  type;   // its type, for members and spell (a bit-field's: its integer type)\n"
-  "  int   kind;   // 'i' integer, 'r' real, 'p' pointer, 'f' function pointer,\n"
-  "                // 'a' array, 's' struct, 'b' bit-field\n"
-  "  int   offset; // bytes from the start of the struct (a bit-field: of its unit)\n"
-  "  int   size;   // bytes (a bit-field: of its unit)\n"
-  "  int   count;  // elements of an array, else 1\n"
-  "  int   bit;    // a bit-field: its first bit in the unit, and its width\n"
+  "  long  type;\n"
+  "  int   kind;\n"
+  "  int   offset;\n"
+  "  int   size;\n"
+  "  int   count;\n"
+  "  int   bit;\n"
   "  int   width;\n"
   "};\n"
-  "\n"
-  "static int   (*otic_arch)(void);\n"
-  "static void  (*otic_emit)(byte* code, int n);\n"
-  "static long  (*otic_type)(char* name);\n"
-  "static int   (*otic_members)(long t);\n"
-  "static int   (*otic_member)(long t, int i, field* f);\n"
-  "static char* (*otic_spell)(long t);\n"
-  "static int   (*otic_offset)(char* type, char* name);\n"
-  "static void  (*otic_open)(void);\n"
-  "static void  (*otic_text)(char* s, int str);\n"
-  "static void  (*otic_num)(long n, int str);\n"
-  "static void  (*otic_real)(real r, int str);\n"
-  "static code  (*otic_done)(void);\n"
-  "\n"
-  "// the cpu the source is compiled for, also when a # runs on another one:\n"
-  "// 0 ia64 (x86-64), 1 arm8 (AArch64)\n"
-  "int  arch() { return otic_arch(); }\n"
-  "\n"
-  "// n bytes of machine code for that cpu, placed where the # running this is,\n"
-  "// in a function. They run there as a call would: they may change the\n"
-  "// registers a C function may, and keep the others and the stack\n"
-  "void emit(byte* code, int n) { otic_emit(code, n); }\n"
-  "\n"
-  "// a type declared before the # by its name (a struct, int, real...), 0 when\n"
-  "// there is none. A type is good for the # run that got it\n"
-  "long type(char* name) { return otic_type(name); }\n"
-  "\n"
-  "// the members of struct t, in order (those of a struct member without a\n"
-  "// declarator among them); -1 when t is no struct\n"
-  "int  members(long t) { return otic_members(t); }\n"
-  "\n"
-  "// member i of struct t in f: 0, f as it was, past the end\n"
-  "int  member(long t, int i, field* f) { return otic_member(t, i, f); }\n"
-  "\n"
-  "// t as a declaration spells it: \"int\", \"vec*\", \"char[16]\", \"int (*)(int, long)\"\n"
-  "// (a function pointer's parameters by kind: int, long or a pointer, real)\n"
-  "char* spell(long t) { return otic_spell(t); }\n"
-  "\n"
-  "// the offset of member name in struct type, as offsetof; an error when\n"
-  "// there is none\n"
-  "int  offset(char* type, char* name) { return otic_offset(type, name); }\n"
-  "\n"
-  "// what #{ } compiles to: its text, and each @ value in code or in a string\n"
-  "static void  otic_q_open() { otic_open(); }\n"
-  "static void  otic_q_text(char* s) { otic_text(s, 0); }\n"
-  "static void  otic_q_str(char* s) { otic_text(s, 1); }\n"
-  "static void  otic_q_num(long n) { otic_num(n, 0); }\n"
-  "static void  otic_q_snum(long n) { otic_num(n, 1); }\n"
-  "static void  otic_q_real(real r) { otic_real(r, 0); }\n"
-  "static void  otic_q_sreal(real r) { otic_real(r, 1); }\n"
-  "static code  otic_q_done() { return otic_done(); }\n";
+  "int   (*arch)();\n"
+  "void  (*emit)(byte* b, int n);\n"
+  "long  (*type)(char* name);\n"
+  "int   (*members)(long t);\n"
+  "int   (*member)(long t, int i, field* f);\n"
+  "char* (*spell)(long t);\n"
+  "int   (*offset)(char* t, char* name);\n"
+  "void  (*q_open)();\n"
+  "void  (*q_text)(char* s);\n"
+  "void  (*q_str)(char* s);\n"
+  "void  (*q_num)(long n);\n"
+  "void  (*q_snum)(long n);\n"
+  "void  (*q_real)(real r);\n"
+  "void  (*q_sreal)(real r);\n"
+  "code  (*q_done)();\n";
+
+static char* const hook_names[HOOKS] = {"arch", "emit", "type", "members", "member", "spell", "offset",
+  "q_open", "q_text", "q_str", "q_num", "q_snum", "q_real", "q_sreal", "q_done"};
 
 static mode* live; // the mode whose # runs
 
@@ -284,45 +251,64 @@ static char* otic_done(void) {
   return s;
 }
 
-// points the hooks of link "otic" at the compiler, in an image of the code
+static void  otic_q_text(const char* s) { otic_text(s, 0); }
+static void  otic_q_str(const char* s) { otic_text(s, 1); }
+static void  otic_q_num(s64i v) { otic_num(v, 0); }
+static void  otic_q_snum(s64i v) { otic_num(v, 1); }
+static void  otic_q_real(double v) { otic_real(v, 0); }
+static void  otic_q_sreal(double v) { otic_real(v, 1); }
+
+// points the hooks a source named at the compiler, in an image of the code
 // with data at data and bss at bss, for the # of self about to run
 void  rig(mode* self, byte* data, byte* bss) {
-  static char* const names[] = {"otic_arch", "otic_emit", "otic_type", "otic_members", "otic_member",
-                                "otic_spell", "otic_offset", "otic_open", "otic_text", "otic_num", "otic_real",
-                                "otic_done"};
-  const u64i fns[] = {(u64i)(uintptr_t)otic_arch, (u64i)(uintptr_t)otic_emit, (u64i)(uintptr_t)otic_type,
-                      (u64i)(uintptr_t)otic_members, (u64i)(uintptr_t)otic_member,
-                      (u64i)(uintptr_t)otic_spell, (u64i)(uintptr_t)otic_offset, (u64i)(uintptr_t)otic_open,
-                      (u64i)(uintptr_t)otic_text, (u64i)(uintptr_t)otic_num, (u64i)(uintptr_t)otic_real,
-                      (u64i)(uintptr_t)otic_done};
+  const u64i fns[HOOKS] = {(u64i)(uintptr_t)otic_arch, (u64i)(uintptr_t)otic_emit, (u64i)(uintptr_t)otic_type,
+                           (u64i)(uintptr_t)otic_members, (u64i)(uintptr_t)otic_member,
+                           (u64i)(uintptr_t)otic_spell, (u64i)(uintptr_t)otic_offset,
+                           (u64i)(uintptr_t)otic_open, (u64i)(uintptr_t)otic_q_text, (u64i)(uintptr_t)otic_q_str,
+                           (u64i)(uintptr_t)otic_q_num, (u64i)(uintptr_t)otic_q_snum,
+                           (u64i)(uintptr_t)otic_q_real, (u64i)(uintptr_t)otic_q_sreal, (u64i)(uintptr_t)otic_done};
   live = self;
   quoting = 0; // a # that failed inside a quote left it open
-  if(!self->api) return;
-  for(u32i i = 0; i < sizeof fns / sizeof *fns; i++) {
-    const meta* x = hget(self, self->api, names[i], slen(names[i]))->data;
-    if(!x || x->kind != glob) fail("link \"otic\": no hook %s\n", names[i]);
-    u32i  off = (u32i)x->slot;
+  for(u32i i = 0; i < HOOKS; i++) {
+    s32i  at = self->taps[i]->slot;
+    if(at == UNLAID) continue;
+    u32i  off = (u32i)at;
     copy(off & ZERO? bss + (off & ~ZERO): data + off, &fns[i], sizeof *fns);
+  }
+}
+
+// the root's declarations of otic_root, in unit 0 after the builtin types
+void  ground(mode* self) {
+  u64i  n = sizeof otic_root - 1;
+  unit* u = self->units;
+  file* code = self->heap(NULL, sizeof(file) + n);
+  code->body = code->head;
+  code->tail = code->head + n;
+  copy(code->head, otic_root, n + 1);
+  u->code = code, u->line = 1;
+  self->unit = 0;
+  for(chop(self); home(self)->talk.kind; ) decl(self);
+  self->heap(code, 0);
+  u->code = NULL;
+  for(u32i i = 0; i < HOOKS; i++) {
+    item* s = hget(self, 0, hook_names[i], slen(hook_names[i]));
+    self->taps[i] = s->data;
+    if(i >= hk_open) s->data = NULL; // #{ } calls it by its hook only
+  }
+}
+
+// a rollback to bss bytes takes back the hooks laid past them
+void  unlay(mode* self, u64i bss) {
+  for(u32i i = 0; i < HOOKS; i++) {
+    meta* h = self->taps[i];
+    if(h->slot != UNLAID && ((u32i)h->slot & ~ZERO) >= bss) h->slot = UNLAID;
   }
 }
 
 // link "name": name.ot, name.o, libname.a beside this source, then name.ot and
 // name.o in mode.dirs, then libname.a in mode.dirs. Static only: a shared
-// library is named by load. "otic" is the compiler's own source (otic_api)
+// library is named by load
 void  haul(mode* self, item* s) {
-  if(s->size == 6 && alike(s->name, "\"otic\"", 6)) {
-    if(self->api) return;
-    u64i  n = sizeof otic_api - 1;
-    file* code = self->heap(NULL, sizeof(file) + n);
-    code->body = code->head;
-    code->tail = code->head + n;
-    copy(code->head, otic_api, n + 1);
-    char* path = self->heap(NULL, 7);
-    copy((byte*)path, "<otic>", 7);
-    self->api = self->unitn;
-    if(!land(self, path, 6, code, un_code)) fail("link \"otic\": cannot join it\n");
-    return;
-  }
   for(u32i e = 0; e < 3; e++) if(nigh(self, s, NULL, e)) return;
   for(u32i i = 0; i < self->dirn; i++)
     for(u32i e = 0; e < 2; e++) if(nigh(self, s, self->dirs[i], e)) return;

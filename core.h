@@ -376,9 +376,15 @@ typedef struct { char* path; file* data; } sidecar;
 // library, or a relocatable object (static)
 enum { lb_none, lb_dyno, lb_relo };
 
+// the compiler's functions for # code, by their hook (mode.taps): those a
+// source names, then the ones #{ } calls
+enum { hk_arch, hk_emit, hk_type, hk_members, hk_member, hk_spell, hk_offset,
+       hk_open, hk_text, hk_str, hk_num, hk_snum, hk_real, hk_sreal, hk_done, HOOKS };
+#define UNLAID (-1) // the slot of a hook no source has named
+
 // what a # gave: the bits of a number or a real (per type), or a code or
 // char* result's bytes in text, NUL terminated, from mode.heap; and the machine code
-// its run emitted (link "otic"), bytes of it in code, from mode.heap
+// its run emitted (emit), bytes of it in code, from mode.heap
 typedef struct { meta* type; u64i bits; char* text; u32i size; byte* code; u32i bytes; } yield;
 
 struct mode {
@@ -423,8 +429,9 @@ struct mode {
   yield* tape;     // the results of the # run so far, in order
   u32i  tapen, tapec, taken; // taken: the next one a replay takes
   bool  shaded;    // the tape is the mirror's
-  u32i  api;       // the unit of link "otic", 0 when not linked
-  chip  aim;       // the cpu arch() of link "otic" gives: the target's, in its mirror too
+  meta* taps[HOOKS]; // the compiler's functions for # code: builtin function
+                 // pointers, in bss once a source names them (UNLAID until then)
+  chip  aim;       // the cpu arch() gives: the target's, in its mirror too
   blob  spit;      // the machine code the running # emitted
   bool  hidden;    // the locals of the function are out of scope for a #
   u32i  layers;    // sources a # generated, one inside another
@@ -529,6 +536,8 @@ u32i  ask(mode*, meta* x);
 void  reel(mode*);
 meta* rack(mode*, item* s);
 void  rig(mode*, byte* data, byte* bss);
+void  ground(mode*);
+void  unlay(mode*, u64i bss);
 u32i  port(mode*, meta* x);
 void  tie(mode*, u32i from, bool last);
 u32i  sign(mode*, meta*** out);

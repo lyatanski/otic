@@ -389,12 +389,12 @@ spec("core") {
       check(compiles("int main() { return 2 + 3 * 4; }"));
       check(has("open, move 14, done") && calls[op_calc] == 0);
     }
-    it("folds sizeof and characters like numbers") {
-      check(compiles("int main() { return sizeof(long) * 'a' + sizeof \"ab\"; }"));
+    it("folds #sizeof and characters like numbers") {
+      check(compiles("int main() { return #sizeof(long) * 'a' + #sizeof \"ab\"; }"));
       check(has("open, move 779, done") && calls[op_calc] == 0);
     }
-    it("drops the code of the operand of sizeof") {
-      check(compiles("int g; int main() { return sizeof(g = 7); }"));
+    it("drops the code of the operand of #sizeof") {
+      check(compiles("int g; int main() { return #sizeof(g = 7); }"));
       check(has("fill 4, move 4, done")); // emitted, then trimmed from text
       check(self.main[0] == op_open && self.main[1] == op_move && self.main[2] == op_done);
     }
@@ -650,7 +650,7 @@ spec("core") {
     }
     it("takes a & after a condition or a keyword as an address") {
       regs = 2;
-      check(compiles("int main() { int a = 1; a += 2; a += 3; when(a) &a; return sizeof &a; }"));
+      check(compiles("int main() { int a = 1; a += 2; a += 3; when(a) &a; return #sizeof &a; }"));
       check(calls[op_rop] == 0);
       regs = 2;
       check(compiles("int main() { int a = 1; a += 2; a += 3; when(a) a += 1; else &a; return &a != 0; }"));
