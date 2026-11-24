@@ -173,6 +173,7 @@ static u32i pe32_dsyms(const mode* self, byte* rec, byte* str, u32i at, u32i ida
 }
 
 file* pe32_pack(mode* self) {
+  if(self->stand.on) fail("a freestanding image (base) is ELF only, so far: -f elfs\n");
   if(!self->main) fail("a library is not supported in this form yet\n");
   const u64i org = 0x140000000;
   const u32i salign = 0x1000, falign = 0x200;

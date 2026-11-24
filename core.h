@@ -379,6 +379,7 @@ enum { lb_none, lb_dyno, lb_relo };
 // the compiler's functions for # code, by their hook (mode.taps): those a
 // source names, then the ones #{ } calls
 enum { hk_arch, hk_emit, hk_type, hk_members, hk_member, hk_spell, hk_offset,
+       hk_base, hk_entry, hk_flat, hk_head,
        hk_open, hk_text, hk_str, hk_num, hk_snum, hk_real, hk_sreal, hk_done, HOOKS };
 #define UNLAID (-1) // the slot of a hook no source has named
 
@@ -386,6 +387,18 @@ enum { hk_arch, hk_emit, hk_type, hk_members, hk_member, hk_spell, hk_offset,
 // char* result's bytes in text, NUL terminated, from mode.heap; and the machine code
 // its run emitted (emit), bytes of it in code, from mode.heap
 typedef struct { meta* type; u64i bits; char* text; u32i size; byte* code; u32i bytes; } yield;
+
+// a freestanding image, as # code sets it (base, entry, flat, head): no
+// loader, C library or imports. At base its head, then text, whose boot stub
+// jumps to the entry; data and bss on the pages after. A cross build takes
+// the host mode's
+typedef struct {
+  bool  on;    // base was given
+  bool  flat;  // the bytes from base to the end of data, no headers
+  u64i  base;
+  char* entry; // the function the image starts at, NULL for main
+  blob  head;  // bytes before text
+} stand;
 
 struct mode {
   const char* name;
@@ -486,6 +499,7 @@ struct mode {
   const char* cwd; // the directory the paths are relative to, NULL when unknown
   dbg*  dbg;       // what the pass recorded for it
   sidecar side[2]; // the files the form wants written beside its image
+  stand stand;     // a freestanding image when stand.on
   u32i  sides;
 };
 

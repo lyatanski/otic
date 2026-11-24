@@ -69,6 +69,10 @@ static const char otic_root[] =
   "int   (*member)(long t, int i, field* f);\n"
   "char* (*spell)(long t);\n"
   "int   (*offset)(char* t, char* name);\n"
+  "void  (*base)(long at);\n"
+  "void  (*entry)(char* name);\n"
+  "void  (*flat)();\n"
+  "void  (*head)(byte* b, int n);\n"
   "void  (*q_open)();\n"
   "void  (*q_text)(char* s);\n"
   "void  (*q_str)(char* s);\n"
@@ -79,6 +83,7 @@ static const char otic_root[] =
   "code  (*q_done)();\n";
 
 static char* const hook_names[HOOKS] = {"arch", "emit", "type", "members", "member", "spell", "offset",
+  "base", "entry", "flat", "head",
   "q_open", "q_text", "q_str", "q_num", "q_snum", "q_real", "q_sreal", "q_done"};
 
 static mode* live; // the mode whose # runs
@@ -193,6 +198,32 @@ static s32i  otic_offset(const char* type, const char* name) {
   flaw(live, "offset: no member '%s' in '%s'\n", name, type);
 }
 
+// the freestanding image (mode.stand): each set once, or again the same, as
+// a # that runs again does
+static void  otic_base(u64i at) {
+  stand* s = &live->stand;
+  if(at & 0xfff) flaw(live, "base: %#llx is not 4 KB aligned\n", (unsigned long long)at);
+  if(s->on && s->base != at) flaw(live, "base: %#llx, after %#llx\n", (unsigned long long)at, (unsigned long long)s->base);
+  s->on = 1, s->base = at;
+}
+
+static void  otic_entry(const char* name) {
+  stand* s = &live->stand;
+  u64i  n = name? slen(name): 0;
+  if(!n) flaw(live, "entry: no name\n");
+  if(!s->entry) { s->entry = live->heap(NULL, n + 1); copy((byte*)s->entry, name, n + 1); }
+  else if(slen(s->entry) != n || !alike(s->entry, name, n)) flaw(live, "entry: '%s', after '%s'\n", name, s->entry);
+}
+
+static void  otic_flat(void) { live->stand.flat = 1; }
+
+static void  otic_head(const byte* b, s32i n) {
+  blob* h = &live->stand.head;
+  if(n <= 0 || n > 1 << 16) flaw(live, "head: %d bytes\n", n);
+  if(!h->p) { h->p = live->heap(NULL, (u32i)n); copy(h->p, b, (u32i)n); h->n = h->c = (u32i)n; }
+  else if(h->n != (u32i)n || !alike(h->p, b, (u32i)n)) flaw(live, "head: other bytes than before\n");
+}
+
 // the text of the #{ } being built, one per quote in a splice of another
 #define QUOTES 16
 static blob  quotes[QUOTES];
@@ -264,6 +295,8 @@ void  rig(mode* self, byte* data, byte* bss) {
   const u64i fns[HOOKS] = {(u64i)(uintptr_t)otic_arch, (u64i)(uintptr_t)otic_emit, (u64i)(uintptr_t)otic_type,
                            (u64i)(uintptr_t)otic_members, (u64i)(uintptr_t)otic_member,
                            (u64i)(uintptr_t)otic_spell, (u64i)(uintptr_t)otic_offset,
+                           (u64i)(uintptr_t)otic_base, (u64i)(uintptr_t)otic_entry,
+                           (u64i)(uintptr_t)otic_flat, (u64i)(uintptr_t)otic_head,
                            (u64i)(uintptr_t)otic_open, (u64i)(uintptr_t)otic_q_text, (u64i)(uintptr_t)otic_q_str,
                            (u64i)(uintptr_t)otic_q_num, (u64i)(uintptr_t)otic_q_snum,
                            (u64i)(uintptr_t)otic_q_real, (u64i)(uintptr_t)otic_q_sreal, (u64i)(uintptr_t)otic_done};

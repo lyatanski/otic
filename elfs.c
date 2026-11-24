@@ -691,7 +691,95 @@ static file* elfs_dyno(mode* self) {
   return out;
 }
 
+// a freestanding image (mode.stand) at fixed addresses, so dock leaves nothing
+// to relocate: its head at base, text after it, data and bss from the next
+// page. An executable in two segments, its public names in a symbol table; or
+// flat, the bytes from base to the end of data
+static file* elfs_lone(mode* self) {
+  static char names[] = "\0.text\0.data\0.bss\0.symtab\0.strtab\0.shstrtab";
+  enum { s_text = 1, s_data, s_bss, s_sym, s_str, s_names, s_all };
+  const stand* s = &self->stand;
+  const u64i step = self->core.gap(self), page = step > 0x1000? step: 0x1000;
+  const u64i code = self->text->body - self->text->head;
+  const u64i size = self->data->body - self->data->head;
+  const u64i base = s->base, org = (base + s->head.n + step - 1) & ~(step - 1);
+  const u64i dat  = (org + code + page - 1) & ~(page - 1);
+  const u64i bss  = dat + ((size + step - 1) & ~(step - 1)), end = bss + self->zero;
+  if(self->debug) fail("-g is not supported for a freestanding image yet\n");
+  if(base % page) fail("base: %#llx is not aligned to %#llx\n", (unsigned long long)base, (unsigned long long)page);
+  if(end < base || base + 0x1000 < base) fail("the image does not fit above its base %#llx\n", (unsigned long long)base);
+  self->core.dock(self, dat - org, org);
+
+  const u64i load = dat + size - base; // the image's bytes, as loaded
+  if(s->flat) {
+    file* out = zero(self, sizeof(file) + load);
+    out->body = out->tail = out->head + load;
+    copy(out->head, s->head.p, s->head.n);
+    copy(out->head + (org - base), self->text->head, code);
+    copy(out->head + (dat - base), self->data->head, size);
+    return out;
+  }
+
+  elfs_syms t = {.strs = 1};
+  t.ndef = self->core.sign(self, &t.defs);
+  for(u32i i = 0; i < t.ndef; i++) t.strs += t.defs[i]->name->size + 1;
+  const u32i nph = size || self->zero? 2: 1, nsym = 1 + t.ndef;
+  const u64i top = page; // base's offset in the file, past the headers
+  sh64 sh[s_all] = {{0},
+    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_EXECINSTR, .addr = org, .offset = top + (org - base),
+     .size = code, .align = step},
+    {.type = SHT_PROGBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = dat, .offset = top + (dat - base),
+     .size = size, .align = step},
+    {.type = SHT_NOBITS, .flags = SHF_ALLOC | SHF_WRITE, .addr = bss, .offset = top + load,
+     .size = self->zero, .align = step},
+    {.type = SHT_SYMTAB, .offset = (top + load + 7) & -8, .size = nsym * sizeof(sym64), .link = s_str,
+     .info = 1, .align = 8, .entsize = sizeof(sym64)},
+    {.type = SHT_STRTAB, .size = t.strs, .align = 1},
+    {.type = SHT_STRTAB, .size = sizeof names, .align = 1},
+  };
+  sh[s_str].offset = sh[s_sym].offset + sh[s_sym].size;
+  sh[s_names].offset = sh[s_str].offset + t.strs;
+  for(u32i i = 1; i < s_all; i++) sh[i].name = elfs_nth(names, i - 1);
+  const u64i shoff = (sh[s_names].offset + sizeof names + 7) & -8, all = shoff + sizeof sh;
+
+  elfs_id id = {.seal = {0x7f, 'E', 'L', 'F'}, .bits = eb_cl64, .data = ed_2lsb, .issue = ev_curr};
+  eh64 eh = {
+    .type   = et_exec,
+    .arch   = elfs_mach[self->arch.cpu],
+    .issue  = ev_curr,
+    .entry  = org + (self->hail - self->text->head),
+    .phoff  = sizeof(id) + sizeof(eh),
+    .shoff  = shoff,
+    .ehsize = sizeof(id) + sizeof(eh),
+    .phsize = sizeof(ph64),
+    .phnum  = (u16i)nph,
+    .shsize = sizeof(sh64),
+    .shnum  = s_all,
+    .shstr  = s_names,
+  };
+  const ph64 ph[] = {
+    {.type = PT_LOAD, .flags = 5, .offset = top, .vaddr = base, .paddr = base,
+     .filesz = org + code - base, .memsz = org + code - base, .align = page},
+    {.type = PT_LOAD, .flags = 6, .offset = top + (dat - base), .vaddr = dat, .paddr = dat,
+     .filesz = size, .memsz = end - dat, .align = page},
+  };
+  file* out = zero(self, sizeof(file) + all);
+  byte* o = out->head;
+  out->body = out->tail = o + all;
+  copy(copy(copy(o, &id, sizeof(id)), &eh, sizeof(eh)), ph, nph * sizeof(ph64));
+  copy(o + top, s->head.p, s->head.n);
+  copy(o + sh[s_text].offset, self->text->head, code);
+  copy(o + sh[s_data].offset, self->data->head, size);
+  elfs_syms_put(self, &t, (sym64*)(o + sh[s_sym].offset) + 1, o + sh[s_str].offset, 0, org, dat, bss,
+                s_text, s_data, s_bss);
+  copy(o + sh[s_names].offset, names, sizeof names);
+  copy(o + shoff, sh, sizeof sh);
+  self->heap(t.defs, 0);
+  return out;
+}
+
 file* elfs_pack(mode* self) {
+  if(self->stand.on) return elfs_lone(self);
   if(self->debug && !self->main && self->libs == lb_relo) fail("-g is not supported for an object yet\n");
   return !self->main && self->libs == lb_relo? elfs_relo(self): elfs_dyno(self);
 }

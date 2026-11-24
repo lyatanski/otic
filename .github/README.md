@@ -183,6 +183,10 @@ int main() { return get_x() + #sizeof table / 4 + get_y() % 100; }  // 113
 | `int member(long t, int i, field* f)` | fills `f` with member i of struct t; 0 past the end |
 | `char* spell(long t)` | t as a declaration spells it: `"long[2][3]"`, `"vec*"`, `"int (*)(int, long)"` |
 | `int offset(char* t, char* name)` | the offset of member name in the struct named t, an error when there is none |
+| `void base(long at)` | makes the image freestanding, loaded at `at` (4 KB aligned): see below |
+| `void entry(char* name)` | the function a freestanding image starts at (default: `main`) |
+| `void flat()` | writes a freestanding image as its bytes from `base` to the end of data, no headers |
+| `void head(byte* b, int n)` | places n bytes at `base`, before the code (a Multiboot2 header) |
 
 | `field` member | |
 | --- | --- |
@@ -193,6 +197,31 @@ int main() { return get_x() + #sizeof table / 4 + get_y() % 100; }  // 113
 | `int size` | bytes (a bit-field: of its unit) |
 | `int count` | elements of an array, else 1 |
 | `int bit`, `int width` | a bit-field's first bit in its unit, and its width |
+
+- a freestanding image, for an OS kernel or bare metal: once a `#` calls
+  `base`, `-e` writes an ELF executable (`ET_EXEC`) with no loader, dynamic
+  section, C library or boot stub. At `base` come the `head` bytes, then the
+  code, which starts with a jump to the entry; data and bss follow on the
+  next page, all at fixed addresses, so nothing is relocated when it loads.
+  The ELF is entered at the entry and names the public functions and globals
+  in a symbol table. `flat()` writes the same bytes from `base` to the end of
+  data with no headers, for a loader that jumps to the first byte (bss is not
+  in the file, so the image clears it). Each setting may be given again only
+  with the same value. An entry may come from an object or an archive
+  (`link "boot";`, assembly that sets up a stack). Segments load at their
+  virtual addresses (physical ones equal them), so a loader that enters in
+  32-bit mode or loads by physical address, as GRUB does a Multiboot2 image,
+  needs an assembly entry and a `base` below 4 GB. There is no running it
+  in memory, no `-s`, no `load`, no `-g` yet, and it is ELF only, so far
+  (`-f elfs` on other hosts)
+
+```c
+void kernel() { base(0xffffffff80000000); entry("kmain"); }  // as Limine loads it:
+#kernel()                                                     // 64-bit, a stack, paging
+
+long ticks;
+void kmain() { while(1) ticks += 1; }
+```
 
 ```c
 void cli() { static byte c[1] = {0xfa}; emit(c, 1); }   // x86-64

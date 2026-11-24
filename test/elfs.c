@@ -507,6 +507,76 @@ spec("elfs") {
     }
   }
 
+  context("freestanding image") { // stand: at base, no loader; sections text, data, bss, symtab, strtab
+    file* out;
+    ph64* ph;
+    it("writes an executable whose text starts at base, entered at its entry") {
+      library(cpu_ia64, lb_dyno);
+      ours.zero = 0;
+      ours.data->body = ours.data->head; // no data, no bss: one segment
+      ours.stand = (stand){.on = 1, .base = 0xffffffff80000000};
+      ours.hail = ours.text->head + 6;
+      check((out = packed(elfs)) && HEAD(out)->type == et_exec && HEAD(out)->phnum == 1);
+      ph = (ph64*)(HEAD(out) + 1);
+      check(ph[0].type == PT_LOAD && ph[0].flags == 5 && ph[0].offset == 0x1000);
+      check(ph[0].vaddr == 0xffffffff80000000 && ph[0].paddr == ph[0].vaddr && ph[0].filesz == 11);
+      check(HEAD(out)->entry == 0xffffffff80000006 && SECT(out)[1].addr == ph[0].vaddr);
+      check(bytes(out->head + 0x1000, "b8 07 00 00 00 c3 e8"));
+    }
+    it("puts its head first, text after it aligned, and docks at their addresses") {
+      library(cpu_arm8, lb_dyno);
+      ours.stand = (stand){.on = 1, .base = 0x80000, .head = {(byte*)"\xd6\x50\x52\xe8", 4, 4}};
+      ours.hail = ours.text->head;
+      check((out = packed(elfs)) && HEAD(out)->arch == em_arm8);
+      sh64* sh = SECT(out);
+      check(bytes(out->head + 0x1000, "d6 50 52 e8 00 00") && sh[1].addr == 0x80010 && sh[1].offset == 0x1010);
+      check(HEAD(out)->entry == 0x80010 && docked.calls == 1 && docked.org == 0x80010);
+      check(docked.at == sh[2].addr - sh[1].addr);
+    }
+    it("keeps data and bss writable on the next page") {
+      library(cpu_ia64, lb_dyno);
+      ours.stand = (stand){.on = 1, .base = 0x400000};
+      ours.hail = ours.text->head;
+      check((out = packed(elfs)) && HEAD(out)->phnum == 2);
+      ph = (ph64*)(HEAD(out) + 1);
+      sh64* sh = SECT(out);
+      check(ph[1].flags == 6 && ph[1].vaddr == 0x401000 && ph[1].offset == 0x2000 && sh[2].addr == 0x401000);
+      check(ph[1].filesz == 16 && ph[1].memsz == 16 + 32 && sh[3].addr == 0x401010 && sh[3].size == 32);
+      check(bytes(out->head + sh[2].offset, "61 62 63 64"));
+    }
+    it("names its public definitions at their addresses") {
+      library(cpu_ia64, lb_dyno);
+      ours.stand = (stand){.on = 1, .base = 0x400000};
+      ours.hail = ours.text->head;
+      check((out = packed(elfs)) && SECT(out)[4].type == SHT_SYMTAB && SECT(out)[4].info == 1);
+      sym64* s = sym_(out, 4, 1);
+      check(!strcmp(name_(out, 4, s), "lf") && s[0].value == 0x400000 && s[0].shidx == 1);
+      check(s[1].value == 0x401004 && s[1].shidx == 2 && s[2].value == 0x401018 && s[2].shidx == 3);
+    }
+    it("writes only the bytes from base to the end of data when flat") {
+      library(cpu_ia64, lb_dyno);
+      ours.stand = (stand){.on = 1, .flat = 1, .base = 0x400000, .head = {(byte*)"\x01\x02", 2, 2}};
+      ours.hail = ours.text->head;
+      check((out = packed(elfs)) && out->body - out->head == 0x1000 + 16);
+      check(bytes(out->head, "01 02 00") && bytes(out->head + 16, "b8 07 00 00 00 c3"));
+      check(bytes(out->head + 0x1000, "61 62 63 64") && docked.org == 0x400010);
+    }
+    it("refuses debug information, and a base off the alignment an object asks") {
+      library(cpu_ia64, lb_dyno);
+      ours.stand = (stand){.on = 1, .base = 0x401000};
+      ours.debug = 1;
+      check(!packed(elfs) && strstr(said, "-g is not supported for a freestanding image"));
+      ours.debug = 0;
+      ours.most = 0x2000;
+      check(!packed(elfs) && strstr(said, "is not aligned to 0x2000"));
+    }
+    it("refuses an image past the top of memory") {
+      library(cpu_ia64, lb_dyno);
+      ours.stand = (stand){.on = 1, .base = 0xfffffffffffff000};
+      check(!packed(elfs) && strstr(said, "does not fit"));
+    }
+  }
+
   context("take refuses") {
     it("what is not an object") {
       start(cpu_ia64, "", 0, "", 0, 0);

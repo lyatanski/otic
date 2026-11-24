@@ -35,10 +35,12 @@
 #define TAG "arm8"
 #define pick(x86, arm) (arm)
 #define WRITE "64"
+#define EXIT "93"
 #else
 #define TAG "x86"
 #define pick(x86, arm) (x86)
 #define WRITE "1"
+#define EXIT "60"
 #endif
 #ifdef __linux__ // syscall() numbers are Linux's
 #define linux_it it
@@ -2167,6 +2169,69 @@ spec(TAG) {
       twins("struct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return #off(); }\n",
             "struct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return 16; }\n",
             pick("arm8", "ia64"), "elfs");
+    }
+  }
+
+  context("freestanding image") { // # code sets base, entry, flat and head: no loader, written with -e
+    linux_it("runs at its base as a Linux program, from its entry, its addresses fixed")
+      only(42, "void k() { base(0x400000); entry(\"start\"); }\n#k()\n"
+               "int g = 5;\nint* p = &g;\nint z[100];\n"
+               "void start() { z[3] = 30; syscall(" EXIT ", *p + z[3] + 7); }\n");
+    linux_it("starts at main without an entry")
+      only(7, "void k() { base(0x10000000); }\n#k()\nint main() { syscall(" EXIT ", 7); return 0; }\n");
+    elfs_it("pulls its entry from an archive") {
+      archive("libfs-start", (char*[]){
+        "long kmain(void);\nvoid start(void) { long r = kmain();\n"
+        "  __asm__ volatile(\"syscall\" :: \"a\"(60L), \"D\"(r)); for(;;); }\n", NULL});
+      only(9, "link \"fs-start\";\nvoid k() { base(0x400000); entry(\"start\"); }\n#k()\nlong kmain() { return 9; }\n");
+    }
+    it("writes a higher-half executable for each cpu, its head at base, in a cross build too") {
+      static char x[1 << 16];
+      const char* src = "void k() { static byte mb[4] = {0xd6, 0x50, 0x52, 0xe8};\n"
+                        "  base(0xffffffff80000000); entry(\"kmain\"); head(mb, 4); }\n#k()\n"
+                        "long ticks;\nvoid kmain() { while(1) ticks += 1; }\n";
+      for(int a = 0; a < 2; a++) {
+        long n = built(src, "fs-a", a? "arm8": "ia64", "elfs", x, sizeof x);
+        unsigned short type, machine;
+        unsigned long long entry, vaddr;
+        memcpy(&type, x + 16, 2); memcpy(&machine, x + 18, 2); memcpy(&entry, x + 24, 8); memcpy(&vaddr, x + 64 + 16, 8);
+        check(n > 0x1000 && type == 2 && machine == (a? 183: 62) && vaddr == 0xffffffff80000000ull);
+        check(entry > vaddr && entry < vaddr + 0x1000 && !memcmp(x + 0x1000, "\xd6\x50\x52\xe8", 4));
+      }
+    }
+    it("starts a flat image with a jump to its entry: the executable's bytes from base, for each cpu") {
+      static char x[1 << 16], y[1 << 16];
+      const char* fmt = "void k(int f) { base(0x80000); entry(\"kmain\"); when(f) flat(); }\n#k(%d)\n"
+                        "int v = 3;\nvoid kmain() { while(1) v += 1; }\n";
+      char a[256], b[256];
+      snprintf(a, sizeof a, fmt, 1);
+      snprintf(b, sizeof b, fmt, 0);
+      for(int c = 0; c < 2; c++) {
+        long n = built(a, "fs-a", c? "arm8": "ia64", "elfs", x, sizeof x);
+        long m = built(b, "fs-b", c? "arm8": "ia64", "elfs", y, sizeof y);
+        check(n > 0x1000 && m >= 0x1000 + n && !memcmp(x, y + 0x1000, (size_t)n));
+        check(c? ((unsigned char)x[3] & 0xfc) == 0x14: (unsigned char)x[0] == 0xe9);
+      }
+    }
+    it("rejects entry, flat and head without a base") {
+      expect(bad, "void k() { entry(\"main\"); }\n#k()\nint main() { return 0; }\n");
+      expect(bad, "void k() { flat(); }\n#k()\nint main() { return 0; }\n");
+    }
+    it("rejects a base given twice, a base off 4 KB, and a second entry") {
+      expect(bad, "void k() { base(0x400000); base(0x500000); }\n#k()\nint main() { return 0; }\n");
+      expect(bad, "void k() { base(0x400800); }\n#k()\nint main() { return 0; }\n");
+      expect(bad, "void k() { base(0x400000); entry(\"main\"); entry(\"f\"); }\n#k()\nvoid f() {}\nint main() { return 0; }\n");
+    }
+    it("takes the same settings again, as a # that runs again does")
+      only(3, "void k() { base(0x400000); base(0x400000); entry(\"main\"); entry(\"main\"); }\n#k()\n#k()\n"
+              "int main() { syscall(" EXIT ", 3); return 0; }\n");
+    it("rejects running, an import, a missing entry, an object and other forms") {
+      static char x[1 << 12];
+      expect(bad, "load \"c\";\nint puts(char* s);\nvoid k() { base(0x400000); }\n#k()\nint main() { puts(\"x\"); return 0; }\n");
+      expect(bad, "void k() { base(0x400000); entry(\"nope\"); }\n#k()\nint main() { return 0; }\n");
+      check(library("fs-o", "void k() { base(0x400000); }\n#k()\nint f() { return 0; }\n", 1, "", "int main(void) { return 0; }\n") == bad);
+      check(!built("void k() { base(0x400000); }\n#k()\nint main() { return 0; }\n", "fs-a", "ia64", "mach", x, sizeof x));
+      check(!built("void k() { base(0x400000); }\n#k()\nint main() { return 0; }\n", "fs-a", "ia64", "pe32", x, sizeof x));
     }
   }
 

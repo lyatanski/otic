@@ -678,6 +678,7 @@ static file* mach_dyno(mode* self) {
 }
 
 file* mach_pack(mode* self) {
+  if(self->stand.on) fail("a freestanding image (base) is ELF only, so far: -f elfs\n");
   if(self->debug && !self->main && self->libs == lb_relo) fail("-g is not supported for an object yet\n");
   if(self->main) return mach_exec(self);
   return self->libs == lb_relo? mach_relo(self): mach_dyno(self);

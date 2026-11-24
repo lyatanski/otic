@@ -1049,6 +1049,7 @@ yield sharp(mode* self) {
     if(!self->shaded) {
       mode* h = self->mirror(self);
       self->tape = h->tape, self->tapen = h->tapen, self->tapec = h->tapec;
+      self->stand = h->stand; // what its # runs set for the image
       self->shaded = 1;
     }
     if(self->taken == self->tapen || !self->tape[self->taken].text != !text)
@@ -2698,8 +2699,8 @@ void  lead(mode* self, const char* name, file* code, byte kind) {
   if(!land(self, path, size, code, kind)) fail("cannot open: %s\n", name);
 }
 
-// the front end: the start of a linked C library, else NULL. A mirror stops
-// here: it has no image to write
+// the front end: the start of a linked C library (of a freestanding image:
+// its entry), else NULL. A mirror stops here: it has no image to write
 meta* build(mode* self) {
   self->frame = ~0u;
   self->core = (core){dock, gap, lay, hget, find, heft, ask, sign, knit, dwarf_pack};
@@ -2730,8 +2731,10 @@ meta* build(mode* self) {
   reel(self);
 
   // a C library linked in starts first: its __libc_start_main calls main and
-  // exits through the library, which flushes stdio
-  meta* libc = find(self, 0, sget(self, "__libc_start_main"));
+  // exits through the library, which flushes stdio. A freestanding image
+  // starts at its entry instead, which nothing may call
+  char* enter = self->stand.entry? self->stand.entry: "main";
+  meta* libc = find(self, 0, self->stand.on? hget(self, self->unit, enter, slen(enter)): sget(self, "__libc_start_main"));
   if(libc && libc->kind == pend) {
     ask(self, libc);
     reel(self);
@@ -2749,12 +2752,31 @@ meta* build(mode* self) {
   return libc;
 }
 
+// a freestanding image (mode.stand), written, never run: entered at its entry
+// func (build pulled it), to which the boot stub's place jumps. Nothing is
+// imported
+static void  alone(mode* self, const meta* func) {
+  const char* name = self->stand.entry? self->stand.entry: "main";
+  if(!self->libs) fail("cannot run a freestanding image (base), write it with -e\n");
+  if(self->libs == lb_relo) fail("an object has no base: a freestanding image is written without -s\n");
+  if(self->impn) fail("a freestanding image cannot import '%.*s'\n", nick(self->imps[0]->name));
+  if(!func || func->kind != call || !func->addr) fail("no function '%s' to enter the image at\n", name);
+  self->main = self->boot = func->addr;
+  self->hail = func->hail? func->hail: func->addr;
+  byte* end = self->text->body;
+  self->text->body = self->text->head;
+  emit(self, loop, self->hail);
+  self->text->body = end;
+}
+
 void  make(mode* self) {
   meta* libc = build(self);
-
-  // without main, a library: the boot stub stays unused at the start of text
   meta* func = find(self, 0, sget(self, "main"));
-  if(func && func->kind == call && func->addr) {
+
+  if(self->stand.on) alone(self, libc);  // build gave the entry
+  else if(self->stand.entry || self->stand.flat || self->stand.head.p) fail("entry, flat and head need a base\n");
+  // without main, a library: the boot stub stays unused at the start of text
+  else if(func && func->kind == call && func->addr) {
     self->main = self->boot = func->addr;
     self->hail = func->hail? func->hail: func->addr;
     if(libc && libc->kind == call && libc->ext && libc->addr) {
