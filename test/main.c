@@ -2222,7 +2222,12 @@ spec(TAG) {
       expect(bad, "void k() { base(0x400800); }\n#k()\nint main() { return 0; }\n");
       expect(bad, "void k() { base(0x400000); entry(\"main\"); entry(\"f\"); }\n#k()\nvoid f() {}\nint main() { return 0; }\n");
     }
-    it("takes the same settings again, as a # that runs again does")
+    it("takes the same settings again, as a # that runs again does") { // ELF on any host, through a mirror off Linux
+      static char x[1 << 16];
+      check(built("void k() { base(0x400000); base(0x400000); entry(\"main\"); entry(\"main\"); }\n#k()\n#k()\n"
+                  "int main() { return 3; }\n", "fs-a", pick("ia64", "arm8"), "elfs", x, sizeof x) > 0x1000);
+    }
+    linux_it("runs an image whose settings were given again")
       only(3, "void k() { base(0x400000); base(0x400000); entry(\"main\"); entry(\"main\"); }\n#k()\n#k()\n"
               "int main() { syscall(" EXIT ", 3); return 0; }\n");
     it("rejects running, an import, a missing entry, an object and other forms") {
