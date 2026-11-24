@@ -166,11 +166,22 @@ int main() { return get_x() + sizeof table / 4 + get_y() % 100; }   // 113
   the `#` is, in a function. They run there as a call would: they may change
   the registers a C function may, and keep the others and the stack. A program
   that calls these itself crashes: they are for `#` code only
+- it also walks the structs declared before the `#`: `type("vec")` is a
+  type's handle (0 when there is none), `members(t)` counts a struct's
+  members (-1 for no struct), `member(t, i, &f)` fills a `field` with member
+  i (`name`, `type`, `kind` as `'i' 'r' 'p' 'f' 'a' 's' 'b'`, `offset`,
+  `size`, `count`, `bit`, `width`; 0 past the end), `spell(t)` spells a type
+  (`"long[2][3]"`, `"int (*)(int, long)"`) and `offset("vec", "y")` is
+  offsetof
 
 ```c
 link "otic";
 void cli() { static byte c[1] = {0xfa}; emit(c, 1); }   // x86-64
 void halt() { while(1) { #cli(); } }
+
+struct regs { long rax; long rsp; long rip; };
+int sp() { return offset("regs", "rsp"); }
+int at_sp = #sp();                                     // 8
 ```
 
 ## Tests

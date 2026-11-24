@@ -2052,6 +2052,42 @@ spec(TAG) {
       expect(bad, MOV42 "#mov42();\nint main() { return 0; }\n");
     it("is linked once")
       expect(pick(3, 4), "link \"otic\";\nlink \"otic\";\nint a() { return arch() + 3; }\nint main() { return #a(); }\n");
+    it("iterates the members of a struct")
+      expect(3024 % 256, "link \"otic\";\nstruct s { int a; real b; char* c; };\n"
+                         "int walk() {\n  long t = type(\"s\");\n  field f;\n  int i = 0, k = members(t) * 1000;\n"
+                         "  while(member(t, i, &f)) { k += f.offset; when(f.kind != \"irp\"[i] || f.size != 4 + 4 * (i > 0)) return 0; i += 1; }\n"
+                         "  when(member(t, 3, &f)) return 0;\n  return k;\n}\n"
+                         "int main() { return #walk() % 256; }\n");
+    it("flattens a struct member without a declarator and walks into a nested struct")
+      expect(83, "link \"otic\";\nstruct b { int id; };\nstruct s { b; struct { nu16 a; byte c; } in; int k : 3, j : 5; };\n"
+                 "int walk() {\n  long t = type(\"s\");\n  field f, g;\n"
+                 "  when(members(t) != 4 || !member(t, 1, &f) || f.kind != 's' || members(f.type) != 2) return 0;\n"
+                 "  when(!member(f.type, 1, &g) || g.offset != 2 || !member(t, 3, &f) || f.kind != 'b') return 1;\n"
+                 "  return f.offset * 10 + f.bit - 3 * f.width + 15;\n}\n"
+                 "int main() { return #walk(); }\n");
+    it("spells member types")
+      here(1, "link \"otic\";\nload \"c\";\nint strcmp(char* a, char* b);\n"
+              "struct s { char n[16]; long m[2][3]; int (*cb)(int, long, real); s* next; struct { int a; } in; };\n"
+              "int same(int i, char* want) { long t = type(\"s\"); field f; member(t, i, &f); return !strcmp(spell(f.type), want); }\n"
+              "int all() { return same(0, \"char[16]\") && same(1, \"long[2][3]\") && same(2, \"int (*)(int, long, real)\")\n"
+              "  && same(3, \"s*\") && same(4, \"struct\") && !strcmp(spell(type(\"real\")), \"real\"); }\n"
+              "int main() { return #all(); }\n");
+    it("gives offsetof as a constant")
+      expect(29, "link \"otic\";\nstruct r { long a; int b; long c; byte d[5]; };\n"
+                 "int off(char* m) { return offset(\"r\", m); }\nbyte t[#off(\"c\") + #off(\"d\") - #off(\"b\") - 3];\n"
+                 "int main() { return sizeof t; }\n");
+    it("gives 0 for no type and -1 for a type that is no struct")
+      expect(9, "link \"otic\";\nint v;\nint f() { return (type(\"nosuch\") == 0) + (type(\"v\") == 0) * 2 + (members(type(\"int\")) == -1) * 6; }\n"
+                "int main() { return #f(); }\n");
+    it("rejects an offset of no member")
+      expect(bad, "link \"otic\";\nstruct r { long a; };\nint off() { return offset(\"r\", \"b\"); }\nint main() { return #off(); }\n");
+    it("sees only the structs declared before the #")
+      expect(0, "link \"otic\";\nint later() { return type(\"r\") != 0; }\nint x = #later();\nstruct r { long a; };\nint main() { return x; }\n");
+    it("gives the same offsets in a cross build") {
+      twins("link \"otic\";\nstruct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return #off(); }\n",
+            "link \"otic\";\nstruct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return 16; }\n",
+            pick("arm8", "ia64"), "elfs");
+    }
   }
 
   context("errors") {

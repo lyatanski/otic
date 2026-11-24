@@ -50,8 +50,26 @@ static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
 // The source below calls them through hooks that rig points at the compiler
 // before each # runs; a program keeps them null, so only # code may call them
 static const char otic_api[] =
-  "static int  (*otic_arch)(void);\n"
-  "static void (*otic_emit)(byte* code, int n);\n"
+  "// a member of a struct, as member gives it\n"
+  "struct field {\n"
+  "  char* name;\n"
+  "  long  type;   // its type, for members and spell (a bit-field's: its integer type)\n"
+  "  int   kind;   // 'i' integer, 'r' real, 'p' pointer, 'f' function pointer,\n"
+  "                // 'a' array, 's' struct, 'b' bit-field\n"
+  "  int   offset; // bytes from the start of the struct (a bit-field: of its unit)\n"
+  "  int   size;   // bytes (a bit-field: of its unit)\n"
+  "  int   count;  // elements of an array, else 1\n"
+  "  int   bit;    // a bit-field: its first bit in the unit, and its width\n"
+  "  int   width;\n"
+  "};\n"
+  "\n"
+  "static int   (*otic_arch)(void);\n"
+  "static void  (*otic_emit)(byte* code, int n);\n"
+  "static long  (*otic_type)(char* name);\n"
+  "static int   (*otic_members)(long t);\n"
+  "static int   (*otic_member)(long t, int i, field* f);\n"
+  "static char* (*otic_spell)(long t);\n"
+  "static int   (*otic_offset)(char* type, char* name);\n"
   "\n"
   "// the cpu the source is compiled for, also when a # runs on another one:\n"
   "// 0 ia64 (x86-64), 1 arm8 (AArch64)\n"
@@ -60,7 +78,26 @@ static const char otic_api[] =
   "// n bytes of machine code for that cpu, placed where the # running this is,\n"
   "// in a function. They run there as a call would: they may change the\n"
   "// registers a C function may, and keep the others and the stack\n"
-  "void emit(byte* code, int n) { otic_emit(code, n); }\n";
+  "void emit(byte* code, int n) { otic_emit(code, n); }\n"
+  "\n"
+  "// a type declared before the # by its name (a struct, int, real...), 0 when\n"
+  "// there is none. A type is good for the # run that got it\n"
+  "long type(char* name) { return otic_type(name); }\n"
+  "\n"
+  "// the members of struct t, in order (those of a struct member without a\n"
+  "// declarator among them); -1 when t is no struct\n"
+  "int  members(long t) { return otic_members(t); }\n"
+  "\n"
+  "// member i of struct t in f: 0, f as it was, past the end\n"
+  "int  member(long t, int i, field* f) { return otic_member(t, i, f); }\n"
+  "\n"
+  "// t as a declaration spells it: \"int\", \"vec*\", \"char[16]\", \"int (*)(int, long)\"\n"
+  "// (a function pointer's parameters by kind: int, long or a pointer, real)\n"
+  "char* spell(long t) { return otic_spell(t); }\n"
+  "\n"
+  "// the offset of member name in struct type, as offsetof; an error when\n"
+  "// there is none\n"
+  "int  offset(char* type, char* name) { return otic_offset(type, name); }\n";
 
 static mode* live; // the mode whose # runs
 
@@ -75,11 +112,112 @@ static void  otic_emit(const byte* code, int n) {
   b->n += (u32i)n;
 }
 
+// field of the otic source, as C lays it out
+typedef struct { const char* name; u64i type; s32i kind, offset, size, count, bit, width; } field;
+
+// a string for # code, good for the whole run: n bytes and a NUL interned in
+// the root's table, where no name of a source has a NUL
+static char* otic_word(const char* s, u64i n) {
+  char  b[1024];
+  if(n >= sizeof b) n = sizeof b - 1;
+  copy((byte*)b, s, n);
+  b[n] = 0;
+  return hget(live, 0, b, n + 1)->name;
+}
+
+// what name means where the # is, a type, else NULL
+static meta* otic_find(const char* name) {
+  u64i  n = slen(name), k = clue(name, n);
+  item* s = hsee(home(live), name, n, k);
+  meta* x = s? find(live, live->unit, s): (s = hsee(&live->names, name, n, k))? find(live, 0, s): NULL;
+  return x && (x->kind == base || x->kind == list)? x: NULL;
+}
+
+static u64i  otic_type(const char* name) { return (u64i)(uintptr_t)otic_find(name); }
+
+static s32i  otic_members(u64i t) {
+  const meta* x = (const meta*)(uintptr_t)t;
+  if(!x || x->kind != list) return -1;
+  s32i  n = 0;
+  for(const meta* m = x->type; m; m = m->hide) n++;
+  return n;
+}
+
+static s32i  otic_member(u64i t, s32i i, field* f) {
+  const meta* x = (const meta*)(uintptr_t)t;
+  if(!x || x->kind != list || i < 0) return 0;
+  const meta* m = x->type;
+  while(m && i--) m = m->hide;
+  if(!m) return 0;
+  const meta* y = m->type;
+  *f = (field){.name = otic_word(m->name->name, m->name->size), .type = (u64i)(uintptr_t)y,
+               .offset = m->slot, .size = (s32i)y->size, .count = 1};
+  switch(y->kind) {
+    case refs: f->kind = y->type->kind == proc? 'f': 'p'; break;
+    case many: f->kind = 'a'; f->count = y->type->size? (s32i)(y->size / y->type->size): 0; break;
+    case list: f->kind = 's'; break;
+    case bitf: f->kind = 'b'; f->type = (u64i)(uintptr_t)y->type; f->bit = y->slot; f->width = y->longs; break;
+    default:   f->kind = y == live->breal? 'r': 'i';
+  }
+  return 1;
+}
+
+static u32i  otic_say(char* b, u32i n, const char* s, u64i size) {
+  if(n + size >= 1024) fail("spell: a type too long\n");
+  copy((byte*)b + n, s, size);
+  return n + (u32i)size;
+}
+
+// t as a declaration spells it, at b + n: its end
+static u32i  otic_spelt(const meta* t, char* b, u32i n) {
+  if(t->kind == bitf) return otic_spelt(t->type, b, n);
+  if(t->kind == refs && t->type->kind == proc) { // result (*)(kinds)
+    const meta* f = t->type;
+    n = otic_say(b, otic_spelt(f->type, b, n), " (*)(", 5);
+    for(s32i i = 0; i < f->slot && i < 6; i++) {
+      if(i) n = otic_say(b, n, ", ", 2);
+      n = f->reals >> i & 1? otic_say(b, n, "real", 4): f->longs >> i & 1? otic_say(b, n, "long", 4): otic_say(b, n, "int", 3);
+    }
+    if(f->more) n = f->slot? otic_say(b, n, ", ...", 5): otic_say(b, n, "...", 3);
+    return otic_say(b, n, ")", 1);
+  }
+  if(t->kind == refs) return otic_say(b, otic_spelt(t->type, b, n), "*", 1);
+  if(t->kind == many) { // the element, then each count, outermost first
+    const meta* e = t;
+    while(e->kind == many) e = e->type;
+    n = otic_spelt(e, b, n);
+    for(const meta* a = t; a->kind == many; a = a->type) {
+      char d[24];
+      n = otic_say(b, n, d, (u64i)snprintf(d, sizeof d, "[%llu]", (unsigned long long)(a->type->size? a->size / a->type->size: 0)));
+    }
+    return n;
+  }
+  return t->name? otic_say(b, n, t->name->name, t->name->size): otic_say(b, n, "struct", 6);
+}
+
+static char* otic_spell(u64i t) {
+  char  b[1024];
+  if(!t) return otic_word("", 0);
+  return otic_word(b, otic_spelt((const meta*)(uintptr_t)t, b, 0));
+}
+
+static s32i  otic_offset(const char* type, const char* name) {
+  const meta* x = otic_find(type);
+  if(!x || x->kind != list) flaw(live, "offset: no struct '%s' here\n", type);
+  u64i  n = slen(name);
+  for(const meta* m = x->type; m; m = m->hide)
+    if(m->name->size == n && alike(m->name->name, name, n)) return m->slot;
+  flaw(live, "offset: no member '%s' in '%s'\n", name, type);
+}
+
 // points the hooks of link "otic" at the compiler, in an image of the code
 // with data at data and bss at bss, for the # of self about to run
 void  rig(mode* self, byte* data, byte* bss) {
-  static char* const names[] = {"otic_arch", "otic_emit"};
-  const u64i fns[] = {(u64i)(uintptr_t)otic_arch, (u64i)(uintptr_t)otic_emit};
+  static char* const names[] = {"otic_arch", "otic_emit", "otic_type", "otic_members", "otic_member",
+                                "otic_spell", "otic_offset"};
+  const u64i fns[] = {(u64i)(uintptr_t)otic_arch, (u64i)(uintptr_t)otic_emit, (u64i)(uintptr_t)otic_type,
+                      (u64i)(uintptr_t)otic_members, (u64i)(uintptr_t)otic_member,
+                      (u64i)(uintptr_t)otic_spell, (u64i)(uintptr_t)otic_offset};
   live = self;
   if(!self->api) return;
   for(u32i i = 0; i < sizeof fns / sizeof *fns; i++) {
