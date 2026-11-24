@@ -80,6 +80,7 @@ int main() {
 ```
 
 - types: `void`, `bool`, `byte`, `char`, `nu16`, `int`, `long`, `real`,
+  `code` (source text: a `char*` by name, which `#` declares),
   pointers, arrays, structs (anonymous, bit-fields)
 - a struct member without a declarator gives its members to the outer struct
   at its own offset and alignment, which allows basic inheritance:
@@ -131,7 +132,8 @@ int main() {
 - a `#!` first line is skipped, so a source can be a script: `#!/usr/bin/env otic`
 - `#f(args)` calls `f` while compiling, as host code, and takes its result in
   place of the source: an int, long or real is a constant (an array size, an
-  initializer, a condition), a `char*` at the top level is source text,
+  initializer, a condition), a `char*` is a string (as a literal would be,
+  also starting a global), and `code` at the top level is source text,
   compiled there as declarations. The arguments are constants or other `#`
   calls; a local of the enclosing function is out of scope. Globals keep what
   earlier `#` calls did to them while compiling, and the program starts with
@@ -146,7 +148,7 @@ int sprintf(char* out, char* fmt, ...);
 int fib(int n) { when (n < 2) return n; return fib(n - 1) + fib(n - 2); }
 
 // returns "int get_<name>() { return <value>; }"
-char* getter(char* name, int value) {
+code getter(char* name, int value) {
   static char text[256];     // outlives the call, as the result must
   sprintf(text, "int get_%s() { return %d; }", name, value);
   return text;
@@ -182,6 +184,38 @@ void halt() { while(1) { #cli(); } }
 struct regs { long rax; long rsp; long rip; };
 int sp() { return offset("regs", "rsp"); }
 int at_sp = #sp();                                     // 8
+```
+
+- `#{ code }` is `code`, for a `#` to give as source: its text as
+  written, with `@name` (and its members, `@f.name`, `@p->k`, no spaces) or
+  `@(expression)` spliced in, also inside string literals (escaped there);
+  `@@` is an `@`. A `char*` or `code` splices as it is, an integer or a real as its
+  literal; next to a name it pastes onto it (`show_@name`). The code must lex
+  as otic and its braces match. It needs `link "otic"`, and runs at compile
+  time only: the loop that builds a quote stays outside it
+
+```c
+link "otic";
+load "c";
+int printf(char* fmt, ...);
+
+struct vec { int x; int y; };
+
+code shower(char* name) {
+  long  t = type(name);
+  field f;
+  int   i = 0;
+  code  body = #{};
+  while(member(t, i, &f)) {
+    body = #{ @body printf("@f.name = %d\n", p->@f.name); };
+    i += 1;
+  }
+  return #{ void show_@name(@name* p) { @body } };
+}
+
+#shower("vec")                                         // declares show_vec
+
+int main() { vec v = {1, 2}; show_vec(&v); return 0; }
 ```
 
 ## Tests

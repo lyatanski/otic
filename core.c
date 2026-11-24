@@ -430,17 +430,27 @@ oper  star(mode* self, oper x) {
   return (oper){.kind = vmem, .type = t};
 }
 
-meta* mate(mode* self, meta* type) {
+oper  onto(mode* self, oper x, const meta* m);
+
+// the member of type named name
+meta* limb(mode* self, const meta* type, const item* name) {
   meta* m = type && type->kind == list? type->type: NULL;
-  if(!m || home(self)->talk.kind != ttag) flaw(self, "expected a member\n");
-  for(; m && !akin(m->name, home(self)->talk.hash); m = m->hide); // m->name may be another unit's
-  if(!m) flaw(self, "no member '%.*s'\n", nick(home(self)->talk.hash));
+  if(!m || !name) flaw(self, "expected a member\n");
+  for(; m && !akin(m->name, name); m = m->hide); // m->name may be another unit's
+  if(!m) flaw(self, "no member '%.*s'\n", nick(name));
+  return m;
+}
+
+meta* mate(mode* self, meta* type) {
+  meta* m = limb(self, type, home(self)->talk.kind == ttag? home(self)->talk.hash: NULL);
   chop(self);
   return m;
 }
 
-oper  memb(mode* self, oper x) {
-  meta* m = mate(self, x.type);
+oper  memb(mode* self, oper x) { return onto(self, x, mate(self, x.type)); }
+
+// member m of x
+oper  onto(mode* self, oper x, const meta* m) {
   if(x.kind != vmem) x.ival += m->slot;
   else if(m->slot) emit(self, calc, '+' | WIDE, 1, m->slot);
   x.type = m->type;
@@ -879,7 +889,7 @@ oper  atom(mode* self);
 
 meta* ilk(mode* self) {
   meta* x = home(self)->talk.kind == ttag? find(self, self->unit, home(self)->talk.hash): NULL;
-  return x && (x->kind == base || x->kind == list)? x: NULL;
+  return x && (x->kind == base || x->kind == list || x == tget(self, code))? x: NULL;
 }
 
 #define type(self) (same(self, "struct") || ilk(self))
@@ -946,7 +956,7 @@ yield sharp(mode* self) {
   if(self->frame != ~0u && func == self->func)
     flaw(self, "'%.*s' is being compiled, define it before running it\n", nick(name));
   meta* t = func->type;
-  bool  text = t->kind == refs && t->type == tget(self, char), real = flot(self, t);
+  bool  text = t == tget(self, code) || (t->kind == refs && t->type == tget(self, char)), real = flot(self, t);
   if(!text && t->kind != base) flaw(self, "'%.*s' gives a result that cannot be used at compile time\n", nick(name));
   if(self->dry) { // typing an overloaded call's arguments: not run
     for(u32i d = 1; d; chop(self)) {
@@ -1029,6 +1039,118 @@ yield sharp(mode* self) {
   return r;
 }
 
+// the variable var that name means
+oper  nomen(mode* self, const item* name, const meta* var) {
+  if(!var || (var->kind != data && var->kind != glob))
+    flaw(self, "no variable '%.*s'\n", nick(name));
+  if(var->ext) { spot(self, port(self, (meta*)var)); emit(self, read, 8); return (oper){.kind = vmem, .type = var->type}; }
+  return (oper){.kind = var->kind != data? vglo: var->slot < 0? vloc: vreg, .ival = var->slot, .type = var->type};
+}
+
+// #{ }: a call of the otic source's function fn (link "otic"), its argument
+// in acc when arg
+static oper  qcall(mode* self, const char* fn, bool arg) {
+  item* name = hget(self, self->api, (char*)fn, slen(fn));
+  self->dials++;
+  if(self->leaf) self->spoil = 1;
+  if(arg) emit(self, pass, 0);
+  byte* at = self->text->body;
+  emit(self, dial);
+  bind(self, at, name, name->data, arg, 0);
+  return acc(((meta*)name->data)->type);
+}
+
+// the source from up to to, as text of the quote
+static void  qtext(mode* self, const byte* from, const byte* to) {
+  if(from >= to) return;
+  u32i  n = (u32i)(to - from), off = lay(self, n + 1, 0, 1);
+  copy(self->data->head + off, from, n);
+  self->data->head[off + n] = 0;
+  spot(self, off);
+  qcall(self, "otic_q_text", 1);
+}
+
+// x as text of the quote: a char* as it is (in a string literal: escaped),
+// a number as its literal
+static void  qput(mode* self, oper x, bool str) {
+  const meta* t = x.type->kind == bitf? x.type->type: x.type;
+  bool  real = flot(self, t);
+  bool  text = (t->kind == refs || t->kind == many) && t->type == tget(self, char);
+  if(!real && !text && (t->kind != base || !t->size)) flaw(self, "@ takes a char*, an integer or a real\n");
+  x = load(self, x); // a real's bits, as otic passes it
+  if(!real && !text && !wide(x.type)) sext(self, x);
+  qcall(self, real? (str? "otic_q_sreal": "otic_q_real"): text? (str? "otic_q_str": "otic_q_text"): str? "otic_q_snum": "otic_q_num", 1);
+}
+
+#define LEAD(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z') || (c) == '_')
+
+// what follows an @, the source just past it: (expression), or a name and
+// its members by . and -> without spaces. Lexes nothing past it
+static oper  qsplice(mode* self) {
+  unit* u = home(self);
+  const byte* c = u->code->body;
+  if(*c == '(') {
+    chop(self); chop(self);
+    oper x = expr(self, 1);
+    if(u->talk.kind != ')') flaw(self, "expected ) to end @(\n");
+    return x;
+  }
+  if(!LEAD(*c)) flaw(self, "expected a name or ( after @ (@@ is an @)\n");
+  chop(self);
+  oper  x = nomen(self, u->talk.hash, find(self, self->unit, u->talk.hash));
+  for(;;) {
+    c = u->code->body;
+    bool arrow = c[0] == '-' && c[1] == '>';
+    if(!(c[0] == '.' && LEAD(c[1])) && !(arrow && LEAD(c[2]))) return x;
+    chop(self);
+    if(arrow) x = star(self, x);
+    chop(self);
+    x = onto(self, x, limb(self, x.type, u->talk.hash));
+  }
+}
+
+// #{ code }, after # at {: the code as a char*, built when it runs (while
+// compiling, by link "otic"): its source as written, and each @ splice's
+// value, also in a string literal; @@ is an @
+oper  quasi(mode* self) {
+  if(!self->api) flaw(self, "#{ } needs link \"otic\"\n");
+  if(self->frame == ~0u) flaw(self, "#{ } goes in a function\n");
+  unit* u = home(self);
+  u64i  line = u->line;
+  qcall(self, "otic_q_open", 0);
+  const byte* seg = u->code->body; // its text from here is not given yet
+  for(u32i depth = 1;;) {
+    chop(self);
+    u32i k = u->talk.kind;
+    if(!k) { u->line = line; flaw(self, "#{ without its }\n"); }
+    if(k == '{') depth++;
+    if(k == '}' && !--depth) { qtext(self, seg, u->code->body - 1); break; }
+    if(k == '@') {
+      const byte* at = u->code->body - 1;
+      if(*u->code->body == '@') { qtext(self, seg, at + 1); chop(self); seg = u->code->body; continue; }
+      qtext(self, seg, at);
+      qput(self, qsplice(self), 0);
+      seg = u->code->body;
+    }
+    if(k == '"') {
+      const byte* end = u->code->body;
+      for(const byte* c = end - u->talk.hash->size + 1; c < end - 1; c++) {
+        if(*c == '\\') { c++; continue; }
+        if(*c != '@') continue;
+        qtext(self, seg, c);
+        if(c[1] == '@') { seg = ++c; continue; }
+        u->code->body = (byte*)c + 1;
+        qput(self, qsplice(self), 1);
+        seg = u->code->body;
+        c = seg - 1;
+      }
+      u->code->body = (byte*)end;
+    }
+  }
+  chop(self);
+  return qcall(self, "otic_q_done", 0);
+}
+
 // v, an int constant when it fits, else a long read from data. Its slot is
 // mode.big, so an initializer or a unary operator still takes it as a constant
 oper  huge(mode* self, s64i v) {
@@ -1069,16 +1191,20 @@ oper  atom(mode* self) {
       if(!value && twin(self, '(')) { x = dial(self, name); break; }
       if(var && var->kind == call) { x = hand(self, name, var); break; }
       if(var && var->kind == pend) { x = (oper){.kind = vglo, .ival = WANT | ask(self, var), .type = tget(self, int)}; break; }
-      if(!var || (var->kind != data && var->kind != glob))
-        flaw(self, "no variable '%.*s'\n", nick(name));
-      x = (oper){.kind = var->kind != data? vglo: var->slot < 0? vloc: vreg, .ival = var->slot, .type = var->type};
-      if(var->ext) { spot(self, port(self, var)); emit(self, read, 8); x = (oper){.kind = vmem, .type = var->type}; }
+      x = nomen(self, name, var);
       break;
     }
     case '#': {
       chop(self);
+      if(home(self)->talk.kind == '{') return quasi(self);
       yield y = sharp(self);
-      if(y.text) flaw(self, "source text from # goes where a declaration does, not in an expression\n");
+      if(y.text && y.type == tget(self, code)) flaw(self, "code from # goes where a declaration does, not in an expression\n");
+      if(y.text) { // a char*: its string, as a literal
+        u32i off = lay(self, y.size + 1, 0, 8);
+        copy(self->data->head + off, y.text, y.size + 1);
+        spot(self, off);
+        return acc(href(self, tget(self, char)));
+      }
       if(flot(self, y.type)) { double v; copy((byte*)&v, &y.bits, sizeof v); return flo(self, v); }
       if(self->dry && span(y.type) == 8) return (oper){.kind = vnum, .type = tget(self, long)};
       s64i  v = (s64i)y.bits;
@@ -1653,6 +1779,21 @@ void  aim(mode* self, tier* n) {
   n->i = i.ival;
 }
 
+// at #: whether a function giving a char* follows, past the # then, else
+// put back
+static bool  chars(mode* self) {
+  unit* u = home(self);
+  byte* at = u->code->body;
+  u64i  line = u->line;
+  word  talk = u->talk;
+  chop(self);
+  const meta* f = u->talk.kind == ttag? find(self, self->unit, u->talk.hash): NULL;
+  const meta* t = f && f->kind == call? f->type: NULL;
+  if(t && t != tget(self, code) && t->kind == refs && t->type == tget(self, char)) return 1;
+  u->code->body = at, u->line = line, u->talk = talk;
+  return 0;
+}
+
 // a global pointer starting at &global, a global array, a string or a
 // function, +- constants: a hook, which dock patches and the form relocates.
 // 0, nothing parsed, when the initializer is no address
@@ -1669,6 +1810,11 @@ bool  cite(mode* self, s32i slot) {
     aim = (seat){NULL, lay(self, (u32i)(name = home(self)->talk.hash)->size - 1, 0, 8)};
     quote(name, self->data->head + aim.off);
     chop(self);
+  }
+  else if(!amp && c == '#' && chars(self)) { // the string a char* # gives
+    yield y = sharp(self);
+    aim = (seat){NULL, lay(self, y.size + 1, 0, 8)};
+    copy(self->data->head + aim.off, y.text, y.size + 1);
   }
   else if(m && m->kind == call) {
     chop(self);
@@ -1996,7 +2142,7 @@ void  sift(mode* self, u32i top, bool lone) {
         u32i  w = 1u << 3 * (loops < 3? loops: 3);
         if(open && (it == loop || it == when)) { cond = 1; if(it == loop && loops < 8) end[loops++] = depth, hold = 0, prec = 0; }
         const meta* m = !it->pick && !cond && it != ret && (p == '{' || p == '}' || p == ';')? find(self, self->unit, it): NULL;
-        if(m && (m->kind == base || m->kind == list)) { of = m; arm = 1; stars = 0; lvl = 0; break; }
+        if(m && (m->kind == base || m->kind == list || m == tget(self, code))) { of = m; arm = 1; stars = 0; lvl = 0; break; }
         if(arm || ref || deep) { // declared, or its address is taken
           if(!(ok = sown(c, &n, it))) goto full;
           if(ref || deep) it->pick |= NEVER;
@@ -2027,6 +2173,7 @@ void  sift(mode* self, u32i top, bool lone) {
         break;
       case ']': lvl--, arm = 0; break;
       case '{':
+        if(p == '#') { ok = 0; goto full; } // #{ }: code as text, its names no locals; the frame keeps them all
         depth++, lvl++, arm = 0;
         lits |= p == ')';
         if(loops) hold = 0, prec = 0;
@@ -2276,10 +2423,14 @@ void  feed(mode* self, u32i at);
 
 void  decl(mode* self) {
   u64i  born = home(self)->line; // where a function or global starts, for the debugger
-  // the source a char* # gives is declarations, as a unit of their own
+  // the code a # gives is declarations, as a unit of their own
   if(twin(self, '#')) {
     u64i  line = home(self)->line;
     yield y = sharp(self);
+    if(y.text && y.type != tget(self, code)) {
+      home(self)->line = line;
+      flaw(self, "a char* from # is a string: give code to declare source\n");
+    }
     if(y.text) {
       if(self->layers == 64) flaw(self, "generated source nests too deep\n");
       file* code = self->heap(NULL, sizeof(file) + y.size);
@@ -2519,6 +2670,8 @@ meta* build(mode* self) {
   crux(self, int,  .size=4);
   crux(self, long, .size=8);
   crux(self, real, .size=8);
+  seed(self, .kind = refs, .name = sget(self, "code"), .type = tget(self, char), .size = 8); // source text: a char* by name
+  self->bcode = pin(self->pile, self->top - 1);
 
   lead(self, self->name, NULL, un_code);
   reel(self);

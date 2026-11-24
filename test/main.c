@@ -356,6 +356,12 @@ static bool alikes(const char* a, const char* b, const char* arch, const char* f
   "    when(r != 3 && r != 4 && r != 5) { when(r >= 8) b(0x41); b(0xb8 + (r & 7)); w(0x7777); }\n" \
   "    r += 1;\n  }\n  else while(r < 18) { w(0xd28eeee0 + r); r += 1; }\n  emit(buf, n);\n}\n"
 
+// a quote that sums a struct's members, each times its place
+#define QSUM "link \"otic\";\nstruct v { int a; int b; long c; };\n" \
+  "code summer(char* name) {\n  long t = type(name);\n  field f;\n  int i = 0;\n  code body = #{};\n" \
+  "  while(member(t, i, &f)) { body = #{ @body s += p->@f.name * @(i + 1); }; i += 1; }\n" \
+  "  return #{ long sum_@name(@name* p) { long s = 0; @body return s; } };\n}\n"
+
 // whether the n bytes at x hold the m at y
 static bool holds(const char* x, long n, const char* y, long m) {
   for(long i = 0; i + m <= n; i++) if(!memcmp(x + i, y, (size_t)m)) return 1;
@@ -1973,11 +1979,11 @@ spec(TAG) {
       here(9, "load \"c\";\nint abs(int a);\nint main() { return #abs(0 - 9); }\n");
     it("reads a string argument")
       here(11, "load \"c\";\nint strlen(char* s);\nint main() { char* t = \"abc\"; return #strlen(\"hello world\") + strlen(t) - 3; }\n");
-    it("takes declarations from a char* result")
-      expect(42, "char* gen() { return \"int forty() { return 40; } struct pt { int x; int y; }; int base = 2;\"; }\n"
+    it("takes declarations from a code result")
+      expect(42, "code gen() { return \"int forty() { return 40; } struct pt { int x; int y; }; int base = 2;\"; }\n"
                  "#gen()\nint main() { pt p = {1, 1}; return forty() + p.x + p.y + base - 2; }\n");
     it("takes source that runs a call itself")
-      expect(7, "int seven() { return 7; }\nchar* gen() { return \"int f() { return #seven(); }\"; }\n"
+      expect(7, "int seven() { return 7; }\ncode gen() { return \"int f() { return #seven(); }\"; }\n"
                 "#gen();\nint main() { return f(); }\n");
     it("rejects a local in the arguments")
       expect(bad, "int add(int a, int b) { return a + b; }\nint main() { int x = 1; return #add(x, 2); }\n");
@@ -1987,12 +1993,28 @@ spec(TAG) {
       expect(bad, "int main() { return #later(1); }\nint later(int a) { return a; }\n");
     it("rejects a pointer result")
       expect(bad, "int* p() { return 0; }\nint main() { return #p(); }\n");
-    it("rejects source text in an expression")
-      expect(bad, "char* s() { return \"1\"; }\nint main() { return #s(); }\n");
+    it("rejects code in an expression")
+      expect(bad, "code s() { return \"1\"; }\nint main() { return #s(); }\n");
+    it("gives a string for a char* result, in a global and in a function")
+      here(1, "load \"c\";\nint strcmp(char* a, char* b);\nchar* hi(int n) { static char b[8]; b[0] = 'a' + n; return b; }\n"
+              "char* g = #hi(1);\nchar* h = #hi(2) + 1;\n"
+              "int main() { char* l = #hi(3); return !strcmp(g, \"b\") && !strcmp(l, \"d\") && !*h; }\n");
+    it("gives the string of a char* result in a cross build") {
+      twins("char* hi() { static char b[4] = {'h', 'i'}; return b; }\nchar* g = #hi();\nint main() { char* l = #hi(); return l[0] + g[1]; }\n",
+            "char* hi() { static char b[4] = {'h', 'i'}; return b; }\nchar* g = \"hi\";\nint main() { char* l = \"hi\"; return l[0] + g[1]; }\n",
+            pick("arm8", "ia64"), "elfs");
+    }
+    it("rejects a char* result where declarations go")
+      expect(bad, "char* gen() { return \"int f() { return 1; }\"; }\n#gen()\nint main() { return 0; }\n");
+    it("takes a char* buffer as code")
+      expect(5, "code gen() { static char b[32]; b[0] = 'i'; b[1] = 'n'; b[2] = 't'; b[3] = ' '; b[4] = 'k'; b[5] = '='; b[6] = '5'; b[7] = ';'; return b; }\n"
+                "#gen()\nint main() { return k; }\n");
+    it("lets a source name a variable code")
+      expect(3, "int code = 3;\nint main() { return code; }\n");
     it("rejects a syntax error in generated source")
-      expect(bad, "char* gen() { return \"int f( {\"; }\n#gen()\nint main() { return 0; }\n");
+      expect(bad, "code gen() { return \"int f( {\"; }\n#gen()\nint main() { return 0; }\n");
     it("rejects source that generates itself without end")
-      expect(bad, "char* again() { return \"#again()\"; }\n#again()\nint main() { return 0; }\n");
+      expect(bad, "code again() { return \"#again()\"; }\n#again()\nint main() { return 0; }\n");
     it("rejects what is no call")
       expect(bad, "int main() { return #1; }\n");
     it("rejects a function name without a call")
@@ -2009,9 +2031,9 @@ spec(TAG) {
             "int sq(int x) { return x * x; }\nint main() { return 25; }\n", "arm8", "mach");
     }
     it("takes generated source and global state in a cross build") {
-      twins("char* gen() { return \"int forty() { return 40; }\"; }\n#gen()\n"
+      twins("code gen() { return \"int forty() { return 40; }\"; }\n#gen()\n"
             "int count;\nint next() { count += 1; return count; }\nint main() { return forty() + #next() + #next(); }\n",
-            "char* gen() { return \"int forty() { return 40; }\"; }\nint forty() { return 40; }\n"
+            "code gen() { return \"int forty() { return 40; }\"; }\nint forty() { return 40; }\n"
             "int count;\nint next() { count += 1; return count; }\nint main() { return forty() + 1 + 2; }\n",
             pick("arm8", "ia64"), "elfs");
     }
@@ -2083,6 +2105,35 @@ spec(TAG) {
       expect(bad, "link \"otic\";\nstruct r { long a; };\nint off() { return offset(\"r\", \"b\"); }\nint main() { return #off(); }\n");
     it("sees only the structs declared before the #")
       expect(0, "link \"otic\";\nint later() { return type(\"r\") != 0; }\nint x = #later();\nstruct r { long a; };\nint main() { return x; }\n");
+    it("builds declarations from a quote with splices")
+      expect(14, QSUM "#summer(\"v\")\nint main() { v x = {1, 2, 3}; return sum_v(&x); }\n");
+    it("splices into string literals, escaped, and takes @@ as @")
+      here(1, "link \"otic\";\nload \"c\";\nint strcmp(char* a, char* b);\n"
+              "code gen() { int n = 7; char* odd = \"q\\\"b\\\\c\";\n"
+              "  return #{ char* s = \"@n-@(n * 2) a@@b @odd\"; char* t = \"@(#{ x + y })\"; }; }\n#gen()\n"
+              "int main() { return !strcmp(s, \"7-14 a@b q\\\"b\\\\c\") && !strcmp(t, \" x + y \"); }\n");
+    it("splices numbers below 0 and reals as literals")
+      expect(19, "link \"otic\";\ncode gen() { int n = 0 - 5; real x = 2.0; real y = 0.0 - 0.5;\n"
+                 "  return #{ int a = 10-@n; real r = @x; real s = 4-@y; }; }\n#gen()\n"
+                 "int main() { return a + r * 2 + s * 0; }\n");
+    it("splices members through . and -> and pastes onto a name")
+      expect(42, "link \"otic\";\nstruct nm { char* id; int k; };\n"
+                 "code gen(nm* q) { return #{ int fn_@q->id() { return @q->k; } }; }\n"
+                 "code top() { nm m = {\"x\", 42}; return gen(&m); }\n#top()\nint main() { return fn_x(); }\n");
+    it("rejects a quote without link \"otic\"")
+      expect(bad, "code g() { return #{ int x; }; }\nint main() { return 0; }\n");
+    it("rejects a quote without its }")
+      expect(bad, "link \"otic\";\nint main() { return 0; }\ncode g() { return #{ int x;\n");
+    it("rejects an @ of no variable, a space after @, and a pointer to no char") {
+      expect(bad, "link \"otic\";\ncode g() { return #{ int @nosuch; }; }\nint main() { return 0; }\n");
+      expect(bad, "link \"otic\";\ncode g() { char* n = \"a\"; return #{ int @ n; }; }\nint main() { return 0; }\n");
+      expect(bad, "link \"otic\";\ncode g() { int* p = 0; return #{ int @p; }; }\nint main() { return 0; }\n");
+    }
+    it("builds the same from a quote in a cross build") {
+      twins(QSUM "#summer(\"v\")\nint main() { v x = {1, 2, 3}; return sum_v(&x); }\n",
+            QSUM "long sum_v(v* p) { long s = 0; s += p->a * 1; s += p->b * 2; s += p->c * 3; return s; }\n"
+            "int main() { v x = {1, 2, 3}; return sum_v(&x); }\n", pick("arm8", "ia64"), "elfs");
+    }
     it("gives the same offsets in a cross build") {
       twins("link \"otic\";\nstruct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return #off(); }\n",
             "link \"otic\";\nstruct r { byte a; long b; nu16 c; };\nint off() { return offset(\"r\", \"c\"); }\nint main() { return 16; }\n",

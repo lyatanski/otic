@@ -70,6 +70,11 @@ static const char otic_api[] =
   "static int   (*otic_member)(long t, int i, field* f);\n"
   "static char* (*otic_spell)(long t);\n"
   "static int   (*otic_offset)(char* type, char* name);\n"
+  "static void  (*otic_open)(void);\n"
+  "static void  (*otic_text)(char* s, int str);\n"
+  "static void  (*otic_num)(long n, int str);\n"
+  "static void  (*otic_real)(real r, int str);\n"
+  "static code  (*otic_done)(void);\n"
   "\n"
   "// the cpu the source is compiled for, also when a # runs on another one:\n"
   "// 0 ia64 (x86-64), 1 arm8 (AArch64)\n"
@@ -97,7 +102,17 @@ static const char otic_api[] =
   "\n"
   "// the offset of member name in struct type, as offsetof; an error when\n"
   "// there is none\n"
-  "int  offset(char* type, char* name) { return otic_offset(type, name); }\n";
+  "int  offset(char* type, char* name) { return otic_offset(type, name); }\n"
+  "\n"
+  "// what #{ } compiles to: its text, and each @ value in code or in a string\n"
+  "static void  otic_q_open() { otic_open(); }\n"
+  "static void  otic_q_text(char* s) { otic_text(s, 0); }\n"
+  "static void  otic_q_str(char* s) { otic_text(s, 1); }\n"
+  "static void  otic_q_num(long n) { otic_num(n, 0); }\n"
+  "static void  otic_q_snum(long n) { otic_num(n, 1); }\n"
+  "static void  otic_q_real(real r) { otic_real(r, 0); }\n"
+  "static void  otic_q_sreal(real r) { otic_real(r, 1); }\n"
+  "static code  otic_q_done() { return otic_done(); }\n";
 
 static mode* live; // the mode whose # runs
 
@@ -130,7 +145,7 @@ static meta* otic_find(const char* name) {
   u64i  n = slen(name), k = clue(name, n);
   item* s = hsee(home(live), name, n, k);
   meta* x = s? find(live, live->unit, s): (s = hsee(&live->names, name, n, k))? find(live, 0, s): NULL;
-  return x && (x->kind == base || x->kind == list)? x: NULL;
+  return x && (x->kind == base || x->kind == list || x == live->bcode)? x: NULL;
 }
 
 static u64i  otic_type(const char* name) { return (u64i)(uintptr_t)otic_find(name); }
@@ -181,6 +196,7 @@ static u32i  otic_spelt(const meta* t, char* b, u32i n) {
     if(f->more) n = f->slot? otic_say(b, n, ", ...", 5): otic_say(b, n, "...", 3);
     return otic_say(b, n, ")", 1);
   }
+  if(t->kind == refs && t->name) return otic_say(b, n, t->name->name, t->name->size); // code
   if(t->kind == refs) return otic_say(b, otic_spelt(t->type, b, n), "*", 1);
   if(t->kind == many) { // the element, then each count, outermost first
     const meta* e = t;
@@ -210,15 +226,77 @@ static s32i  otic_offset(const char* type, const char* name) {
   flaw(live, "offset: no member '%s' in '%s'\n", name, type);
 }
 
+// the text of the #{ } being built, one per quote in a splice of another
+#define QUOTES 16
+static blob  quotes[QUOTES];
+static u32i  quoting;
+
+static void  otic_open(void) {
+  if(quoting == QUOTES) fail("#{ }: more than %d inside one another\n", QUOTES);
+  quotes[quoting++].n = 0;
+}
+
+static void  otic_put(const char* s, u64i n) {
+  if(!quoting) fail("#{ }: text outside a quote\n");
+  blob* b = quotes + quoting - 1;
+  if(b->n + n >= 1u << 30) fail("#{ }: a quote over 1 GB\n");
+  if(b->n + n > b->c) b->p = live->heap(b->p, b->c = 2 * (b->n + (u32i)n));
+  copy(b->p + b->n, s, n);
+  b->n += (u32i)n;
+}
+
+// in a string literal (str), escaped as one spells it
+static void  otic_text(const char* s, s32i str) {
+  if(!s) fail("#{ }: @ of a null char*\n");
+  if(!str) { otic_put(s, slen(s)); return; }
+  for(; *s; s++) {
+    const char* e = *s == '"'? "\\\"": *s == '\\'? "\\\\": *s == '\n'? "\\n": *s == '\t'? "\\t": *s == '\r'? "\\r": NULL;
+    if(e) otic_put(e, 2);
+    else otic_put(s, 1);
+  }
+}
+
+// a number below 0 in code is parenthesized: a-@n is not a--5
+static void  otic_num(s64i v, s32i str) {
+  char d[32];
+  int  n = v < 0 && !str? snprintf(d, sizeof d, "(%lld)", (long long)v): snprintf(d, sizeof d, "%lld", (long long)v);
+  otic_put(d, (u64i)n);
+}
+
+// as a real literal: 17 digits, with a . when it would read as an integer
+static void  otic_real(double v, s32i str) {
+  char d[48];
+  int  n = snprintf(d, sizeof d, v < 0 && !str? "(%.17g": "%.17g", v);
+  bool whole = 1;
+  for(int i = 0; i < n; i++) if(d[i] == '.' || d[i] == 'e' || d[i] == 'n' || d[i] == 'i') whole = 0;
+  if(whole) n += snprintf(d + n, sizeof d - (size_t)n, ".0");
+  if(v < 0 && !str) n += snprintf(d + n, sizeof d - (size_t)n, ")");
+  otic_put(d, (u64i)n);
+}
+
+// the quote's text, NUL terminated, for the rest of the compile
+static char* otic_done(void) {
+  if(!quoting) fail("#{ }: no quote to end\n");
+  blob* b = quotes + --quoting;
+  char* s = live->heap(NULL, b->n + 1);
+  copy((byte*)s, b->p, b->n);
+  s[b->n] = 0;
+  return s;
+}
+
 // points the hooks of link "otic" at the compiler, in an image of the code
 // with data at data and bss at bss, for the # of self about to run
 void  rig(mode* self, byte* data, byte* bss) {
   static char* const names[] = {"otic_arch", "otic_emit", "otic_type", "otic_members", "otic_member",
-                                "otic_spell", "otic_offset"};
+                                "otic_spell", "otic_offset", "otic_open", "otic_text", "otic_num", "otic_real",
+                                "otic_done"};
   const u64i fns[] = {(u64i)(uintptr_t)otic_arch, (u64i)(uintptr_t)otic_emit, (u64i)(uintptr_t)otic_type,
                       (u64i)(uintptr_t)otic_members, (u64i)(uintptr_t)otic_member,
-                      (u64i)(uintptr_t)otic_spell, (u64i)(uintptr_t)otic_offset};
+                      (u64i)(uintptr_t)otic_spell, (u64i)(uintptr_t)otic_offset, (u64i)(uintptr_t)otic_open,
+                      (u64i)(uintptr_t)otic_text, (u64i)(uintptr_t)otic_num, (u64i)(uintptr_t)otic_real,
+                      (u64i)(uintptr_t)otic_done};
   live = self;
+  quoting = 0; // a # that failed inside a quote left it open
   if(!self->api) return;
   for(u32i i = 0; i < sizeof fns / sizeof *fns; i++) {
     const meta* x = hget(self, self->api, names[i], slen(names[i]))->data;

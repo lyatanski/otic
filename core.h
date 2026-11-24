@@ -376,8 +376,8 @@ typedef struct { char* path; file* data; } sidecar;
 // library, or a relocatable object (static)
 enum { lb_none, lb_dyno, lb_relo };
 
-// what a # gave: the bits of a number or a real (per type), or a char*
-// result's bytes in text, NUL terminated, from mode.heap; and the machine code
+// what a # gave: the bits of a number or a real (per type), or a code or
+// char* result's bytes in text, NUL terminated, from mode.heap; and the machine code
 // its run emitted (link "otic"), bytes of it in code, from mode.heap
 typedef struct { meta* type; u64i bits; char* text; u32i size; byte* code; u32i bytes; } yield;
 
@@ -387,7 +387,7 @@ struct mode {
   u32i  unit; // the unit being parsed
   u32i  unitn, unitc;
   unit* units; // in join order, the root first
-  meta  *bvoid, *bbool, *bbyte, *bchar, *bnu16, *bint, *blong, *breal; // for tget: a source may reuse their names
+  meta  *bvoid, *bbool, *bbyte, *bchar, *bnu16, *bint, *blong, *breal, *bcode; // for tget: a source may reuse their names
   unit  names; // each spelling in any unit's table: its first item in join
                // order, the rest chained by item.next
   emit  arch;
