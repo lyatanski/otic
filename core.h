@@ -526,6 +526,8 @@ u32i  quote(const item* s, byte* out);
 void  bind(const mode*, byte* at, const item* name, const meta* func, u32i argc, bool ext);
 bool  join(mode*, const char* path, u64i size, file* code, byte kind);
 bool  land(mode*, char* path, u64i size, file* code, byte kind);
+void  chop(mode*); // the next token of the unit being parsed
+void  decl(mode*); // a top-level declaration
 
 // dwarf.c: each does nothing without mode.debug
 void  dwarf_line(mode*);                         // a statement starts here
