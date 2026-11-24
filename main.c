@@ -250,6 +250,7 @@ u64i  eval(mode* self, byte* entry, bool real) {
   if(size > warm) copy(image + IMGT + warm, self->data->head + warm, size - warm);
   warm = self->ripe < size? self->ripe: (u32i)size;
   plug(self, (u64i*)(image + IMGT + IMGD + IMGB), 0, 1);
+  rig(self, image + IMGT, image + IMGT + IMGD);
   prep(image, IMGT);
   where = home(self)->path;
   atline = home(self)->line;
@@ -333,6 +334,7 @@ mode* mirror(mode* from) {
     .libs = lb_none,
     .eval = eval,
     .dirn = from->dirn,
+    .aim  = from->aim,
   };
   copy((byte*)self->dirs, from->dirs, sizeof self->dirs);
   nest(self, (unit){.kind = un_root});
@@ -464,6 +466,7 @@ int   main(int argc, char** argv) {
   };
   parse(&self, args, argc, argv, apos);
   if(!self.name) fail("no input file\n");
+  self.aim = self.arch.cpu;
   if(self.show == exec && self.arch.cpu != base.cpu)
     fail("cannot run foreign code, write it with -e\n");
   if(self.show == exec) self.libs = lb_none, self.debug = 0; // running needs main; nothing reads debug information there

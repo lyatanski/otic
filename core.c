@@ -916,6 +916,20 @@ sized:
 
 void  fini(mode* self);
 
+// machine code a # emitted (link "otic"), in the function being compiled. It
+// runs as a call would: a kept operand stays on the stack, and a leaf, whose
+// locals may be in registers a call changes, spoils. A mirror for another cpu
+// only keeps it on its tape
+void  spew(mode* self, const byte* code, u32i n) {
+  if(self->frame == ~0u) flaw(self, "machine code from # goes in a function\n");
+  if(self->aim != self->arch.cpu) return;
+  file* t = self->text;
+  if(t->body + n > t->tail) fail("text section overflow\n");
+  t->body = copy(t->body, code, n);
+  self->dials++;
+  if(self->leaf) self->spoil = 1;
+}
+
 // # name(args): compiled as a parameterless function at the end of text, run
 // by mode.eval in an image of all compiled so far (globals keep what earlier
 // #s did), then dropped with what it laid in data, bss and the import slots.
@@ -969,6 +983,12 @@ yield sharp(mode* self) {
   yield r = {.type = t};
   if(self->eval) {
     r.bits = self->eval(self, mark, real);
+    if(self->spit.n) { // emitted, placed below for this mode and on the tape for another
+      r.bytes = self->spit.n;
+      r.code = self->heap(NULL, r.bytes);
+      copy(r.code, self->spit.p, r.bytes);
+      self->spit.n = 0;
+    }
     if(text) {
       const char* p = (const char*)(uintptr_t)r.bits;
       r.size = p? (u32i)slen(p): 0;
@@ -1005,6 +1025,7 @@ yield sharp(mode* self) {
     for(u32i i = self->frame; i < self->top; i++) { meta* x = pin(self->pile, i); x->name->data = x; }
     self->hidden = 0;
   }
+  if(r.bytes) spew(self, r.code, r.bytes);
   return r;
 }
 
@@ -2353,6 +2374,7 @@ void  decl(mode* self) {
     unit  at = *home(self);
     byte* body = at.code->body;
     u32i  fixs = self->fixs, imps = self->impn, size = (u32i)(self->data->body - self->data->head);
+    u32i  tapen = self->tapen, taken = self->taken; // a # runs again, taking or making the same entry
     u64i  bss = self->zero;
     for(bool lone = 1;; lone = 0) {
       sift(self, top, lone);
@@ -2381,6 +2403,11 @@ void  decl(mode* self) {
       for(u32i i = size; d->head + i < d->body; i++) d->head[i] = 0;
       d->body = d->head + size;
       self->zero = bss;
+      if(self->eval) {
+        for(u32i i = tapen; i < self->tapen; i++) { self->heap(self->tape[i].text, 0); self->heap(self->tape[i].code, 0); }
+        self->tapen = tapen;
+      }
+      self->taken = taken;
       self->busy = 0, self->spoil = 0;
       while(self->picks) self->pick[--self->picks]->pick = 0;
       self->regn = self->fregn = self->lend = 0;

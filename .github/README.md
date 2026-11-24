@@ -160,6 +160,19 @@ int table[#fib(10)];        // 55 elements
 int main() { return get_x() + sizeof table / 4 + get_y() % 100; }   // 113
 ```
 
+- `link "otic"` gives code run by `#` the compiler's own functions (built in,
+  no file): `arch()` is the cpu being compiled for (0 `ia64`, 1 `arm8`, also
+  in a cross build), and `emit(code, n)` places n bytes of machine code where
+  the `#` is, in a function. They run there as a call would: they may change
+  the registers a C function may, and keep the others and the stack. A program
+  that calls these itself crashes: they are for `#` code only
+
+```c
+link "otic";
+void cli() { static byte c[1] = {0xfa}; emit(c, 1); }   // x86-64
+void halt() { while(1) { #cli(); } }
+```
+
 ## Tests
 
 ```sh

@@ -345,6 +345,23 @@ static bool alikes(const char* a, const char* b, const char* arch, const char* f
 }
 #define twins(a, b, arch, form) check(alikes(a, b, arch, form))
 
+// link "otic" helpers: mov eax or w0, 42 for the target cpu; and code that
+// sets every register a C function may change (not rbx, rsp, rbp; x0-x17)
+#define MOV42 "link \"otic\";\nvoid mov42() {\n" \
+  "  static byte x86[5] = {0xb8, 42, 0, 0, 0};\n  static byte arm[4] = {0x40, 0x05, 0x80, 0x52};\n" \
+  "  when(arch() == 0) emit(x86, 5); else emit(arm, 4);\n}\n"
+#define CLOBBER "link \"otic\";\nstatic byte buf[128];\nstatic int n;\n" \
+  "void b(int x) { buf[n] = x; n += 1; }\nvoid w(int x) { b(x); b(x >> 8); b(x >> 16); b(x >> 24); }\n" \
+  "void clobber() {\n  n = 0;\n  int r = 0;\n  when(arch() == 0) while(r < 12) {\n" \
+  "    when(r != 3 && r != 4 && r != 5) { when(r >= 8) b(0x41); b(0xb8 + (r & 7)); w(0x7777); }\n" \
+  "    r += 1;\n  }\n  else while(r < 18) { w(0xd28eeee0 + r); r += 1; }\n  emit(buf, n);\n}\n"
+
+// whether the n bytes at x hold the m at y
+static bool holds(const char* x, long n, const char* y, long m) {
+  for(long i = 0; i + m <= n; i++) if(!memcmp(x + i, y, (size_t)m)) return 1;
+  return 0;
+}
+
 // 25 statements: branches over 127 bytes on x86
 #define RET5 "return 1; return 1; return 1; return 1; return 1; "
 #define ADD5 "s += 1; s += 1; s += 1; s += 1; s += 1; "
@@ -2005,6 +2022,36 @@ spec(TAG) {
     it("rejects an error in a cross build too")
       check(!built("int add(int a, int b) { return a + b; }\nint main() { int x = 1; return #add(x, 2); }\n",
                    "ct-a", pick("arm8", "ia64"), "elfs", (char[64]){0}, 64));
+  }
+
+  context("compiler api") { // link "otic": arch and emit, for code run at compile time
+    it("gives the cpu compiled for")
+      expect(pick(0, 1), "link \"otic\";\nint a() { return arch(); }\nint main() { return #a(); }\n");
+    it("gives the target cpu in a cross build") {
+      twins("link \"otic\";\nint a() { return arch(); }\nint main() { return #a(); }\n",
+            "link \"otic\";\nint a() { return arch(); }\nint main() { return 1; }\n", "arm8", "elfs");
+      twins("link \"otic\";\nint a() { return arch(); }\nint main() { return #a(); }\n",
+            "link \"otic\";\nint a() { return arch(); }\nint main() { return 0; }\n", "ia64", "pe32");
+    }
+    it("places machine code where the # is")
+      expect(42, MOV42 "int answer() { #mov42(); return; }\nint main() { return answer(); }\n");
+    it("keeps the locals and kept operands of the function across it")
+      expect(96, CLOBBER "int leaf(int a, int b) {\n  int x = a + b; int y = a - b; int z = a * b;\n"
+                 "  x = x + 1; y = y + 1; z = z + 1;\n  #clobber();\n  return x + y + z + x + y + z;\n}\n"
+                 "int kept(int a) { return a * 3 + (#clobber() + a); }\n"
+                 "int main() { return leaf(5, 3) + kept(10); }\n");
+    it("places the target's machine code in a cross build") {
+      static char x[1 << 16];
+      const char* src = MOV42 "int answer() { #mov42(); return; }\nint main() { return answer(); }\n";
+      long n = built(src, "ct-a", "arm8", "elfs", x, sizeof x);
+      check(holds(x, n, "\x40\x05\x80\x52", 4));
+      n = built(src, "ct-a", "ia64", "elfs", x, sizeof x);
+      check(holds(x, n, "\xb8\x2a\x00\x00\x00", 5));
+    }
+    it("rejects machine code outside a function")
+      expect(bad, MOV42 "#mov42();\nint main() { return 0; }\n");
+    it("is linked once")
+      expect(pick(3, 4), "link \"otic\";\nlink \"otic\";\nint a() { return arch() + 3; }\nint main() { return #a(); }\n");
   }
 
   context("errors") {

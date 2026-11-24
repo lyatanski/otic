@@ -46,10 +46,67 @@ static bool nigh(mode* self, const item* s, const char* dir, u32i e) {
   return 0;
 }
 
+// link "otic": the compiler's own functions, for code run at compile time.
+// The source below calls them through hooks that rig points at the compiler
+// before each # runs; a program keeps them null, so only # code may call them
+static const char otic_api[] =
+  "static int  (*otic_arch)(void);\n"
+  "static void (*otic_emit)(byte* code, int n);\n"
+  "\n"
+  "// the cpu the source is compiled for, also when a # runs on another one:\n"
+  "// 0 ia64 (x86-64), 1 arm8 (AArch64)\n"
+  "int  arch() { return otic_arch(); }\n"
+  "\n"
+  "// n bytes of machine code for that cpu, placed where the # running this is,\n"
+  "// in a function. They run there as a call would: they may change the\n"
+  "// registers a C function may, and keep the others and the stack\n"
+  "void emit(byte* code, int n) { otic_emit(code, n); }\n";
+
+static mode* live; // the mode whose # runs
+
+static int   otic_arch(void) { return (int)live->aim; }
+
+static void  otic_emit(const byte* code, int n) {
+  blob* b = &live->spit;
+  if(n < 0) fail("emit: %d bytes\n", n);
+  if(b->n + (u64i)n > 1u << 24) fail("emit: more than 16 MB of machine code from one #\n");
+  if(b->n + (u32i)n > b->c) b->p = live->heap(b->p, b->c = 2 * (b->n + (u32i)n));
+  copy(b->p + b->n, code, (u32i)n);
+  b->n += (u32i)n;
+}
+
+// points the hooks of link "otic" at the compiler, in an image of the code
+// with data at data and bss at bss, for the # of self about to run
+void  rig(mode* self, byte* data, byte* bss) {
+  static char* const names[] = {"otic_arch", "otic_emit"};
+  const u64i fns[] = {(u64i)(uintptr_t)otic_arch, (u64i)(uintptr_t)otic_emit};
+  live = self;
+  if(!self->api) return;
+  for(u32i i = 0; i < sizeof fns / sizeof *fns; i++) {
+    const meta* x = hget(self, self->api, names[i], slen(names[i]))->data;
+    if(!x || x->kind != glob) fail("link \"otic\": no hook %s\n", names[i]);
+    u32i  off = (u32i)x->slot;
+    copy(off & ZERO? bss + (off & ~ZERO): data + off, &fns[i], sizeof *fns);
+  }
+}
+
 // link "name": name.ot, name.o, libname.a beside this source, then name.ot and
 // name.o in mode.dirs, then libname.a in mode.dirs. Static only: a shared
-// library is named by load
+// library is named by load. "otic" is the compiler's own source (otic_api)
 void  haul(mode* self, item* s) {
+  if(s->size == 6 && alike(s->name, "\"otic\"", 6)) {
+    if(self->api) return;
+    u64i  n = sizeof otic_api - 1;
+    file* code = self->heap(NULL, sizeof(file) + n);
+    code->body = code->head;
+    code->tail = code->head + n;
+    copy(code->head, otic_api, n + 1);
+    char* path = self->heap(NULL, 7);
+    copy((byte*)path, "<otic>", 7);
+    self->api = self->unitn;
+    if(!land(self, path, 6, code, un_code)) fail("link \"otic\": cannot join it\n");
+    return;
+  }
   for(u32i e = 0; e < 3; e++) if(nigh(self, s, NULL, e)) return;
   for(u32i i = 0; i < self->dirn; i++)
     for(u32i e = 0; e < 2; e++) if(nigh(self, s, self->dirs[i], e)) return;

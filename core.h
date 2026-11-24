@@ -377,8 +377,9 @@ typedef struct { char* path; file* data; } sidecar;
 enum { lb_none, lb_dyno, lb_relo };
 
 // what a # gave: the bits of a number or a real (per type), or a char*
-// result's bytes in text, NUL terminated, from mode.heap
-typedef struct { meta* type; u64i bits; char* text; u32i size; } yield;
+// result's bytes in text, NUL terminated, from mode.heap; and the machine code
+// its run emitted (link "otic"), bytes of it in code, from mode.heap
+typedef struct { meta* type; u64i bits; char* text; u32i size; byte* code; u32i bytes; } yield;
 
 struct mode {
   const char* name;
@@ -422,6 +423,9 @@ struct mode {
   yield* tape;     // the results of the # run so far, in order
   u32i  tapen, tapec, taken; // taken: the next one a replay takes
   bool  shaded;    // the tape is the mirror's
+  u32i  api;       // the unit of link "otic", 0 when not linked
+  chip  aim;       // the cpu arch() of link "otic" gives: the target's, in its mirror too
+  blob  spit;      // the machine code the running # emitted
   bool  hidden;    // the locals of the function are out of scope for a #
   u32i  layers;    // sources a # generated, one inside another
   u32i  dry;       // nesting of overload arguments compiled for their types only: a # there is not run
@@ -524,6 +528,7 @@ meta* find(mode*, u32i at, item* name);
 u32i  ask(mode*, meta* x);
 void  reel(mode*);
 meta* rack(mode*, item* s);
+void  rig(mode*, byte* data, byte* bss);
 u32i  port(mode*, meta* x);
 void  tie(mode*, u32i from, bool last);
 u32i  sign(mode*, meta*** out);
